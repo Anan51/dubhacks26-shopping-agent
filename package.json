@@ -1,0 +1,24 @@
+{
+  "name": "dubhacks26-shopping-agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "dev:agent": "tsx --env-file=.env src/agent.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "test": "tsx --test src/reply.test.ts src/handle-message.test.ts"
+  },
+  "dependencies": {
+    "@photon-ai/api": "0.5.0",
+    "socket.io-client": "4.8.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}
