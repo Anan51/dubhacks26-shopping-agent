@@ -52,6 +52,7 @@ export function createCart(input: {
   now: Date;
   demo: boolean;
   coolingMs: number;
+  lockThresholdCents: number | null;
   code?: string;
   taken?: (code: string) => boolean;
 }): Cart {
@@ -65,6 +66,8 @@ export function createCart(input: {
     createdAt: input.now.toISOString(),
     status: "cooling",
     coolingOffEndsAt: new Date(input.now.getTime() + input.coolingMs).toISOString(),
+    coolingMs: input.coolingMs,
+    lockThresholdCents: input.lockThresholdCents,
     demo: input.demo,
     signals: {},
     decision: null,

@@ -12,6 +12,8 @@ type CartBody = {
   status: string;
   demo: boolean;
   coolingOffEndsAt: string;
+  coolingMs: number;
+  lockThresholdCents: number | null;
   createdAt: string;
   smsLink: string | null;
   deskPath: string;
@@ -35,6 +37,7 @@ describe("checkout demo", () => {
       store: createMemoryStore(),
       origin: "http://127.0.0.1",
       coolingMs: 600_000,
+      lockThresholdCents: null,
       demoReminderMs: 80,
       demoDefault: false,
       agentHandle: "+15550001111",
@@ -80,6 +83,8 @@ describe("checkout demo", () => {
     assert.equal(cart.status, "cooling");
     assert.equal(cart.demo, true);
     assert.equal(new Date(cart.coolingOffEndsAt).getTime() - new Date(cart.createdAt).getTime(), 600_000);
+    assert.equal(cart.coolingMs, 600_000);
+    assert.equal(cart.lockThresholdCents, null);
     assert.equal(cart.smsLink, `sms:+15550001111&body=${encodeURIComponent(cart.textMessage)}`);
     assert.equal(cart.deskPath, `/dev?cart=${cart.code}`);
 

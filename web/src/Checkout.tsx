@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { navigate } from "./path.js";
 import {
@@ -7,11 +7,12 @@ import {
   getCatalog,
   getConfig,
   type CartResponse,
+  type Decision,
   type Kind,
   type Product,
   type PublicConfig,
 } from "./api.js";
-import { formatClock, formatLongDate, formatUsd } from "./format.js";
+import { formatClock, formatCooling, formatLongDate, formatUsd } from "./format.js";
 
 const DEFAULT_IDS = ["phone-n1-128", "plan-unlimited", "acc-case"];
 
@@ -112,8 +113,8 @@ export function Checkout({ code }: { code: string | null }) {
       <section>
         <h1>Take a minute before this upgrade.</h1>
         <p className="lede">
-          Buy starts a 10-minute cooling-off lock. WaitMate asks about the phone you already have, then says buy or
-          wait in plain language.
+          Buy starts a {formatCooling(config.coolingMs)} cooling-off lock. WaitMate asks about the phone you already
+          have, then says buy or wait in plain language.
         </p>
         {(["phone", "plan", "accessory"] as const).map((kind) => (
           <div key={kind} className="group">
@@ -277,8 +278,8 @@ function Why({ cart }: { cart: CartResponse }) {
     return null;
   }
   return (
-    <div className={decision.action === "buy" ? "why buy" : "why"}>
-      <p className="why-kicker">{decision.action === "buy" ? "WaitMate says buy" : "WaitMate says wait"}</p>
+    <div className={verdictClass(decision.action)}>
+      <p className="why-kicker">{verdictKicker(decision.action)}</p>
       <dl className="figures">
         <div>
           <dt>Out of pocket today</dt>
@@ -302,15 +303,7 @@ function Why({ cart }: { cart: CartResponse }) {
         </div>
       </dl>
       {cart.explanation ? <p className="explanation">{cart.explanation}</p> : null}
-      {decision.action === "wait" && cart.reminderAt ? (
-        <p className="reminder-note">
-          Reminder date: {formatLongDate(cart.reminderAt)}
-          {cart.demo ? " · demo mode texts you in about a minute." : "."}
-        </p>
-      ) : null}
-      {decision.action === "buy" && cart.status !== "completed" ? (
-        <p className="reminder-note">Reply YES in the chat to unlock this checkout.</p>
-      ) : null}
+      {verdictNote(cart)}
     </div>
   );
 }
@@ -375,6 +368,54 @@ function Receipt({ cart }: { cart: CartResponse }) {
       </a>
     </section>
   );
+}
+
+function verdictClass(action: Decision["action"]): string {
+  switch (action) {
+    case "buy":
+      return "why buy";
+    case "wait":
+      return "why";
+    default:
+      return assertNever(action);
+  }
+}
+
+function verdictKicker(action: Decision["action"]): string {
+  switch (action) {
+    case "buy":
+      return "WaitMate says buy";
+    case "wait":
+      return "WaitMate says wait";
+    default:
+      return assertNever(action);
+  }
+}
+
+function verdictNote(cart: CartResponse): ReactNode {
+  const decision = cart.decision;
+  if (!decision) {
+    return null;
+  }
+  switch (decision.action) {
+    case "wait":
+      return cart.reminderAt ? (
+        <p className="reminder-note">
+          Reminder date: {formatLongDate(cart.reminderAt)}
+          {cart.demo ? " · demo mode texts you in about a minute." : "."}
+        </p>
+      ) : null;
+    case "buy":
+      return cart.status !== "completed" ? (
+        <p className="reminder-note">Reply YES in the chat to unlock this checkout.</p>
+      ) : null;
+    default:
+      return assertNever(decision.action);
+  }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unexpected variant: ${JSON.stringify(value)}`);
 }
 
 function useRemaining(endsAt: string): number {

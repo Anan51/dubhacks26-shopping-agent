@@ -60,7 +60,7 @@ export function decide(signals: Signals): Decision {
     reasons.push("default-wait");
   }
 
-  return { action, reasons, ...math };
+  return { action, alternativeId: null, reasons, ...math };
 }
 
 /** Synthetic trade-in for a phone of this age and condition, in cents. */
@@ -69,7 +69,7 @@ export function tradeInValueCents(ageMonths: number, condition: Condition): numb
   return Math.round(fine * CONDITION_FACTOR[condition]);
 }
 
-function project(signals: Signals): Omit<Decision, "action" | "reasons"> {
+function project(signals: Signals): Omit<Decision, "action" | "alternativeId" | "reasons"> {
   const tradeInNowCents = tradeInValueCents(signals.deviceAgeMonths, signals.condition);
   const tradeInLaterCents = tradeInValueCents(signals.deviceAgeMonths + HORIZON_MONTHS, signals.condition);
   const owedNowCents = Math.max(0, signals.owedCents);

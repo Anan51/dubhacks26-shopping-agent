@@ -18,7 +18,7 @@ npm run dev
 Open http://localhost:4321.
 
 1. The shop is prefilled with a synthetic phone, plan, and case. Leave **Demo reminder** checked.
-2. Press **Buy**. The page locks for 10 minutes and shows a countdown.
+2. Press **Buy**. The page locks for the cooling-off length (`WAITMATE_COOLING_MS`, default 10 minutes) and shows a countdown. `WAITMATE_LOCK_THRESHOLD_CENTS` is stored on the cart for a later price gate. Empty means every cart still locks, and there is no bypass.
 3. Press **Text WaitMate**. With no Photon number configured, that opens the desk chat and prefills `Hey WaitMate, cart ABCDEF`. Each cart has its own thread.
 4. Send that text, then answer the questions (or press **Run wait script** / **Run buy script**).
 5. **Wait** saves the cart and, in demo mode, texts a checkout link into the same desk chat about a minute later.

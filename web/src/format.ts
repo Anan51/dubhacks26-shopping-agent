@@ -10,6 +10,16 @@ export function formatUsd(cents: number): string {
   return `${sign}$${grouped}.${remainder.toString().padStart(2, "0")}`;
 }
 
+/** Adjective form, such as "10-minute", from a lock length in milliseconds. */
+export function formatCooling(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (ms % 60_000 === 0 && minutes >= 1) {
+    return `${minutes}-minute`;
+  }
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  return `${seconds}-second`;
+}
+
 export function formatClock(ms: number): string {
   const total = Math.max(0, Math.ceil(ms / 1000));
   const minutes = Math.floor(total / 60);

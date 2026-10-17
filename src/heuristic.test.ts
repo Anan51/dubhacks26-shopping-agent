@@ -40,6 +40,7 @@ describe("decide", () => {
   it("waits on a young working phone even when money is still owed", () => {
     const decision = decide(signals());
     assert.equal(decision.action, "wait");
+    assert.equal(decision.alternativeId, null);
     assert.deepEqual(decision.reasons, ["young-and-working"]);
     assert.equal(decision.tradeInNowCents, 26_000);
     assert.equal(decision.tradeInLaterCents, 20_000);

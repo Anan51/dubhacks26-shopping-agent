@@ -129,24 +129,28 @@ function confirmTurn(session: Session, cart: Cart, input: ApplyInput): ApplyResu
     return decideTurn(session, cart, input);
   }
   const intent = readIntent(input.text);
-  if (decision.action === "buy" && (intent === "yes" || intent === "buy")) {
-    return completeCart(session, cart, input.now);
+  const action = decision.action;
+  switch (action) {
+    case "buy":
+      if (intent === "yes" || intent === "buy") {
+        return completeCart(session, cart, input.now);
+      }
+      if (intent === "wait") {
+        return saveWait(session, cart, input);
+      }
+      return say(session, "Reply YES to unlock checkout, or WAIT to save the cart.", { cart });
+    case "wait":
+      if (intent === "buy") {
+        return completeCart(session, cart, input.now);
+      }
+      return say(
+        session,
+        `Still holding cart ${cart.code}. I'll text you on ${cart.reminderAt ? formatLongDate(cart.reminderAt) : "the date I saved"}. Reply BUY if you want checkout unlocked.`,
+        { cart },
+      );
+    default:
+      return assertNever(action);
   }
-  if (decision.action === "buy" && intent === "wait") {
-    return saveWait(session, cart, input);
-  }
-  if (decision.action === "wait" && intent === "buy") {
-    return completeCart(session, cart, input.now);
-  }
-  if (decision.action === "wait") {
-    const when = cart.reminderAt ? formatLongDate(cart.reminderAt) : "the date I saved";
-    return say(
-      session,
-      `Still holding cart ${cart.code}. I'll text you on ${when}. Reply BUY if you want checkout unlocked.`,
-      { cart },
-    );
-  }
-  return say(session, "Reply YES to unlock checkout, or WAIT to save the cart.", { cart });
 }
 
 function decideTurn(session: Session, cart: Cart, input: ApplyInput): ApplyResult {
@@ -159,18 +163,22 @@ function decideTurn(session: Session, cart: Cart, input: ApplyInput): ApplyResul
   session.signals = signals;
   session.step = "confirm";
 
-  if (decision.action === "wait") {
-    return saveWait(session, cart, input);
+  const action = decision.action;
+  switch (action) {
+    case "wait":
+      return saveWait(session, cart, input);
+    case "buy":
+      cart.status = "cooling";
+      cart.reminderAt = null;
+      cart.reminderFireAt = null;
+      cart.reminderSentAt = null;
+      return say(session, `${explanation}\n\nReply YES to unlock checkout, or WAIT to save the cart.`, {
+        cart,
+        disarmReminder: true,
+      });
+    default:
+      return assertNever(action);
   }
-
-  cart.status = "cooling";
-  cart.reminderAt = null;
-  cart.reminderFireAt = null;
-  cart.reminderSentAt = null;
-  return say(session, `${explanation}\n\nReply YES to unlock checkout, or WAIT to save the cart.`, {
-    cart,
-    disarmReminder: true,
-  });
 }
 
 function saveWait(session: Session, cart: Cart, input: ApplyInput): ApplyResult {

@@ -21,6 +21,7 @@ export type LineItem = {
 
 export type Decision = {
   action: "buy" | "wait";
+  alternativeId: string | null;
   horizonMonths: number;
   netNowCents: number;
   netLaterCents: number;
@@ -37,6 +38,8 @@ export type CartResponse = {
   status: "cooling" | "saved" | "completed";
   createdAt: string;
   coolingOffEndsAt: string;
+  coolingMs: number;
+  lockThresholdCents: number | null;
   demo: boolean;
   decision: Decision | null;
   explanation: string | null;
@@ -53,6 +56,7 @@ export type PublicConfig = {
   channel: "photon" | "stub";
   agentHandle: string | null;
   coolingMs: number;
+  lockThresholdCents: number | null;
   demoReminderMs: number;
   demoDefault: boolean;
 };

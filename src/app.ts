@@ -22,6 +22,7 @@ export type AppDeps = {
   store: Store;
   origin: string;
   coolingMs: number;
+  lockThresholdCents: number | null;
   demoReminderMs: number;
   demoDefault: boolean;
   agentHandle: string | null;
@@ -92,6 +93,7 @@ export function createApp(deps: AppDeps): RunningApp {
       channel: deps.photon ? "photon" : "stub",
       agentHandle: deps.agentHandle,
       coolingMs: deps.coolingMs,
+      lockThresholdCents: deps.lockThresholdCents,
       demoReminderMs: deps.demoReminderMs,
       demoDefault: deps.demoDefault,
       deskChat: true,
@@ -121,6 +123,7 @@ export function createApp(deps: AppDeps): RunningApp {
         now: now(),
         demo,
         coolingMs: deps.coolingMs,
+        lockThresholdCents: deps.lockThresholdCents,
         taken: (code) => deps.store.getCart(code) !== undefined,
       });
       deps.store.saveCart(cart);

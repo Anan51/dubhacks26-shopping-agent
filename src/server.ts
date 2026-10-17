@@ -56,6 +56,7 @@ export async function startServer(): Promise<void> {
     store: createFileStore(path.resolve(appConfig.storePath)),
     origin: appConfig.origin,
     coolingMs: appConfig.coolingMs,
+    lockThresholdCents: appConfig.lockThresholdCents,
     demoReminderMs: appConfig.demoReminderMs,
     demoDefault: appConfig.demoDefault,
     agentHandle: appConfig.agentHandle,

@@ -72,6 +72,13 @@ export type Cart = {
   lastInboundMessageId: string | null;
   orderId: string | null;
   completedAt: string | null;
+  /** Length of this cart's cooling-off lock. */
+  coolingMs: number;
+  /**
+   * Due-today price, in cents, at or above which a later checkout can cool off.
+   * Null means every cart locks. The current demo always locks.
+   */
+  lockThresholdCents: number | null;
 };
 
 export type ReasonCode =
@@ -83,8 +90,16 @@ export type ReasonCode =
   | "old-and-failing"
   | "default-wait";
 
-export type Decision = {
-  action: "buy" | "wait";
+/**
+ * Buy or wait for now. Add `{ action: "better"; alternativeId: string }`
+ * when a synthetic alternative should be the third call. Switches on `action`
+ * use `assertNever`, so that variant will fail the build until it is handled.
+ */
+export type Verdict =
+  | { action: "buy"; alternativeId: null }
+  | { action: "wait"; alternativeId: null };
+
+export type Decision = Verdict & {
   reasons: ReasonCode[];
   horizonMonths: number;
   netNowCents: number;

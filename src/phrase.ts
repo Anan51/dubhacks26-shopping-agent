@@ -4,10 +4,7 @@ import { assertNever, type Decision, type ReasonCode, type Signals } from "./typ
 
 /** Plain-language why. Does not choose buy vs wait. */
 export function phraseDecision(decision: Decision, signals: Signals): string {
-  const lead =
-    decision.action === "buy"
-      ? "Buy — I'd go ahead with this one."
-      : "Wait — I'd hold off on this upgrade.";
+  const lead = verdictLead(decision.action);
   const today = `Today you'd lay out ${formatUsd(decision.netNowCents)}. That's ${formatUsd(signals.dueTodayCents)} due today, plus ${formatUsd(decision.owedNowCents)} still owed, minus ${formatUsd(decision.tradeInNowCents)} trade-in.`;
   const later = `In ${decision.horizonMonths} months it's about ${formatUsd(decision.netLaterCents)}. Trade-in moves from ${formatUsd(decision.tradeInNowCents)} to ${formatUsd(decision.tradeInLaterCents)}, and the balance goes from ${formatUsd(decision.owedNowCents)} to ${formatUsd(decision.owedLaterCents)} if you keep paying ${formatUsd(MONTHLY_PAYMENT_CENTS)} a month.`;
   const plan =
@@ -75,12 +72,27 @@ export async function polishPhrase(
   }
 }
 
+function verdictLead(action: Decision["action"]): string {
+  switch (action) {
+    case "buy":
+      return "Buy — I'd go ahead with this one.";
+    case "wait":
+      return "Wait — I'd hold off on this upgrade.";
+    default:
+      return assertNever(action);
+  }
+}
+
 function keepsCall(text: string, action: Decision["action"]): boolean {
   const opening = text.slice(0, 24).toLowerCase();
-  if (action === "buy") {
-    return opening.startsWith("buy");
+  switch (action) {
+    case "buy":
+      return opening.startsWith("buy");
+    case "wait":
+      return opening.startsWith("wait");
+    default:
+      return assertNever(action);
   }
-  return opening.startsWith("wait");
 }
 
 function reasonSentence(code: ReasonCode, decision: Decision, signals: Signals): string {
