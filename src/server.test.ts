@@ -39,7 +39,6 @@ describe("checkout demo", () => {
       demoDefault: false,
       agentHandle: "+15550001111",
       photon: null,
-      geminiModel: "gemini-2.0-flash",
       polish: async (template) => template,
     });
     const server = createServer(running.app);

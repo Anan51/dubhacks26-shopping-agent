@@ -33,8 +33,7 @@ export type AppConfig = {
   demoDefault: boolean;
   storePath: string;
   channel: "auto" | "photon" | "stub";
-  geminiApiKey?: string;
-  geminiModel: string;
+  xaiApiKey?: string;
   agentHandle: string | null;
 };
 
@@ -42,7 +41,7 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const port = numberFrom(env.PORT ?? env.WAITMATE_PORT, 4321);
   const channelRaw = env.WAITMATE_CHANNEL?.trim() || "auto";
   const channel = channelRaw === "photon" || channelRaw === "stub" ? channelRaw : "auto";
-  const geminiApiKey = env.GEMINI_API_KEY?.trim();
+  const xaiApiKey = env.XAI_API_KEY?.trim();
   return {
     port,
     origin: env.WAITMATE_PUBLIC_ORIGIN?.trim() || `http://localhost:${port}`,
@@ -51,8 +50,7 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     demoDefault: env.WAITMATE_DEMO === "1",
     storePath: env.WAITMATE_STORE_PATH?.trim() || "data/waitmate.json",
     channel,
-    ...(geminiApiKey ? { geminiApiKey } : {}),
-    geminiModel: env.GEMINI_MODEL?.trim() || "gemini-2.0-flash",
+    ...(xaiApiKey ? { xaiApiKey } : {}),
     agentHandle: env.PHOTON_AGENT_HANDLE?.trim() || null,
   };
 }

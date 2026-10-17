@@ -26,8 +26,7 @@ export type AppDeps = {
   demoDefault: boolean;
   agentHandle: string | null;
   photon: PhotonChannel | null;
-  geminiApiKey?: string;
-  geminiModel: string;
+  xaiApiKey?: string;
   now?: () => Date;
   polish?: (template: string, action: Decision["action"]) => Promise<string>;
 };
@@ -64,7 +63,7 @@ export function createApp(deps: AppDeps): RunningApp {
     send: (message) => routeSend(message),
     armReminder: (cart) => scheduler.arm(cart),
     disarmReminder: (code) => scheduler.disarm(code),
-    polish: deps.polish ?? ((template, action) => polishPhrase(template, action, deps.geminiApiKey, deps.geminiModel)),
+    polish: deps.polish ?? ((template, action) => polishPhrase(template, action, deps.xaiApiKey)),
   });
 
   if (deps.photon) {

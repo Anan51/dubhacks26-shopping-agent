@@ -60,8 +60,7 @@ export async function startServer(): Promise<void> {
     demoDefault: appConfig.demoDefault,
     agentHandle: appConfig.agentHandle,
     photon,
-    ...(appConfig.geminiApiKey ? { geminiApiKey: appConfig.geminiApiKey } : {}),
-    geminiModel: appConfig.geminiModel,
+    ...(appConfig.xaiApiKey ? { xaiApiKey: appConfig.xaiApiKey } : {}),
   });
 
   await attachClient(running.app);

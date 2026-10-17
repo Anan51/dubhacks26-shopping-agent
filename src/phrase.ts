@@ -20,53 +20,52 @@ export function phraseDecision(decision: Decision, signals: Signals): string {
   return parts.filter((part) => part.length > 0).join("\n\n");
 }
 
+const XAI_CHAT_URL = "https://api.x.ai/v1/chat/completions";
+const XAI_MODEL = "grok-4";
+
 /**
- * Optional wording pass. The template is the result whenever the key is missing,
- * the call fails, or the model changes the buy/wait call.
+ * Optional wording pass through the Grok API. The template is the result whenever
+ * XAI_API_KEY is missing, the call fails, or the model changes the buy/wait call.
  */
 export async function polishPhrase(
   template: string,
   action: Decision["action"],
   apiKey: string | undefined,
-  model: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<string> {
   if (!apiKey) {
     return template;
   }
   try {
-    const response = await fetchImpl(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: "user",
-              parts: [
-                {
-                  text: [
-                    "Rewrite this text message in a warm, brief voice.",
-                    "Keep the first word as Buy or Wait, matching the original call.",
-                    "Keep every dollar amount. Do not add facts or change the recommendation.",
-                    "Reply with only the message.",
-                    "",
-                    template,
-                  ].join("\n"),
-                },
-              ],
-            },
-          ],
-        }),
-        signal: AbortSignal.timeout(4_000),
+    const response = await fetchImpl(XAI_CHAT_URL, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        "content-type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        model: XAI_MODEL,
+        messages: [
+          {
+            role: "user",
+            content: [
+              "Rewrite this text message in a warm, brief voice.",
+              "Keep the first word as Buy or Wait, matching the original call.",
+              "Keep every dollar amount. Do not add facts or change the recommendation.",
+              "Reply with only the message.",
+              "",
+              template,
+            ].join("\n"),
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(4_000),
+    });
     if (!response.ok) {
       return template;
     }
-    const body = (await response.json()) as GeminiResponse;
-    const text = body.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    const body = (await response.json()) as ChatCompletionResponse;
+    const text = body.choices?.[0]?.message?.content?.trim();
     if (!text || !keepsCall(text, action)) {
       return template;
     }
@@ -105,6 +104,6 @@ function reasonSentence(code: ReasonCode, decision: Decision, signals: Signals):
   }
 }
 
-type GeminiResponse = {
-  candidates?: { content?: { parts?: { text?: string }[] } }[];
+type ChatCompletionResponse = {
+  choices?: { message?: { content?: string } }[];
 };

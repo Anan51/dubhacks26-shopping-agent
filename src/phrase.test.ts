@@ -16,9 +16,9 @@ const signals: Signals = {
   monthlyPlanCents: 7_000,
 };
 
-function geminiReply(text: string): Response {
+function chatReply(text: string): Response {
   return Response.json({
-    candidates: [{ content: { parts: [{ text }] } }],
+    choices: [{ message: { content: text } }],
   });
 }
 
@@ -46,30 +46,32 @@ describe("polishPhrase", () => {
       called = true;
       throw new Error("network");
     };
-    const text = await polishPhrase(template, "wait", undefined, "gemini-2.0-flash", fetchImpl);
+    const text = await polishPhrase(template, "wait", undefined, fetchImpl);
     assert.equal(text, template);
     assert.equal(called, false);
   });
 
   it("returns the template when the model flips the call or the request fails", async () => {
     const template = "Wait — hold.";
-    const flipped = await polishPhrase(template, "wait", "test-key", "gemini-2.0-flash", async () => geminiReply("Buy — do it."));
+    const flipped = await polishPhrase(template, "wait", "test-key", async () => chatReply("Buy — do it."));
     assert.equal(flipped, template);
 
-    const failed = await polishPhrase(template, "wait", "test-key", "gemini-2.0-flash", async () => {
+    const failed = await polishPhrase(template, "wait", "test-key", async () => {
       throw new Error("offline");
     });
     assert.equal(failed, template);
   });
 
   it("uses the model text when the call stays the same", async () => {
-    const polished = await polishPhrase(
-      "Wait — hold.",
-      "wait",
-      "test-key",
-      "gemini-2.0-flash",
-      async () => geminiReply("Wait — I'd still hold off. Today you'd lay out $988."),
-    );
+    let url = "";
+    let authorization = "";
+    const polished = await polishPhrase("Wait — hold.", "wait", "test-key", async (input, init) => {
+      url = String(input);
+      authorization = new Headers(init?.headers).get("authorization") ?? "";
+      return chatReply("Wait — I'd still hold off. Today you'd lay out $988.");
+    });
+    assert.equal(url, "https://api.x.ai/v1/chat/completions");
+    assert.equal(authorization, "Bearer test-key");
     assert.match(polished, /^Wait — I'd still hold off/);
   });
 });
