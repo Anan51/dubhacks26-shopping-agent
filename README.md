@@ -19,7 +19,7 @@ Open http://localhost:4321.
 
 1. The shop is prefilled with a synthetic phone, plan, and case. Leave **Demo reminder** checked.
 2. Press **Buy**. The page locks for 10 minutes and shows a countdown.
-3. Press **Text WaitMate**. With no Photon number configured, that opens the desk chat and prefills `Hey WaitMate, cart ABCDEF`.
+3. Press **Text WaitMate**. With no Photon number configured, that opens the desk chat and prefills `Hey WaitMate, cart ABCDEF`. Each cart has its own thread.
 4. Send that text, then answer the questions (or press **Run wait script** / **Run buy script**).
 5. **Wait** saves the cart and, in demo mode, texts a checkout link into the same desk chat about a minute later.
 6. **Buy** asks you to reply `YES`. The checkout page polls and shows a mock receipt. Nothing is charged.

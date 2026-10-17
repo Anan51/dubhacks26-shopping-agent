@@ -64,9 +64,11 @@ export function applyTurn(input: ApplyInput): ApplyResult {
   session.updatedAt = nowIso;
   session.turns.push({ role: "shopper", text: input.text });
 
-  const foundCode = extractCartCode(input.text, { allowBare: session.step === "need_code" });
-  if (foundCode) {
+  const foundCode = extractCartCode(input.text, { allowBare: session.step === "need_code" || !session.cartCode });
+  if (foundCode && foundCode !== session.cartCode) {
     session.cartCode = foundCode;
+    session.signals = {};
+    session.step = "need_code";
   }
   if (!session.cartCode) {
     return say(session, question("need_code"), { step: "need_code" });

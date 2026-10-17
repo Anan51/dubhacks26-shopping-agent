@@ -6,7 +6,7 @@ const STORAGE_KEY = "waitmate-desk-id";
 
 export function DevChat() {
   const cart = cartFromLocation();
-  const [conversationId] = useState(deskId);
+  const [conversationId] = useState(() => (cart ? `desk:cart-${cart}` : deskId()));
   const [draft, setDraft] = useState(cart ? `Hey WaitMate, cart ${cart}` : "");
   const [turns, setTurns] = useState<TranscriptTurn[]>([]);
   const [error, setError] = useState<string | null>(null);

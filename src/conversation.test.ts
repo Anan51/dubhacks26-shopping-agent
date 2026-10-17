@@ -125,6 +125,47 @@ describe("applyTurn", () => {
     assert.equal(missing.cart.status, "cooling");
   });
 
+  it("starts the questions over when the shopper names a different cart", () => {
+    const first = sampleCart("FRST22");
+    const second = sampleCart("SCND22");
+    const carts = new Map<string, Cart>([
+      [first.code, first],
+      [second.code, second],
+    ]);
+    let session: Session | null = null;
+    for (const [index, text] of ["Hey WaitMate, cart FRST22", "14 months", "it works fine", "0", "2000"].entries()) {
+      const result = applyTurn({
+        session,
+        conversationId: "desk:test",
+        messageId: `a-${index}`,
+        text,
+        now: NOW,
+        demoReminderMs: 60_000,
+        loadCart: (code) => carts.get(code),
+      });
+      session = result.session;
+      if (result.cart) {
+        carts.set(result.cart.code, result.cart);
+      }
+    }
+    assert.equal(carts.get("FRST22")?.status, "saved");
+
+    const switched = applyTurn({
+      session,
+      conversationId: "desk:test",
+      messageId: "b-0",
+      text: "Hey WaitMate, cart SCND22",
+      now: NOW,
+      demoReminderMs: 60_000,
+      loadCart: (code) => carts.get(code),
+    });
+    assert.match(switched.reply ?? "", /How old/);
+    assert.equal(switched.cart?.code, "SCND22");
+    assert.equal(switched.cart?.status, "cooling");
+    assert.equal(switched.cart?.decision, null);
+    assert.equal(carts.get("FRST22")?.status, "saved");
+  });
+
   it("ignores a replay of the same inbound id", () => {
     const cart = sampleCart("DUP222");
     const first = applyTurn({
