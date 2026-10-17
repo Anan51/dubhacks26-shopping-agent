@@ -2,7 +2,10 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { ApiError } from "@photon-ai/api";
 
+import { readConfig } from "../src/config.js";
 import { handleIncomingEvent } from "../src/handle-message.js";
+import type { Runtime } from "../src/runtime.js";
+import { getWebhookRuntime } from "../src/webhook-runtime.js";
 
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -43,6 +46,10 @@ export const config = {
  * unverified. Treat the deployment URL as a secret until this TODO is done.
  */
 export default async function handler(req: WebhookRequest, res: ServerResponse): Promise<void> {
+  await handleWebhook(req, res);
+}
+
+export async function handleWebhook(req: WebhookRequest, res: ServerResponse, runtime?: Runtime): Promise<void> {
   if (req.method !== "POST") {
     sendJson(res, 405, { error: "method not allowed" });
     return;
@@ -71,7 +78,7 @@ export default async function handler(req: WebhookRequest, res: ServerResponse):
   }
 
   try {
-    const decision = await handleIncomingEvent(event);
+    const decision = await handleIncomingEvent(event, runtime ?? getWebhookRuntime(), readConfig());
     sendJson(res, 200, { ok: true, action: decision.action });
   } catch (error) {
     if (error instanceof ApiError) {

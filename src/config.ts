@@ -25,6 +25,58 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
   };
 }
 
+export type AppConfig = {
+  port: number;
+  origin: string;
+  coolingMs: number;
+  demoReminderMs: number;
+  demoDefault: boolean;
+  storePath: string;
+  channel: "auto" | "photon" | "stub";
+  geminiApiKey?: string;
+  geminiModel: string;
+  agentHandle: string | null;
+};
+
+export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  const port = numberFrom(env.PORT ?? env.WAITMATE_PORT, 4321);
+  const channelRaw = env.WAITMATE_CHANNEL?.trim() || "auto";
+  const channel = channelRaw === "photon" || channelRaw === "stub" ? channelRaw : "auto";
+  const geminiApiKey = env.GEMINI_API_KEY?.trim();
+  return {
+    port,
+    origin: env.WAITMATE_PUBLIC_ORIGIN?.trim() || `http://localhost:${port}`,
+    coolingMs: numberFrom(env.WAITMATE_COOLING_MS, 600_000),
+    demoReminderMs: numberFrom(env.WAITMATE_DEMO_REMINDER_MS, 60_000),
+    demoDefault: env.WAITMATE_DEMO === "1",
+    storePath: env.WAITMATE_STORE_PATH?.trim() || "data/waitmate.json",
+    channel,
+    ...(geminiApiKey ? { geminiApiKey } : {}),
+    geminiModel: env.GEMINI_MODEL?.trim() || "gemini-2.0-flash",
+    agentHandle: env.PHOTON_AGENT_HANDLE?.trim() || null,
+  };
+}
+
+export function photonConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(
+    env.PHOTON_API_KEY?.trim() &&
+      env.PHOTON_PROJECT_ID?.trim() &&
+      env.PHOTON_PLATFORM?.trim() &&
+      env.PHOTON_AGENT_HANDLE?.trim(),
+  );
+}
+
+function numberFrom(value: string | undefined, fallback: number): number {
+  if (!value?.trim()) {
+    return fallback;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
 function required(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name]?.trim();
   if (!value) {

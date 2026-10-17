@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { decideEcho } from "./handle-message.js";
+import { readIncomingMessage } from "./handle-message.js";
 
 const config = { platform: "imessage" as const, agentHandle: "+15550001111" };
 
@@ -38,20 +38,20 @@ function event(overrides: Record<string, unknown> = {}): unknown {
   };
 }
 
-describe("decideEcho", () => {
-  it("replies with the shared echo text for a human iMessage", () => {
-    const decision = decideEcho(event(), config);
-    assert.equal(decision.action, "reply");
-    if (decision.action !== "reply") {
+describe("readIncomingMessage", () => {
+  it("keeps the shopper text for a human iMessage", () => {
+    const decision = readIncomingMessage(event(), config);
+    assert.equal(decision.action, "receive");
+    if (decision.action !== "receive") {
       return;
     }
-    assert.equal(decision.outboundText, "hello from the shopping agent: need shoes");
-    assert.equal(decision.senderId, "pho_usr_00000000000000000000000002");
-    assert.equal(decision.spaceId, "pho_spc_00000000000000000000000000");
+    assert.equal(decision.message.text, "need shoes");
+    assert.equal(decision.message.agentSenderId, "pho_usr_00000000000000000000000002");
+    assert.equal(decision.message.spaceId, "pho_spc_00000000000000000000000000");
   });
 
   it("ignores the guessed shape where data itself is the message", () => {
-    const decision = decideEcho(
+    const decision = readIncomingMessage(
       {
         id: "pho_evt_00000000000000000000000000",
         type: "message.received",
@@ -71,16 +71,16 @@ describe("decideEcho", () => {
     const typing = event();
     const typingRecord = typing as { data: { object: { content: unknown } } };
     typingRecord.data.object.content = { type: "space.typing.update" };
-    assert.equal(decideEcho(typing, config).action, "ignore");
+    assert.equal(readIncomingMessage(typing, config).action, "ignore");
 
     const otherLine = event();
     const otherRecord = otherLine as { data: { object: { receivedBy: { handle: string } } } };
     otherRecord.data.object.receivedBy.handle = "+15559990000";
-    assert.deepEqual(decideEcho(otherLine, config), { action: "ignore", reason: "not-our-agent" });
+    assert.deepEqual(readIncomingMessage(otherLine, config), { action: "ignore", reason: "not-our-agent" });
 
     const group = event();
     const groupRecord = group as { data: { object: { space: { kind: string } } } };
     groupRecord.data.object.space.kind = "group";
-    assert.deepEqual(decideEcho(group, config), { action: "ignore", reason: "not-direct" });
+    assert.deepEqual(readIncomingMessage(group, config), { action: "ignore", reason: "not-direct" });
   });
 });

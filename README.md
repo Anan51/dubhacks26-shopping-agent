@@ -1,106 +1,82 @@
-# DubHacks 2026 shopping agent
+# WaitMate
 
-Hello-world echo agent on **Photon 2.0 Beta** (`@photon-ai/api`, not `spectrum-ts`). When someone texts the shared iMessage line, the agent replies:
+Anti-impulse checkout for DubHacks 2026. A synthetic phone shop starts a 10-minute cooling-off lock, then WaitMate asks a few questions and gives a buy-or-wait call. The call is a deterministic heuristic. An optional model can only rephrase it.
 
-```text
-hello from the shopping agent: <their text>
+Tracks: Visa-style checkout, T-Mobile Timekeeper (honest “don’t upgrade yet” costs), and Photon 2.0 messaging.
+
+Built on the Photon 2.0 echo scaffold. The live listener still uses `@photon-ai/api` and Socket.IO. `POST /api/webhook` is still there for a Vercel deploy.
+
+## Demo without a Photon key
+
+Node 22 or newer is enough locally. `package.json` still asks Vercel for Node 24.
+
+```sh
+npm install
+npm run dev
 ```
 
-The reply string lives in [`src/reply.ts`](src/reply.ts). Both receivers call [`src/handle-message.ts`](src/handle-message.ts), which sends that string back with `POST /v1/projects/{id}/messages`.
+Open http://localhost:4321.
 
-This is a scaffold. It does not shop, call a model, or talk to a store.
+1. The shop is prefilled with a synthetic phone, plan, and case. Leave **Demo reminder** checked.
+2. Press **Buy**. The page locks for 10 minutes and shows a countdown.
+3. Press **Text WaitMate**. With no Photon number configured, that opens the desk chat and prefills `Hey WaitMate, cart ABCDEF`.
+4. Send that text, then answer the questions (or press **Run wait script** / **Run buy script**).
+5. **Wait** saves the cart and, in demo mode, texts a checkout link into the same desk chat about a minute later.
+6. **Buy** asks you to reply `YES`. The checkout page polls and shows a mock receipt. Nothing is charged.
 
-Photon docs used here are the Beta set: [https://photon.codes/docs/beta/](https://photon.codes/docs/beta/).
+The banner says **SYNTHETIC DATA**. Product names (Northstar, Harbor, Lumen, Signal) are fictional.
 
-## What you need
+### Scripts
 
-- Node.js **24** or later. The [project setup guide](https://photon.codes/docs/beta/get-started/project) requires it for the TypeScript walkthrough. `package.json` sets `"engines": { "node": "24.x" }` so Vercel uses that runtime. `.nvmrc` is `24`.
-- A Photon Beta account at [https://photon.codes/beta](https://photon.codes/beta) (dashboard: [https://app.beta.photon.codes](https://app.beta.photon.codes)).
-- An iPhone or Mac that can send a blue-bubble iMessage. The human has to text first. Shared lines are direct chats only.
+Wait, on the preselected cart:
 
-## 1. Photon project and key
+```text
+14 months
+it works fine
+420
+1500
+```
 
-1. Sign in and create an organization and a project.
-2. Settings: copy the Project ID (`pho_prj_...`).
-3. API keys → New API key. Permissions: `project:read` and `project:write`. The key (`pho_sk_...`) is shown once.
+Buy:
 
-Guide: [Set up your project](https://photon.codes/docs/beta/get-started/project).
+```text
+38 months
+screen is cracked and the battery dies by 3pm
+0
+2000
+YES
+```
 
-## 2. Shared iMessage line
+## Demo with Photon
 
-1. In the project, open iMessage.
-2. Enter your own iMessage phone (E.164, like `+14155550123`) or Apple ID email as the test sender.
-3. Assign a number from the shared pool. That number is the agent. Copy it.
-
-Only that sender identity can reach the line. Each extra tester needs their own assignment. The free plan includes shared assignments. A shared line cannot send the first message, and it cannot do group chats.
-
-Guide: [Build an iMessage agent](https://photon.codes/docs/beta/get-started/imessage).
-
-## 3. Local env
+You need a Photon 2.0 project and a shared iMessage assignment. The human has to text first. Docs: https://photon.codes/docs/beta/
 
 ```sh
 cp .env.example .env
 ```
 
-Fill in `PHOTON_API_KEY`, `PHOTON_PROJECT_ID`, `PHOTON_PLATFORM=imessage`, `PHOTON_AGENT_HANDLE`, and `PHOTON_TEST_SENDER`. Leave `PHOTON_WEBHOOK_SECRET` empty until you register a webhook. Do not commit `.env`.
-
-`PHOTON_API_ORIGIN` is optional and defaults to `https://api.photon.codes`.
-
-## 4. Run the live listener
-
-No public URL. This process holds Photon's Socket.IO connection ([live events](https://photon.codes/docs/beta/websocket/)).
+Fill in `PHOTON_API_KEY`, `PHOTON_PROJECT_ID`, `PHOTON_PLATFORM=imessage`, `PHOTON_AGENT_HANDLE`, and `PHOTON_TEST_SENDER`. Then:
 
 ```sh
-npm install
-npm run dev:agent
+npm run dev
 ```
 
-Wait until it prints `Connected`. From the iMessage identity you assigned, text the agent's number. You should get `hello from the shopping agent: ` plus your text.
+The server connects to Photon’s Socket.IO live events. No public URL. **Text WaitMate** becomes an `sms:` link to `PHOTON_AGENT_HANDLE` with the cart code in the body. Messages on that line hit the same agent as the desk chat. Desk chat stays available if a judge has no iPhone.
 
-The replay cursor stays in memory. Restarting the process does not catch texts that arrived while it was down (`startSeq` 0 means live only).
+Set `WAITMATE_PUBLIC_ORIGIN` to the origin you want inside reminder texts. At the table that is usually `http://localhost:4321`.
 
-## 5. Deploy the webhook on Vercel
+`WAITMATE_CHANNEL=stub` forces the desk chat even if keys are present. `WAITMATE_CHANNEL=photon` refuses to boot without the four Photon variables.
 
-The same handler is a serverless POST at `/api/webhook`.
+## What is stubbed
 
-1. Import this repo in Vercel (Hobby / free tier is enough).
-2. Set `PHOTON_API_KEY`, `PHOTON_PROJECT_ID`, `PHOTON_PLATFORM`, `PHOTON_AGENT_HANDLE`, and `PHOTON_TEST_SENDER`. Leave `PHOTON_WEBHOOK_SECRET` unset until the destination exists; the route returns 500 without a `whsec_` secret. Framework preset: Other. Node 24 comes from `engines`.
-3. Deploy. The route is `https://<project>.vercel.app/api/webhook`.
-4. In Photon, create a webhook destination for `message.received`. List selectable API versions first (`GET /v1/projects/{projectId}/webhooks/api-versions`, or `photon.projects.listWebhookApiVersions`) and use one whose `selectable` flag is true. The iMessage event schema in the current OpenAPI document is pinned to `apiVersion` `2026-07-01`; the client example also shows `2026-01-01`. Use whichever the list says you can select.
+- Payments, inventory, and the catalog. No carrier quotes.
+- The desk chat (`/dev`) stands in for iMessage until a Photon key is set.
+- Trade-in values are a fixed curve in `src/heuristic.ts`, and the payoff math assumes $35 a month.
+- Demo mode compresses the reminder to about a minute (`WAITMATE_DEMO_REMINDER_MS`, default 60000). The date in the message is still six months out.
+- `GEMINI_API_KEY` is optional. If it is unset, or the model changes the buy/wait call, the template is sent. The key never goes in git.
+- The webhook still does not verify Photon’s signature. Beta docs don’t name the header or algorithm. See the TODO in `api/webhook.ts`.
 
-```ts
-import { randomUUID } from "node:crypto";
-import { Photon } from "@photon-ai/api";
-
-const photon = new Photon({
-  headers: { Authorization: `Bearer ${process.env.PHOTON_API_KEY}` },
-});
-
-const created = await photon.projects.createWebhookDestination({
-  path: { projectId: process.env.PHOTON_PROJECT_ID ?? "" },
-  headers: { idempotencyKey: randomUUID() },
-  body: {
-    apiVersion: "SELECT_A_SELECTABLE_VERSION",
-    enabledEvents: ["message.received"],
-    name: "dubhacks-echo",
-    url: "https://<project>.vercel.app/api/webhook",
-  },
-});
-```
-
-5. Copy `created.signingSecret` (`whsec_...`) into `PHOTON_WEBHOOK_SECRET` on Vercel and redeploy. It is not returned again on later reads.
-
-Creating a destination: [createWebhookDestination](https://photon.codes/docs/beta/api-client/sdk/projects/create-webhook-destination).
-
-### Signature verification is not implemented
-
-Beta docs say to store the signing secret for signature verification. They do not document the header name or the algorithm. The route requires `PHOTON_WEBHOOK_SECRET` to be a `whsec_` value, then accepts the JSON body **without checking a signature**. See the TODO in [`api/webhook.ts`](api/webhook.ts).
-
-Stable Spectrum (`X-Spectrum-Signature` / `spectrum-ts`) is a different product. Do not point this route at those docs.
-
-Until verification exists, anyone who can POST to the URL can trigger a reply. Keep the URL private.
-
-Photon may deliver the same event more than once. Replies use idempotency key `echo:<message id>`.
+Shopper text becomes signals only in `extractSignals` (`src/extract-signals.ts`). `decide` does not read raw text. Phrasing does not choose the call. A later change can replace the keyword extractor without rewriting the heuristic.
 
 ## Checks
 
@@ -108,15 +84,26 @@ Photon may deliver the same event more than once. Replies use idempotency key `e
 npm test
 npm run typecheck
 npm run build
+npm start
 ```
 
-There is no Photon key in this repo, so those commands do not open a live conversation.
+`npm start` serves `web/dist` and expects `npm run build` first.
 
 ## Layout
 
 | File | Role |
 | --- | --- |
-| `src/reply.ts` | The one function to replace with the real agent |
-| `src/handle-message.ts` | Reads a `message.received` event and sends the reply |
-| `src/agent.ts` | `npm run dev:agent` Socket.IO worker |
-| `api/webhook.ts` | Vercel `message.received` webhook |
+| `src/extract-signals.ts` | Free text → partial signals (keyword/regex) |
+| `src/heuristic.ts` | `decide(signals)` buy-or-wait call |
+| `src/phrase.ts` | Template, plus optional Gemini wording |
+| `src/conversation.ts` | Questions, confirm, save, unlock |
+| `src/server.ts` | Express + Vite checkout + Photon listener |
+| `src/channels/photon.ts` | Socket.IO adapter |
+| `web/` | React checkout and desk chat |
+| `api/webhook.ts` | Vercel `message.received` route |
+
+Carts and desk transcripts live in `data/waitmate.json` (gitignored). The judging demo is this one process. A Vercel webhook is a separate process, so it does not see carts created on the laptop.
+
+## Photon, not verified here
+
+There is no Photon key in this environment, so the live socket, shared iMessage line, and webhook delivery were not exercised against `api.photon.codes`. The listener and the `message.received` parser are the scaffold’s, including `data.object` from the Beta OpenAPI schema. Signature verification is still unimplemented. Sending still uses `POST /v1/projects/{id}/messages` with an idempotency key.

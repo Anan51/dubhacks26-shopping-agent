@@ -1,7 +1,6 @@
-import { Photon } from "@photon-ai/api";
-
-import { readConfig, type AgentConfig } from "./config.js";
-import { replyToText } from "./reply.js";
+import type { InboundMessage } from "./channel.js";
+import type { AgentConfig } from "./config.js";
+import type { Runtime } from "./runtime.js";
 
 /**
  * Public `message.received` event from the Beta OpenAPI schema
@@ -10,14 +9,8 @@ import { replyToText } from "./reply.js";
  * https://api.photon.codes/openapi.json
  * https://photon.codes/docs/beta/websocket/events
  */
-export type EchoDecision =
-  | {
-      action: "reply";
-      messageId: string;
-      spaceId: string;
-      senderId: string;
-      outboundText: string;
-    }
+export type HandleResult =
+  | { action: "reply"; messageId: string }
   | { action: "ignore"; reason: IgnoreReason };
 
 export type IgnoreReason =
@@ -31,9 +24,19 @@ export type IgnoreReason =
   | "not-our-agent"
   | "not-plain-text";
 
+export type ReceivedText = {
+  id: string;
+  text: string;
+  spaceId: string;
+  agentSenderId: string;
+};
+
 type EchoConfig = Pick<AgentConfig, "platform" | "agentHandle">;
 
-export function decideEcho(event: unknown, config: EchoConfig): EchoDecision {
+export function readIncomingMessage(
+  event: unknown,
+  config: EchoConfig,
+): { action: "receive"; message: ReceivedText } | { action: "ignore"; reason: IgnoreReason } {
   if (!isRecord(event)) {
     return ignore("not-an-object");
   }
@@ -87,45 +90,27 @@ export function decideEcho(event: unknown, config: EchoConfig): EchoDecision {
   }
 
   return {
-    action: "reply",
-    messageId,
-    spaceId,
-    senderId,
-    outboundText: replyToText(text),
+    action: "receive",
+    message: { id: messageId, text, spaceId, agentSenderId: senderId },
   };
 }
 
-export async function handleIncomingEvent(event: unknown): Promise<EchoDecision> {
-  const config = readConfig();
-  const decision = decideEcho(event, config);
-  switch (decision.action) {
-    case "ignore":
-      return decision;
-    case "reply": {
-      const photon = new Photon({
-        baseUrl: config.apiOrigin,
-        headers: { Authorization: `Bearer ${config.apiKey}` },
-      });
-      await photon.projects.sendMessage({
-        path: { id: config.projectId },
-        headers: { "idempotency-key": `echo:${decision.messageId}` },
-        body: {
-          spaceId: decision.spaceId,
-          senderId: decision.senderId,
-          parentMessageId: decision.messageId,
-          content: { type: "text", format: "plain", text: decision.outboundText },
-        },
-      });
-      return decision;
-    }
-    default: {
-      const unreachable: never = decision;
-      return unreachable;
-    }
+export async function handleIncomingEvent(event: unknown, runtime: Runtime, config: EchoConfig): Promise<HandleResult> {
+  const parsed = readIncomingMessage(event, config);
+  if (parsed.action === "ignore") {
+    return parsed;
   }
+  const inbound: InboundMessage = {
+    id: parsed.message.id,
+    conversationId: parsed.message.spaceId,
+    text: parsed.message.text,
+    agentSenderId: parsed.message.agentSenderId,
+  };
+  await runtime.enqueue(inbound);
+  return { action: "reply", messageId: parsed.message.id };
 }
 
-function ignore(reason: IgnoreReason): EchoDecision {
+function ignore(reason: IgnoreReason): { action: "ignore"; reason: IgnoreReason } {
   return { action: "ignore", reason };
 }
 
