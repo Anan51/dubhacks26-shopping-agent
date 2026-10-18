@@ -1,0 +1,8 @@
+# Redacted markdown reports may be committed. Everything else in this
+# directory is a local dump and must not be committed, including any
+# file that might contain a connection string.
+*
+!README.md
+!latest.md
+!atlas-evidence-*.md
+!.gitignore
