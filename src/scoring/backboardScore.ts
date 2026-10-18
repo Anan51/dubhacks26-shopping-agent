@@ -217,25 +217,33 @@ const NAME_STOPWORDS = new Set(["a", "an", "the", "and", "or", "of", "for", "to"
 
 /**
  * Sum of closeness for regret hits in the same product category as the bag.
- * Category equality is the first gate. Two "other" names only count when they
- * share a token, because unrecognized products all land in that bucket.
+ * The bag's recorded category wins when it is non-empty. Otherwise the name
+ * is mapped with categoryForItem. Category equality is the first gate.
+ * Two "other" names only count when they share a token, because unrecognized
+ * products all land in that bucket.
  * The score is a distance, so it is only a second guard: a hit counts when
  * the distance is at most the maximum. A cross-category hit can still be close.
  * A missing score counts as one hit. Closeness is 1 minus the distance, so a
  * closer hit weighs more. Non-regret memories add nothing.
  */
-function similarRegretWeight(hits: readonly MemorySearchHit[], maxDistance: number, bagItem: string): number {
-  const bagCategory = categoryForItem(bagItem);
+function similarRegretWeight(
+  hits: readonly MemorySearchHit[],
+  maxDistance: number,
+  bagItem: string,
+  bagCategory: string,
+): number {
+  const recorded = bagCategory.trim().toLowerCase();
+  const category = recorded.length > 0 ? recorded : categoryForItem(bagItem);
   let weight = 0;
   for (const hit of hits) {
     if (!isRegretContent(hit.content)) {
       continue;
     }
     const memoryCategory = categoryOfMemory(hit.content);
-    if (memoryCategory !== bagCategory) {
+    if (memoryCategory !== category) {
       continue;
     }
-    if (bagCategory === "other" && memoryCategory === "other" && !itemNamesOverlap(bagItem, memorySubject(hit.content))) {
+    if (category === "other" && memoryCategory === "other" && !itemNamesOverlap(bagItem, memorySubject(hit.content))) {
       continue;
     }
     if (!withinMaxDistance(hit.score, maxDistance)) {
@@ -249,14 +257,34 @@ function similarRegretWeight(hits: readonly MemorySearchHit[], maxDistance: numb
 /**
  * Search hits return content and a score, not metadata. The score is a
  * distance, where 0 is identical. A vote memory is already
- * `regretted purchase: {item} ({category}, {price})` from purchaseVoteLine,
- * so the item name is taken from that text and mapped with categoryForItem,
- * the same function used for the bag. A `Regret:` line with no vote shape is
- * mapped from its text. A hit counts only when the two categories are equal.
- * When both are "other", the names also have to share a meaningful token.
+ * `regretted purchase: {item} ({category}, {price})` from purchaseVoteLine.
+ * The category inside those parentheses, the token before the first comma,
+ * is used when it is present. A `Regret:` line with no vote shape has nothing
+ * to parse, so it is mapped with categoryForItem from its subject. A hit
+ * counts only when the two categories are equal. When both are "other", the
+ * names also have to share a meaningful token.
  */
 function categoryOfMemory(content: string): string {
+  const recorded = recordedVoteCategory(content);
+  if (recorded) {
+    return recorded;
+  }
   return categoryForItem(memorySubject(content));
+}
+
+/** Category written by purchaseVoteLine, or null when the vote shape is absent. */
+function recordedVoteCategory(content: string): string | null {
+  const match = content.trim().match(/^regretted purchase:\s*.+\(([^)]*)\)\s*$/i);
+  const inside = match?.[1];
+  if (inside == null) {
+    return null;
+  }
+  const comma = inside.indexOf(",");
+  if (comma < 0) {
+    return null;
+  }
+  const category = inside.slice(0, comma).trim().toLowerCase();
+  return category.length > 0 ? category : null;
 }
 
 function itemNamesOverlap(bagItem: string, rememberedItem: string): boolean {
@@ -316,7 +344,7 @@ async function searchRegretWeight(
       REGRET_SEARCH_LIMIT,
       options?.searchTimeoutMs ?? REGRET_SEARCH_TIMEOUT_MS,
     );
-    return similarRegretWeight(hits, regretSearchMaxDistance(), input.item);
+    return similarRegretWeight(hits, regretSearchMaxDistance(), input.item, input.category);
   } catch {
     return 0;
   }

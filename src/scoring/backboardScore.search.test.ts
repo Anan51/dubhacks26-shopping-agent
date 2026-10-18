@@ -9,7 +9,7 @@ import { connectMongo } from "../auth/db.js";
 import { MemoryNote, User } from "../auth/user.js";
 import { InMemoryBackboardClient, type BackboardClient, type MemorySearchHit } from "../memory/backboard.js";
 import { PurchaseRecord } from "../purchases/model.js";
-import { insertRealPurchase, purchaseVoteLine, setPurchaseFeedback, writeUserMemoryLine } from "../purchases/service.js";
+import { categoryForItem, insertRealPurchase, purchaseVoteLine, setPurchaseFeedback, writeUserMemoryLine } from "../purchases/service.js";
 import {
   computeImpulseScore,
   REGRET_SEARCH_LIMIT,
@@ -355,6 +355,138 @@ describe("regret search scoring", { concurrency: false }, () => {
       client: scriptedClient(async () => [socksRegret]),
     });
     assert.equal(macbookCross.score, 4.5);
+  });
+
+  it("keeps the demo path at 4.5 when the item is necessary or the search has no hits", async () => {
+    const ada = await User.create({
+      email: "search-demo-path@example.com",
+      passwordHash: HASH,
+      hourlyRate: 30,
+      weeklyBudget: 500,
+      backboardAssistantId: "asst-demo-path",
+    });
+    const phone: ImpulseItem = { item: "Pixel 9", category: "phone", price: 40, necessary: false };
+    const pixelRegret = hit("regretted purchase: Pixel 9 (phone, $799.00)", 0.44);
+    const none = await computeImpulseScore(ada.id, phone, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => []),
+    });
+    assert.equal(none.score, 4.5);
+    assert.equal(none.why, null);
+
+    const necessary = await computeImpulseScore(ada.id, { ...phone, necessary: true }, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [pixelRegret]),
+    });
+    assert.equal(necessary.score, 4.5);
+    assert.equal(necessary.why, null);
+  });
+
+  it("drops an other-category socks regret against a computer bag", async () => {
+    const ada = await User.create({
+      email: "search-socks-macbook@example.com",
+      passwordHash: HASH,
+      hourlyRate: 30,
+      weeklyBudget: 500,
+      backboardAssistantId: "asst-socks-macbook",
+    });
+    const macbook: ImpulseItem = { item: "MacBook Air", category: "computer", price: 40, necessary: false };
+    const socks = hit("regretted purchase: Wool socks (other, $12.00)", 0.44);
+    const flat = await computeImpulseScore(ada.id, macbook, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [socks]),
+    });
+    assert.equal(flat.score, 4.5);
+    assert.equal(flat.why, null);
+  });
+
+  it("uses a Pixel 9 regret's recorded phone category instead of the keyword list", async () => {
+    assert.equal(categoryForItem("Pixel 9"), "other");
+    const ada = await User.create({
+      email: "search-pixel@example.com",
+      passwordHash: HASH,
+      hourlyRate: 30,
+      weeklyBudget: 500,
+      backboardAssistantId: "asst-pixel",
+    });
+    const pixel = hit("regretted purchase: Pixel 9 (phone, $799.00)", 0.44);
+    const bag: ImpulseItem = { item: "Pixel 9", category: "phone", price: 40, necessary: false };
+    const raised = await computeImpulseScore(ada.id, bag, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [pixel]),
+    });
+    // 4.5 + 0.7 * (1 - 0.44) rounds to 4.9.
+    assert.ok(raised.score > 4.5);
+    assert.equal(raised.score, 4.9);
+    assert.equal(raised.why, "You regretted a similar purchase before.");
+
+    const cased = hit("regretted purchase: Pixel 9 ( Phone , $799.00)", 0.44);
+    const trimmed = await computeImpulseScore(ada.id, bag, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [cased]),
+    });
+    assert.equal(trimmed.score, 4.9);
+  });
+
+  it("uses the bag's recorded phone category for a Galaxy S24", async () => {
+    assert.equal(categoryForItem("Galaxy S24"), "other");
+    const ada = await User.create({
+      email: "search-galaxy@example.com",
+      passwordHash: HASH,
+      hourlyRate: 30,
+      weeklyBudget: 500,
+      backboardAssistantId: "asst-galaxy",
+    });
+    const pixel = hit("regretted purchase: Pixel 9 (phone, $799.00)", 0.44);
+    const galaxy: ImpulseItem = { item: "Galaxy S24", category: "phone", price: 40, necessary: false };
+    const raised = await computeImpulseScore(ada.id, galaxy, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [pixel]),
+    });
+    assert.ok(raised.score > 4.5);
+    assert.equal(raised.score, 4.9);
+    assert.equal(raised.why, "You regretted a similar purchase before.");
+
+    const iphoneRegret = hit("regretted purchase: iPhone (phone, $999)", 0.44);
+    const fromIphone = await computeImpulseScore(ada.id, galaxy, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [iphoneRegret]),
+    });
+    assert.equal(fromIphone.score, 4.9);
+  });
+
+  it("maps a free-text Regret line with categoryForItem when no category is recorded", async () => {
+    const ada = await User.create({
+      email: "search-freetext@example.com",
+      passwordHash: HASH,
+      hourlyRate: 30,
+      weeklyBudget: 500,
+      backboardAssistantId: "asst-freetext",
+    });
+    const freeText = hit("Regret: iPhone 16 Pro", 0.44);
+    const phone: ImpulseItem = { item: "iPhone", category: "phone", price: 40, necessary: false };
+    const raised = await computeImpulseScore(ada.id, phone, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [freeText]),
+    });
+    assert.ok(raised.score > 4.5);
+    assert.equal(raised.score, 4.9);
+    assert.equal(raised.why, "You regretted a similar purchase before.");
+
+    const keywordBag: ImpulseItem = { item: "iPhone", category: "  ", price: 40, necessary: false };
+    const fromName = await computeImpulseScore(ada.id, keywordBag, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [freeText]),
+    });
+    assert.equal(fromName.score, 4.9);
+
+    const unrecognized: ImpulseItem = { item: "Galaxy S24", category: "", price: 40, necessary: false };
+    const missed = await computeImpulseScore(ada.id, unrecognized, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [freeText]),
+    });
+    assert.equal(missed.score, 4.5);
+    assert.equal(missed.why, null);
   });
 
   it("falls back to 4.5 when the regret search times out", async () => {
