@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 
 import { formatUsd } from "../../src/format.js";
+import { UPGRADE_PROMPT } from "../../src/links.js";
 import type { Decision } from "../../src/types.js";
 
 export type OverlayModel = {
@@ -128,7 +129,7 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
             {model.qrDataUrl ? <img alt="QR code that opens the cart text" src={model.qrDataUrl} width={160} height={160} /> : null}
           </div>
         ) : null}
-        <h2>Try the reply here</h2>
+        <h2>{UPGRADE_PROMPT}</h2>
         <ol className="turns">
           {model.turns.map((turn, index) => (
             <li key={`${turn.role}-${index}`}>{turn.text}</li>

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { formatUsd } from "./format.js";
 import { decide } from "./heuristic.js";
 import { phraseDecision, polishPhrase } from "./phrase.js";
 import type { Signals } from "./types.js";
@@ -35,11 +36,26 @@ describe("phraseDecision", () => {
     assert.match(text, /example data/);
   });
 
-  it("leads with Unlock when waiting costs more", () => {
-    const decision = decide(signals({ owedCents: 0 }));
-    const text = phraseDecision(decision, signals({ owedCents: 0, problemText: "" }), null);
+  it("names the example offer when that is why the call sleeps", () => {
+    const shopper = signals({ owedCents: 0, deviceAgeMonths: 24, problemText: "" });
+    const decision = decide(shopper);
+    const text = phraseDecision(decision, shopper, null);
+    assert.match(text, /^Waiting for the example trade-in bundle saves about /);
+    assert.match(text, new RegExp(formatUsd(decision.savingsCents).replace(/[$.]/g, "\\$&")));
+    assert.match(text, /not a current T-Mobile or carrier deal/);
+  });
+
+  it("leads with Unlock when a broken phone is needed now", () => {
+    const shopper = signals({
+      needVsWant: "need",
+      urgency: "high",
+      currentPhoneBroken: true,
+      problemText: "",
+    });
+    const decision = decide(shopper);
+    const text = phraseDecision(decision, shopper, null);
     assert.match(text, /^Unlock /);
-    assert.match(text, /Need vs want: unknown \(default\)/);
+    assert.match(text, /Need vs want: need \(default\)/);
   });
 });
 

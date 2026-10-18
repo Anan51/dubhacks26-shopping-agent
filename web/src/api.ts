@@ -6,6 +6,12 @@ export type Decision = {
   mathWaitMonths: number;
   mathSavingsCents: number;
   signalEffect: "need_unlock" | "want_sleep" | "math";
+  financingAction: "sleep" | "unlock";
+  financingSavingsCents: number;
+  offerId: string | null;
+  offerName: string | null;
+  offerSavingCents: number;
+  offerMonthsFromNow: number;
   waitMonths: number;
   savingsCents: number;
   costNowCents: number;
@@ -75,6 +81,7 @@ export type PublicConfig = {
   grokEnabled: boolean;
   exampleOwedCents: number;
   fallbackTotalCents: number;
+  exampleOffers: { id: string; name: string; savingCents: number; monthsFromNow: number; windowLabel: string }[];
 };
 
 export type PayGate = {

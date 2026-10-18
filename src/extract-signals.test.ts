@@ -122,8 +122,9 @@ describe("parseGrokSignalJson", () => {
     assert.equal(offline.source, "keywords");
 
     const decision = decide(fullSignals(grok.signals));
-    assert.equal(decision.action, "unlock");
-    assert.equal(decision.waitMonths, 0);
+    assert.equal(decision.financingAction, "unlock");
+    assert.equal(decision.action, "sleep");
+    assert.equal(decision.offerId, "example-trade-in-bundle");
   });
 });
 
@@ -166,7 +167,7 @@ describe("motive flips", () => {
     assert.equal(want.signals.urgency, "low");
     assert.equal(want.motiveSources.urgency, "keywords");
     const wanted = decide(withCartFacts({ ...want.signals, owedCents: 0 }, 120_000));
-    assert.equal(wanted.mathAction, "unlock");
+    assert.equal(wanted.financingAction, "unlock");
     assert.equal(wanted.action, "sleep");
     assert.equal(wanted.signalEffect, "want_sleep");
   });
@@ -217,6 +218,7 @@ describe("motive flips", () => {
     });
     assert.equal(grokWant.motiveSources.needVsWant, "grok");
     const wanted = decide(withCartFacts({ ...grokWant.signals, owedCents: 0 }, 120_000));
+    assert.equal(wanted.financingAction, "unlock");
     assert.equal(wanted.action, "sleep");
     assert.equal(wanted.signalEffect, "want_sleep");
 

@@ -136,10 +136,18 @@ export type SignalEffect = "need_unlock" | "want_sleep" | "math";
 
 export type Decision = {
   action: VerdictAction;
-  /** What trade-in and financing alone would have said. */
+  /** What trade-in decay and financing alone would have said, before example offers. */
+  financingAction: VerdictAction;
+  financingSavingsCents: number;
+  /** Money call after example offers. Motive signals can still override `action`. */
   mathAction: VerdictAction;
   mathWaitMonths: number;
   mathSavingsCents: number;
+  /** Set when an example offer is the money reason to wait. Not a live carrier deal. */
+  offerId: string | null;
+  offerName: string | null;
+  offerSavingCents: number;
+  offerMonthsFromNow: number;
   /** Why `action` matches or leaves `mathAction`. */
   signalEffect: SignalEffect;
   /** Month in 1..12 where waiting saves the most. 0 when buying now is cheaper. */

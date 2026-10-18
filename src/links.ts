@@ -4,6 +4,9 @@ export function isCartCode(value: string): boolean {
   return CART_CODE.test(value);
 }
 
+/** The question Simmer texts when a checkout pauses. */
+export const UPGRADE_PROMPT = "What's making you want to upgrade?";
+
 export function prefilledText(code: string): string {
   return `Hey Simmer, cart ${code}`;
 }

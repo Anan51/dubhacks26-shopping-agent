@@ -1,3 +1,4 @@
+import { EXAMPLE_OFFERS, type ExampleOffer } from "./offers.js";
 import { assertNever, type Condition, type Decision, type SignalEffect, type Signals, type VerdictAction } from "./types.js";
 
 /** Synthetic installment used only for the payoff side of the comparison. */
@@ -10,6 +11,13 @@ export const EXAMPLE_DEVICE_AGE_MONTHS = 24;
 export const EXAMPLE_OWED_CENTS = 42_000;
 
 const MAX_WAIT_MONTHS = 12;
+
+type Quote = {
+  savingsCents: number;
+  costLaterCents: number;
+  tradeInLaterCents: number;
+  financingLaterCents: number;
+};
 
 const CONDITION_FACTOR: Record<Condition, number> = {
   fine: 1,
@@ -28,13 +36,15 @@ const TRADE_IN_ANCHORS: readonly { months: number; cents: number }[] = [
 ];
 
 /**
- * Cost now versus cost later, then the shopper's motive.
- * This function does not read chat text. It only sees `Signals`.
+ * Cost now versus cost later, then example offers, then the shopper's motive.
+ * This function does not read chat text. It only sees `Signals` and the example catalog.
  *
  * Precedence:
  * 1. need + a broken current phone + high urgency unlocks now, even when waiting saves money.
  * 2. A want with low urgency sleeps, even when waiting does not save money.
- * 3. Otherwise trade-in decay versus financing: sleep on the month that saves the most, or unlock when none do.
+ * 3. Otherwise the best of trade-in/financing and the example offer catalog.
+ *    An example offer can sleep the call when its window beats buying now.
+ *    Those offers are synthetic. They are not live carrier deals.
  */
 export function decide(signals: Signals): Decision {
   const newDeviceCents = signals.phonePriceCents;
@@ -52,27 +62,63 @@ export function decide(signals: Signals): Decision {
       best = quote;
     }
   }
-  const mathAction: VerdictAction = bestSavings > 0 ? "sleep" : "unlock";
+  const financingAction: VerdictAction = bestSavings > 0 ? "sleep" : "unlock";
+  const offerPick = bestExampleOffer(signals, newDeviceCents, costNowCents, financingNowCents, bestSavings);
+  const moneySleep = offerPick !== null || financingAction === "sleep";
+  const mathAction: VerdictAction = moneySleep ? "sleep" : "unlock";
   const effect = motiveEffect(signals);
   const action = applyEffect(mathAction, effect);
-  const sleepMonths = action === "sleep" ? (bestMonths > 0 ? bestMonths : 1) : 0;
+  const moneyMonths = offerPick?.offer.monthsFromNow ?? (financingAction === "sleep" ? bestMonths : 0);
+  const moneySavings = offerPick?.netSavingsCents ?? (financingAction === "sleep" ? bestSavings : best.savingsCents);
+  const moneyQuote = offerPick?.quote ?? best;
+  const showMoneyWait = action === "sleep" && moneyMonths > 0;
   return {
     action,
+    financingAction,
+    financingSavingsCents: financingAction === "sleep" ? bestSavings : best.savingsCents,
     mathAction,
-    mathWaitMonths: mathAction === "sleep" ? bestMonths : 0,
-    mathSavingsCents: mathAction === "sleep" ? bestSavings : best.savingsCents,
+    mathWaitMonths: moneyMonths,
+    mathSavingsCents: moneySavings,
     signalEffect: effect,
-    waitMonths: sleepMonths,
-    savingsCents: action === "sleep" && effect === "math" ? bestSavings : action === "unlock" && effect === "math" ? best.savingsCents : bestSavings,
+    offerId: offerPick?.offer.id ?? null,
+    offerName: offerPick?.offer.name ?? null,
+    offerSavingCents: offerPick?.offer.savingCents ?? 0,
+    offerMonthsFromNow: offerPick?.offer.monthsFromNow ?? 0,
+    waitMonths: action === "sleep" ? (moneyMonths > 0 ? moneyMonths : 1) : 0,
+    savingsCents: effect === "math" ? moneySavings : moneySavings,
     costNowCents,
-    costLaterCents: action === "sleep" && bestMonths > 0 ? best.costLaterCents : costNowCents,
+    costLaterCents: showMoneyWait ? moneyQuote.costLaterCents - (offerPick?.offer.savingCents ?? 0) : costNowCents,
     tradeInNowCents,
-    tradeInLaterCents: action === "sleep" && bestMonths > 0 ? best.tradeInLaterCents : tradeInNowCents,
+    tradeInLaterCents: showMoneyWait ? moneyQuote.tradeInLaterCents : tradeInNowCents,
     financingNowCents,
-    financingLaterCents: action === "sleep" && bestMonths > 0 ? best.financingLaterCents : financingNowCents,
+    financingLaterCents: showMoneyWait ? moneyQuote.financingLaterCents : financingNowCents,
     newDeviceCents,
     tradeInCurve: tradeInCurve(signals.deviceAgeMonths, signals.condition, MAX_WAIT_MONTHS),
   };
+}
+
+function bestExampleOffer(
+  signals: Signals,
+  newDeviceCents: number,
+  costNowCents: number,
+  financingNowCents: number,
+  financingSavingsCents: number,
+): { offer: ExampleOffer; netSavingsCents: number; quote: Quote } | null {
+  let picked: { offer: ExampleOffer; netSavingsCents: number; quote: Quote } | null = null;
+  for (const offer of EXAMPLE_OFFERS) {
+    if (offer.monthsFromNow < 1 || offer.monthsFromNow > MAX_WAIT_MONTHS) {
+      continue;
+    }
+    const quote = quoteAt(signals, newDeviceCents, costNowCents, financingNowCents, offer.monthsFromNow);
+    const netSavingsCents = quote.savingsCents + offer.savingCents;
+    if (netSavingsCents <= financingSavingsCents || netSavingsCents <= 0) {
+      continue;
+    }
+    if (!picked || netSavingsCents > picked.netSavingsCents) {
+      picked = { offer, netSavingsCents, quote };
+    }
+  }
+  return picked;
 }
 
 function motiveEffect(signals: Signals): SignalEffect {
@@ -118,12 +164,7 @@ function quoteAt(
   costNowCents: number,
   financingNowCents: number,
   month: number,
-): {
-  savingsCents: number;
-  costLaterCents: number;
-  tradeInLaterCents: number;
-  financingLaterCents: number;
-} {
+): Quote {
   const financingLaterCents = Math.max(0, financingNowCents - MONTHLY_PAYMENT_CENTS * month);
   const tradeInLaterCents = tradeInValueCents(signals.deviceAgeMonths + month, signals.condition);
   const costLaterCents = newDeviceCents + financingLaterCents - tradeInLaterCents;

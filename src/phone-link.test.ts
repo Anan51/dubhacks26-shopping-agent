@@ -69,6 +69,7 @@ describe("phone link", () => {
     });
     assert.equal(delivered.delivered, true);
     assert.match(sent, /paused your \$1,199 checkout/);
+    assert.match(sent, /What's making you want to upgrade\?/);
     assert.match(sent, /AB23CD/);
 
     const failed = await notifyCheckout({

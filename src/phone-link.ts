@@ -1,7 +1,7 @@
 import { toDataURL } from "qrcode";
 
 import { formatUsd } from "./format.js";
-import { prefilledText, textSimmerLink } from "./links.js";
+import { prefilledText, textSimmerLink, UPGRADE_PROMPT } from "./links.js";
 import type { PhoneLink, Store } from "./store.js";
 import type { Cart, CheckoutPing } from "./types.js";
 
@@ -29,7 +29,7 @@ export function threadUserId(conversationId: string): string {
 }
 
 export function checkoutPingText(cart: Cart): string {
-  return `Simmer paused your ${formatUsd(cart.totalCents)} checkout. Cart ${cart.code}. Tell me why you want this, or reply SLEEP or UNLOCK.`;
+  return `Simmer paused your ${formatUsd(cart.totalCents)} checkout. Cart ${cart.code}. ${UPGRADE_PROMPT}`;
 }
 
 export async function notifyCheckout(input: {

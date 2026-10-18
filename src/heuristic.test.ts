@@ -50,12 +50,16 @@ describe("decide", () => {
     assert.equal(MONTHLY_PAYMENT_CENTS, 3_500);
   });
 
-  it("unlocks when nothing is left to finance", () => {
+  it("sleeps for an example offer when trade-in decay alone does not save money", () => {
     const decision = decide(signals({ owedCents: 0, deviceAgeMonths: 24 }));
-    assert.equal(decision.action, "unlock");
-    assert.equal(decision.waitMonths, 0);
-    assert.ok(decision.savingsCents <= 0);
-    assert.equal(decision.costLaterCents, decision.costNowCents);
+    assert.equal(decision.financingAction, "unlock");
+    assert.ok(decision.financingSavingsCents <= 0);
+    assert.equal(decision.action, "sleep");
+    assert.equal(decision.signalEffect, "math");
+    assert.equal(decision.offerId, "example-trade-in-bundle");
+    assert.equal(decision.offerName, "example trade-in bundle");
+    assert.equal(decision.offerMonthsFromNow, 2);
+    assert.equal(decision.savingsCents, 18_667);
   });
 
   it("unlocks a needed broken phone even when waiting saves money", () => {
@@ -84,7 +88,7 @@ describe("decide", () => {
         reasonText: "the new color looks nice",
       }),
     );
-    assert.equal(decision.mathAction, "unlock");
+    assert.equal(decision.financingAction, "unlock");
     assert.equal(decision.action, "sleep");
     assert.equal(decision.signalEffect, "want_sleep");
   });

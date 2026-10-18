@@ -24,6 +24,7 @@ import type { PhotonChannel } from "./channels/photon.js";
 import { readConfig } from "./config.js";
 import { handleIncomingEvent } from "./handle-message.js";
 import { decide, EXAMPLE_OWED_CENTS } from "./heuristic.js";
+import { EXAMPLE_OFFERS } from "./offers.js";
 import { deskChatUrl, linkPhoneSms, linkPhoneText, prefilledText, textSimmerLink } from "./links.js";
 import { isUserId, notifyCheckout } from "./phone-link.js";
 import { phraseDecision, polishPhrase } from "./phrase.js";
@@ -126,6 +127,7 @@ export function createApp(deps: AppDeps): RunningApp {
       demoDefault: deps.demoDefault,
       exampleOwedCents: EXAMPLE_OWED_CENTS,
       fallbackTotalCents: FALLBACK_TOTAL_CENTS,
+      exampleOffers: EXAMPLE_OFFERS,
       deskChat: true,
     });
   });

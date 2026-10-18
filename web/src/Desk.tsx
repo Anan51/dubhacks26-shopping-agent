@@ -150,6 +150,24 @@ export function Desk() {
             {config.grokEnabled ? " Grok is on." : " Grok key is empty, so parsing stays on keywords."}
           </p>
         ) : null}
+        {config && config.exampleOffers.length > 0 ? (
+          <div className="math">
+            <h2>Example offers</h2>
+            <p className="fine">Example data. Not a current T-Mobile deal or any live carrier promotion.</p>
+            <table>
+              <tbody>
+                {config.exampleOffers.map((offer) => (
+                  <tr key={offer.id}>
+                    <th>{offer.name}</th>
+                    <td>
+                      {formatUsd(offer.savingCents)} · {offer.windowLabel}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
         {carts.length === 0 ? <p>Open an Apple bag with the extension loaded. Nothing is locked yet.</p> : null}
         {carts.length > 0 ? (
           <label>
@@ -334,6 +352,14 @@ function MathPanel({ cart, gate }: { cart: CartResponse; gate: PayGate | null })
                 <th>Reason</th>
                 <td>
                   {cart.signals.reasonText || "none"} ({cart.motiveSources?.reasonText ?? cart.signalSource ?? "default"})
+                </td>
+              </tr>
+              <tr>
+                <th>Example offer</th>
+                <td>
+                  {decision.offerName
+                    ? `${decision.offerName} · ${formatUsd(decision.offerSavingCents)} · ${decision.offerMonthsFromNow} months out. Example data, not a current carrier deal.`
+                    : "None beat trade-in and financing. The catalog below is still example data."}
                 </td>
               </tr>
               <tr>

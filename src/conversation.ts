@@ -2,6 +2,7 @@ import { isVaultActive, sleepCart, unlockCart, VAULT_MS, withCartFacts } from ".
 import { extractCartCode, extractSignals, pickShopperSignals, type ExtractOptions } from "./extract-signals.js";
 import { formatLongDate } from "./format.js";
 import { decide } from "./heuristic.js";
+import { UPGRADE_PROMPT } from "./links.js";
 import { parseLinkCommand, threadUserId } from "./phone-link.js";
 import { phraseDecision } from "./phrase.js";
 import type { PhoneLink } from "./store.js";
@@ -148,7 +149,7 @@ async function sleepTurn(session: Session, cart: Cart, input: ApplyInput): Promi
 async function justifyTurn(session: Session, cart: Cart, input: ApplyInput): Promise<ApplyResult> {
   await fillDecision(session, cart, input);
   session.step = "confirm";
-  const explanation = cart.explanation ?? "Tell me why you want this.";
+  const explanation = cart.explanation ?? UPGRADE_PROMPT;
   if (isVaultActive(cart, input.now) && cart.vaultUntil) {
     return say(session, `${explanation}\n\nThis bag stays covered in the Vault until ${formatLongDate(cart.vaultUntil)}.`, {
       cart,
