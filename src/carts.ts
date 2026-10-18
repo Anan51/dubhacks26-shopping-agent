@@ -70,6 +70,14 @@ export function itemsForBag(names: readonly string[], totalCents: number, parsed
 
 export const VAULT_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Checkout pause starts at this bag total.
+ * A total strictly under it is unlocked, not pinged, and not vaulted.
+ * The bag stays unnecessary when the items are not a replacement.
+ * Exactly $40 still pauses.
+ */
+export const PAUSE_FLOOR_CENTS = 4_000;
+
 export function startLockedCart(input: {
   items: CartItem[];
   totalCents: number;

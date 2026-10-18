@@ -13,6 +13,7 @@ import {
   FALLBACK_TOTAL_CENTS,
   isEnforcedVault,
   itemsForBag,
+  PAUSE_FLOOR_CENTS,
   lockState,
   scheduleCountdown,
   skipVault,
@@ -270,7 +271,7 @@ export function createApp(deps: AppDeps): RunningApp {
       if (existing.necessity == null) {
         const keyword = keywordNecessity(bagText);
         applyNecessity(existing, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason });
-        if (!keyword.necessary && !existing.lastPing) {
+        if (!keyword.necessary && bag.totalCents >= PAUSE_FLOOR_CENTS && !existing.lastPing) {
           await pingCart(existing, false);
         }
         deps.store.saveCart(existing);
@@ -304,7 +305,7 @@ export function createApp(deps: AppDeps): RunningApp {
     cart.personaId = persona.id;
     const keyword = keywordNecessity(bagText);
     applyNecessity(cart, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason });
-    if (!keyword.necessary) {
+    if (!keyword.necessary && bag.totalCents >= PAUSE_FLOOR_CENTS) {
       await pingCart(cart, false);
     }
     await attachImpulse(cart, req.user?.id, "create");
@@ -733,6 +734,11 @@ function applyNecessity(
   cart.necessitySource = read.source;
   cart.necessityReason = read.reason;
   if (cart.purchaseScore != null) {
+    return;
+  }
+  if (cart.totalCents < PAUSE_FLOOR_CENTS) {
+    unlockCart(cart);
+    cart.scoreReason = null;
     return;
   }
   if (read.necessary) {

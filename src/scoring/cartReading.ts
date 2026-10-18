@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 
-import { sleepCart, VAULT_MS } from "../carts.js";
+import { PAUSE_FLOOR_CENTS, sleepCart, VAULT_MS } from "../carts.js";
 import { keywordNecessity } from "../impulse.js";
 import { categoryForItem, getBudgetProfile, type BudgetProfile } from "../purchases/service.js";
 import { type Cart, type CartItem, type Decision, type ScoreBucket } from "../types.js";
@@ -170,7 +170,8 @@ export type ImpulseApply = "create" | "refresh";
 /**
  * Stores the 1–8 reading on the cart.
  * An unnecessary bag is never unlocked from the score. Only a necessary buy opens without a reply.
- * `create` may vault a strict bag once. `refresh` rewrites `impulse` and `hoursOfWork` only.
+ * `create` may vault a strict bag once. A bag under `PAUSE_FLOOR_CENTS` is not vaulted.
+ * `refresh` rewrites `impulse` and `hoursOfWork` only.
  */
 export function applyImpulseReading(
   cart: Cart,
@@ -186,7 +187,7 @@ export function applyImpulseReading(
     return;
   }
   cart.userImpulseScore = reading.legacyImpulse;
-  if (reading.impulse.band !== "strict" || cartIsEnforcedVault(cart)) {
+  if (cart.totalCents < PAUSE_FLOOR_CENTS || reading.impulse.band !== "strict" || cartIsEnforcedVault(cart)) {
     return;
   }
   sleepCart(cart, now, VAULT_MS, demoReminderMs, "enforced");
