@@ -39,4 +39,11 @@ describe("store path", () => {
     assert.equal(readAppConfig({ WAITMATE_STORE_PATH: "   " }).storePath, DEFAULT_STORE_PATH);
     assert.equal(readAppConfig({ WAITMATE_STORE_PATH: "tmp/carts.json" }).storePath, "tmp/carts.json");
   });
+
+  it("stays in memory on Vercel unless WAITMATE_STORE_PATH is set", () => {
+    assert.equal(readAppConfig({ VERCEL: "1" }).storePath, null);
+    assert.equal(readAppConfig({ VERCEL: "1", WAITMATE_STORE_PATH: "" }).storePath, null);
+    assert.equal(readAppConfig({ VERCEL: "1", WAITMATE_STORE_PATH: "   " }).storePath, null);
+    assert.equal(readAppConfig({ VERCEL: "1", WAITMATE_STORE_PATH: "tmp/carts.json" }).storePath, "tmp/carts.json");
+  });
 });

@@ -59,7 +59,7 @@ The manifest matches the Apple bag (`/shop/bag`, including regional paths), `sec
 - Photon send is behind the adapter. Desk ids are stored locally. There is no Photon key in this environment, so the live in-thread send is not verified.
 - Grok runs when `XAI_API_KEY` is set (`XAI_MODEL` empty uses `grok-4.20-0309-non-reasoning`, timeout `XAI_TIMEOUT_MS` or 8 seconds). No key means keywords. `npm run smoke:grok` calls the API once and prints signals, never the key.
 - Trade-in values and the $35 financing balance are example data, labeled on screen.
-- Carts, chats, and phone links persist in `data/waitmate.json` unless `WAITMATE_STORE_PATH` points at another file.
+- Carts, chats, and phone links persist in `data/waitmate.json` unless `WAITMATE_STORE_PATH` points at another file. On Vercel, an unset path stays in memory. An unwritable file falls back to memory.
 - Email login and Backboard memory stay off until `MONGODB_URI`, `JWT_SECRET`, and `BACKBOARD_API_KEY` are set. See [AUTH.md](AUTH.md).
 
 ## Regret matching

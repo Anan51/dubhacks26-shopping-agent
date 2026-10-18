@@ -12,7 +12,8 @@ export type PhoneLink = {
 
 /**
  * Carts, chat sessions, and linked phone threads.
- * Memory is the default. A JSON file store exists for restarts.
+ * The local default is a JSON file. Memory is used when no path is given,
+ * or when that file cannot be created.
  * A MongoDB store can implement these methods later without changing callers.
  */
 export type Store = {
@@ -51,7 +52,16 @@ export function createFileStore(filePath: string): Store {
 }
 
 export function createDefaultStore(filePath: string | null): Store {
-  return filePath ? createFileStore(filePath) : createMemoryStore();
+  if (!filePath) {
+    return createMemoryStore();
+  }
+  try {
+    return createFileStore(filePath);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "unknown error";
+    console.warn(`File store at ${filePath} could not be opened (${detail}). Using the in-memory store.`);
+    return createMemoryStore();
+  }
 }
 
 class MemoryStore implements Store {

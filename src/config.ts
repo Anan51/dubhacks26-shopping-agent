@@ -38,7 +38,7 @@ export type AppConfig = {
   lockMs: number;
   demoReminderMs: number;
   demoDefault: boolean;
-  /** JSON file for carts, chats, and phone links. Unset uses data/waitmate.json. Null still selects memory. */
+  /** JSON file for carts, chats, and phone links. Unset uses data/waitmate.json, except on Vercel where unset stays null (memory). */
   storePath: string | null;
   channel: "auto" | "photon" | "stub";
   xaiApiKey?: string;
@@ -61,7 +61,7 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     lockMs: numberFrom(env.WAITMATE_LOCK_MS, DEFAULT_LOCK_MS),
     demoReminderMs: numberFrom(env.WAITMATE_DEMO_REMINDER_MS, 60_000),
     demoDefault: env.WAITMATE_DEMO === "1",
-    storePath: env.WAITMATE_STORE_PATH?.trim() || "data/waitmate.json",
+    storePath: storePathFrom(env),
     channel,
     ...(xaiApiKey ? { xaiApiKey } : {}),
     xaiModel: xaiModelFrom(env),
@@ -87,6 +87,17 @@ export function listenHost(env: NodeJS.ProcessEnv = process.env): string {
     return host;
   }
   return "127.0.0.1";
+}
+
+function storePathFrom(env: NodeJS.ProcessEnv): string | null {
+  const explicit = env.WAITMATE_STORE_PATH?.trim();
+  if (explicit) {
+    return explicit;
+  }
+  if (env.VERCEL?.trim()) {
+    return null;
+  }
+  return "data/waitmate.json";
 }
 
 function numberFrom(value: string | undefined, fallback: number): number {
