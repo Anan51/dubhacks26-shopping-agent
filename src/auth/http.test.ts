@@ -80,9 +80,12 @@ describe("auth http", () => {
     assert.equal(user.email, "ada@example.com");
     assert.equal("password" in user, false);
     assert.equal("passwordHash" in created.body, false);
-    assert.equal("token" in created.body, false);
+    assert.equal(typeof created.body.token, "string");
     assert.ok(created.cookie);
     assert.match(created.setCookie ?? "", /httponly/i);
+    const bearer = await get("/auth/me", { authorization: `Bearer ${created.body.token as string}` });
+    assert.equal(bearer.status, 200);
+    assert.deepEqual(bearer.body.user, { id: user.id, email: "ada@example.com" });
 
     const me = await get("/auth/me", { cookie: created.cookie ?? "" });
     assert.equal(me.status, 200);
@@ -112,6 +115,7 @@ describe("auth http", () => {
     const loggedIn = await post("/auth/login", { email: "Login@Example.com", password: PASSWORD });
     assert.equal(loggedIn.status, 200);
     assert.equal((loggedIn.body.user as { email: string }).email, "login@example.com");
+    assert.equal(typeof loggedIn.body.token, "string");
     assert.ok(loggedIn.cookie);
     const me = await get("/auth/me", { cookie: loggedIn.cookie ?? "" });
     assert.equal(me.status, 200);

@@ -130,11 +130,21 @@ describe("purchase feedback", () => {
     assert.equal(blakeIds.has(adaRow._id), false);
 
     const denied = await post(`/purchases/${adaRow._id}/feedback`, { feedback: "regretted" }, blake.cookie);
-    assert.equal(denied.status, 403);
+    assert.equal(denied.status, 404);
+    assert.equal((denied.body as { error: string }).error, "Purchase not found.");
     const foreignList = await get(`/purchases/history?userId=${ada.id}`, blake.cookie);
     assert.equal(foreignList.status, 400);
 
     await post(`/purchases/${adaRow._id}/feedback`, { feedback: "regretted" }, ada.cookie);
+    assert.equal(await hasRegrettedPurchase(ada.id, adaRow.category), false);
+    await PurchaseRecord.create({
+      userId: ada.id,
+      item: "Real item",
+      category: adaRow.category,
+      price: 10,
+      feedback: "regretted",
+      isExample: false,
+    });
     assert.equal(await hasRegrettedPurchase(ada.id, adaRow.category), true);
     assert.equal(await hasRegrettedPurchase(blake.id, adaRow.category), false);
     assert.equal(await hasRegrettedPurchase(ada.id, "not-a-category"), false);

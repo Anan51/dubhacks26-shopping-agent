@@ -1,8 +1,3 @@
-import { Buffer } from "node:buffer";
-
-/** HS256 needs a 256-bit key. Shorter secrets are refused when auth is turned on. */
-const MIN_JWT_SECRET_BYTES = 32;
-
 /** Account and Backboard flags. Missing values leave the desk demo on its in-memory cart store. */
 export type AccountConfig = {
   mongodbUri: string | null;
@@ -14,12 +9,19 @@ export function readAccountConfig(env: NodeJS.ProcessEnv = process.env): Account
   const apiKey = env.BACKBOARD_API_KEY?.trim() ?? "";
   const uri = env.MONGODB_URI?.trim() ?? "";
   const jwtSecret = env.JWT_SECRET?.trim() ?? "";
-  if (jwtSecret.length > 0 && Buffer.byteLength(jwtSecret) < MIN_JWT_SECRET_BYTES) {
-    throw new Error(`JWT_SECRET must be at least ${MIN_JWT_SECRET_BYTES} bytes.`);
+  if (jwtSecret.length > 0) {
+    requireJwtSecret(jwtSecret);
   }
   return {
     mongodbUri: uri.length > 0 ? uri : null,
     jwtSecret: jwtSecret.length > 0 ? jwtSecret : null,
     backboardEnabled: apiKey.length > 0,
   };
+}
+
+/** HS256 keys shorter than 32 bytes are rejected at startup. An unset secret still boots the demo. */
+export function requireJwtSecret(secret: string): void {
+  if (new TextEncoder().encode(secret).byteLength < 32) {
+    throw new Error("JWT_SECRET must be at least 32 bytes.");
+  }
 }

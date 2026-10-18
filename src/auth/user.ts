@@ -18,6 +18,23 @@ const userSchema = new Schema(
       },
     },
     backboardAssistantId: { type: String, unique: true, sparse: true },
+    hourlyRate: { type: Number, default: null },
+    weeklyBudget: { type: Number, default: null },
+    surveyCompleted: { type: Boolean, default: false },
+    /** Optional saved goals. Nothing writes this yet; readers treat a missing array as none. */
+    goals: {
+      type: [
+        new Schema(
+          {
+            text: { type: String, required: true },
+            targetAmount: { type: Number, default: null },
+            createdAt: { type: Date },
+          },
+          { _id: false },
+        ),
+      ],
+      default: undefined,
+    },
   },
   { timestamps: true },
 );

@@ -101,6 +101,7 @@ function createAuthRouter(deps: AuthRouteDeps): Router {
     if (!secret) {
       return;
     }
+    // Clears the cookie only. The 7-day JWT is not revoked; a jti denylist is the follow-up.
     clearSessionCookie(res);
     res.json({ ok: true });
   });
@@ -199,7 +200,7 @@ function credentials(req: Request): { email: string; password: string } {
 async function sendSession(res: Response, user: AccountUser, secret: string, status: 200 | 201): Promise<void> {
   const token = await signSession({ id: user.id, email: user.email }, secret);
   setSessionCookie(res, token);
-  res.status(status).json({ user: publicUser(user) });
+  res.status(status).json({ user: publicUser(user), token });
 }
 
 function parseRemember(body: unknown): RememberInput | null {

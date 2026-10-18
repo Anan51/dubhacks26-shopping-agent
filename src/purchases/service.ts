@@ -1,7 +1,10 @@
+import type { ClientSession } from "mongoose";
+
 import type { Cart } from "../types.js";
 import type { AccountDirectory, AccountUser } from "../auth/accounts.js";
-import { MemoryNote } from "../auth/user.js";
+import { MemoryNote, User } from "../auth/user.js";
 import { assistantForUser } from "../memory/service.js";
+import { isRecord } from "../record.js";
 import { waitForMemoryWrite, type BackboardClient, type MemoryKind } from "../memory/backboard.js";
 import { PurchaseRecord } from "./model.js";
 
@@ -13,7 +16,7 @@ export type PurchaseView = {
   item: string;
   category: string;
   price: number;
-  verdict: string;
+  verdict: string | null;
   feedback: PurchaseFeedback | null;
   isExample: boolean;
   createdAt: string;
@@ -86,18 +89,94 @@ export function purchaseVoteLine(feedback: PurchaseFeedback, item: string, categ
   return `${feedback} purchase: ${item} (${category}, ${formatPurchasePrice(price)})`;
 }
 
+export function budgetMemoryLine(field: "hourly rate" | "weekly budget", amount: number): string {
+  return `${field}: ${formatPurchasePrice(amount)}`;
+}
+
+export type BudgetProfile = {
+  hourlyRate: number | null;
+  weeklyBudget: number | null;
+};
+
+export async function getBudgetProfile(userId: string): Promise<BudgetProfile> {
+  const user = await findUser(userId);
+  return {
+    hourlyRate: numberOrNull(user?.hourlyRate),
+    weeklyBudget: numberOrNull(user?.weeklyBudget),
+  };
+}
+
+export async function getHourlyRate(userId: string): Promise<number | null> {
+  return (await getBudgetProfile(userId)).hourlyRate;
+}
+
+export async function getWeeklyBudget(userId: string): Promise<number | null> {
+  return (await getBudgetProfile(userId)).weeklyBudget;
+}
+
+export async function weeklySpend(userId: string, now = new Date()): Promise<number> {
+  const since = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const rows = await PurchaseRecord.find({
+    userId,
+    isExample: false,
+    createdAt: { $gte: since },
+  }).select("price");
+  return rows.reduce((sum, row) => sum + (typeof row.price === "number" ? row.price : 0), 0);
+}
+
+export async function surveyWasCompleted(userId: string): Promise<boolean> {
+  const user = await findUser(userId);
+  return user?.surveyCompleted === true;
+}
+
+export async function countRegrets(userId: string, category?: string): Promise<number> {
+  const filter: { userId: string; feedback: "regretted"; isExample: false; category?: string } = {
+    userId,
+    feedback: "regretted",
+    isExample: false,
+  };
+  const narrowed = category?.trim().toLowerCase() ?? "";
+  if (narrowed.length > 0) {
+    filter.category = narrowed;
+  }
+  return PurchaseRecord.countDocuments(filter);
+}
+
+export type SavedGoal = {
+  text: string;
+  targetAmount: number | null;
+  createdAt: string;
+};
+
+export async function getSavedGoals(userId: string): Promise<SavedGoal[]> {
+  const user = await findUser(userId);
+  if (!user || !Array.isArray(user.goals)) {
+    return [];
+  }
+  return user.goals.flatMap((goal) => {
+    if (!isGoal(goal)) {
+      return [];
+    }
+    const createdAt = goal.createdAt instanceof Date ? goal.createdAt.toISOString() : "";
+    const targetAmount = typeof goal.targetAmount === "number" && Number.isFinite(goal.targetAmount) ? goal.targetAmount : null;
+    return [{ text: goal.text, targetAmount, createdAt }];
+  });
+}
+
 export async function hasRegrettedPurchase(userId: string, category: string): Promise<boolean> {
   const found = await PurchaseRecord.exists({
     userId,
     category: category.trim().toLowerCase(),
     feedback: "regretted",
+    isExample: false,
   });
   return found != null;
 }
 
 export async function listPurchases(userId: string, limit: number): Promise<PurchaseView[]> {
   const real = await PurchaseRecord.countDocuments({ userId, isExample: false });
-  if (real === 0) {
+  const showExamples = real === 0 && !(await surveyWasCompleted(userId));
+  if (showExamples) {
     const examples = await PurchaseRecord.countDocuments({ userId, isExample: true });
     if (examples === 0) {
       const now = Date.now();
@@ -116,10 +195,44 @@ export async function listPurchases(userId: string, limit: number): Promise<Purc
       );
     }
   }
-  const docs = await PurchaseRecord.find(real === 0 ? { userId, isExample: true } : { userId, isExample: false })
+  const docs = await PurchaseRecord.find(showExamples ? { userId, isExample: true } : { userId, isExample: false })
     .sort({ createdAt: -1 })
     .limit(limit);
   return docs.map(toView);
+}
+
+export async function insertRealPurchase(
+  input: {
+    userId: string;
+    item: string;
+    category: string;
+    price: number;
+    verdict: string | null;
+    feedback: PurchaseFeedback | null;
+  },
+  options?: { session?: ClientSession },
+): Promise<PurchaseView> {
+  const payload = {
+    userId: input.userId,
+    item: input.item,
+    category: input.category.trim().toLowerCase(),
+    price: input.price,
+    verdict: input.verdict,
+    feedback: input.feedback,
+    isExample: false,
+    ratedAt: input.feedback ? new Date() : null,
+    cartCode: null,
+  };
+  if (options?.session) {
+    const created = await PurchaseRecord.create([payload], { session: options.session });
+    const doc = created[0];
+    if (!doc) {
+      throw new PurchaseError(500, "Purchase was not recorded.");
+    }
+    return toView(doc);
+  }
+  const doc = await PurchaseRecord.create(payload);
+  return toView(doc);
 }
 
 export async function setPurchaseFeedback(
@@ -136,7 +249,7 @@ export async function setPurchaseFeedback(
     throw new PurchaseError(404, "Purchase not found.");
   }
   if (doc.userId.toString() !== userId) {
-    throw new PurchaseError(403, "That purchase belongs to someone else.");
+    throw new PurchaseError(404, "Purchase not found.");
   }
   if (doc.feedback === feedback) {
     return toView(doc);
@@ -183,17 +296,31 @@ async function writeVoteMemory(
   }
   const line = purchaseVoteLine(feedback, item, category, price);
   const kind: MemoryKind = feedback === "regretted" ? "regret" : "goal";
+  await writeUserMemoryLine(userId, line, kind, deps, { category, feedback });
+}
+
+export async function writeUserMemoryLine(
+  userId: string,
+  line: string,
+  kind: MemoryKind,
+  deps: { directory: AccountDirectory; client: BackboardClient; remote: boolean },
+  meta: Record<string, unknown> = {},
+): Promise<void> {
+  const user = await deps.directory.findById(userId);
+  if (!user) {
+    return;
+  }
   const assistantId = await assistantIdForVote(user, deps);
-  const write = await deps.client.addMemory(assistantId, { content: line, metadata: { type: kind, category } });
+  const write = await deps.client.addMemory(assistantId, { content: line, metadata: { type: kind, ...meta } });
   const settled = await waitForMemoryWrite(deps.client, write);
-  if (settled.status === "ERROR") {
+  if (settled.status !== "COMPLETED") {
     throw new Error("Backboard memory write failed.");
   }
   await MemoryNote.create({
     userId,
     type: kind,
     text: line,
-    meta: { category, feedback },
+    meta,
     backboardMemoryId: settled.memoryId,
   });
 }
@@ -215,13 +342,33 @@ async function assistantIdForVote(
   return created.assistantId;
 }
 
+async function findUser(userId: string): Promise<{
+  hourlyRate?: unknown;
+  weeklyBudget?: unknown;
+  surveyCompleted?: unknown;
+  goals?: unknown;
+} | null> {
+  if (!/^[a-f0-9]{24}$/i.test(userId)) {
+    return null;
+  }
+  return User.findById(userId).select("hourlyRate weeklyBudget surveyCompleted goals");
+}
+
+function isGoal(value: unknown): value is { text: string; targetAmount?: unknown; createdAt?: unknown } {
+  return isRecord(value) && typeof value.text === "string" && value.text.length > 0;
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function toView(doc: {
   _id: { toString(): string };
   userId: { toString(): string };
   item: string;
   category: string;
   price: number;
-  verdict: string;
+  verdict?: string | null;
   feedback?: string | null;
   isExample: boolean;
   createdAt?: Date;
@@ -234,7 +381,7 @@ function toView(doc: {
     item: doc.item,
     category: doc.category,
     price: doc.price,
-    verdict: doc.verdict,
+    verdict: typeof doc.verdict === "string" && doc.verdict.length > 0 ? doc.verdict : null,
     feedback,
     isExample: doc.isExample,
     createdAt: doc.createdAt?.toISOString() ?? new Date(0).toISOString(),
