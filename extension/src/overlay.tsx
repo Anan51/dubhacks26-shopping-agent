@@ -101,9 +101,6 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
         {model.status !== "vault" && remaining === 0 ? (
           <p>Ten minutes are up. Unlock is still your choice. Simmer will not place the order.</p>
         ) : null}
-        {model.explanation ? <p>{model.explanation}</p> : null}
-        {model.reading ? <p className="fine">reading your reply...</p> : null}
-        <Curve points={curve} waitMonths={model.decision?.waitMonths ?? 0} />
         <div className="row">
           <button type="button" onClick={actions.unlock}>
             Unlock
@@ -117,7 +114,12 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
             </button>
           ) : null}
         </div>
-        <p className="fine">Unlock only re-enables Apple's button. Cart {model.code}. Text this once: {model.linkMessage}</p>
+        <h2>Why</h2>
+        {model.explanation ? <p>{model.explanation}</p> : null}
+        {model.reading ? <p className="fine">reading your reply...</p> : null}
+        <Curve points={curve} waitMonths={model.decision?.waitMonths ?? 0} />
+        <p className="fine">Unlock only re-enables Apple's button. Cart {model.code}.</p>
+        <p className="fine">Text this once: {model.linkMessage}</p>
         {model.pingDelivered ? <p>Simmer texted your linked phone.</p> : null}
         {!model.pingDelivered ? (
           <div className="note">

@@ -27,7 +27,7 @@ function signals(overrides: Partial<Signals> = {}): Signals {
 
 describe("phraseDecision", () => {
   it("leads with the savings and labels example data", () => {
-    const decision = decide(signals());
+    const decision = decide(signals(), []);
     const text = phraseDecision(decision, signals(), "keywords");
     assert.match(text, /^Waiting 12 months saves you \$280\./);
     assert.match(text, /You said "the battery dies by 3pm"/);
@@ -44,7 +44,7 @@ describe("phraseDecision", () => {
     assert.match(text, new RegExp(formatUsd(decision.savingsCents).replace(/[$.]/g, "\\$&")));
     assert.match(text, /not a current T-Mobile or carrier deal/);
     assert.ok(decision.savingsCents > 0);
-    assert.match(text, /\$186\.67/);
+    assert.match(text, /\$486\.67/);
   });
 
   it("does not mention an example offer when none beats buying now", () => {

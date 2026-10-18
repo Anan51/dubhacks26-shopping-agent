@@ -108,7 +108,7 @@ export async function applyTurn(input: ApplyInput): Promise<ApplyResult> {
   }
   cart.lastInboundMessageId = input.messageId;
 
-  const intent = readIntent(input.text);
+  const intent = readIntent(withoutCartLabel(input.text));
   switch (intent) {
     case "unlock":
       return unlockTurn(session, cart, input.now);
@@ -187,6 +187,10 @@ async function fillDecision(session: Session, cart: Cart, input: ApplyInput): Pr
   cart.decision = decision;
   cart.explanation = phraseDecision(decision, signals, extraction.source, extraction.motiveSources);
   session.signals = signals;
+}
+
+function withoutCartLabel(text: string): string {
+  return text.replace(/\bcart\s+[A-HJ-NP-Z2-9]{6}\b/gi, " ").replace(/\s+/g, " ").trim();
 }
 
 function readIntent(text: string): Intent {

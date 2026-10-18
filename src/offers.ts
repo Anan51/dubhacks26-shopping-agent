@@ -16,7 +16,7 @@ export const EXAMPLE_OFFERS: readonly ExampleOffer[] = [
   {
     id: "example-trade-in-bundle",
     name: "example trade-in bundle",
-    savingCents: 20_000,
+    savingCents: 50_000,
     monthsFromNow: 2,
     windowLabel: "example window, about 2 months from today",
   },

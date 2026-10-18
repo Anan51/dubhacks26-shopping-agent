@@ -153,6 +153,7 @@ describe("apple bag lock", () => {
     assert.equal((ping.body as CartBody).lastPing?.delivered, true);
     const thread = (await get(`/api/dev/messages?conversationId=${conversationId}`)) as Transcript;
     assert.match(thread.turns.map((turn) => turn.text).join("\n"), /paused your/);
+    assert.match(thread.turns.map((turn) => turn.text).join("\n"), /What's making you want to upgrade\?/);
 
     const failed = await post(`/api/carts/${cart.code}/notify`, { fail: true });
     assert.equal((failed.body as CartBody).lastPing?.delivered, false);
@@ -171,6 +172,19 @@ describe("apple bag lock", () => {
     await delay(200);
     const reminded = (await get(`/api/dev/messages?conversationId=${conversationId}`)) as Transcript;
     assert.match(reminded.turns.map((turn) => turn.text).join("\n"), /Desk:/);
+
+    const plain = await post("/api/dev/messages", {
+      conversationId,
+      text: "cracked screen, battery dies by 3pm, I need it for work tomorrow",
+    });
+    assert.equal(plain.status, 200);
+    const needed = (await get(`/api/carts/${cart.code}`)) as CartBody & {
+      decision: { action: string; signalEffect: string } | null;
+      motiveSources: { needVsWant: string } | null;
+    };
+    assert.equal(needed.decision?.action, "unlock");
+    assert.equal(needed.decision?.signalEffect, "need_unlock");
+    assert.equal(needed.motiveSources?.needVsWant, "keywords");
 
     const fallback = await fetch(`${base}/fallback`);
     assert.equal(fallback.status, 200);

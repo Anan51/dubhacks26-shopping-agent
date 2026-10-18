@@ -36,7 +36,7 @@ describe("tradeInValueCents", () => {
 
 describe("decide", () => {
   it("sleeps when financing paydown beats trade-in decay", () => {
-    const decision = decide(signals());
+    const decision = decide(signals(), []);
     assert.equal(decision.action, "sleep");
     assert.equal(decision.waitMonths, 12);
     assert.equal(decision.savingsCents, 28_000);
@@ -59,7 +59,7 @@ describe("decide", () => {
     assert.equal(shown.offerId, "example-trade-in-bundle");
     assert.equal(shown.offerName, "example trade-in bundle");
     assert.ok(shown.savingsCents > 0);
-    assert.equal(shown.savingsCents, 18_667);
+    assert.equal(shown.savingsCents, 48_667);
 
     const hidden = decide(signals({ owedCents: 0, deviceAgeMonths: 24 }), [
       {

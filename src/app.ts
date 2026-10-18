@@ -300,10 +300,12 @@ export function createApp(deps: AppDeps): RunningApp {
       res.status(400).json({ error: "Text is required." });
       return;
     }
+    const boundCart = conversationId.match(/^desk:cart-([A-HJ-NP-Z2-9]{6})$/i)?.[1]?.toUpperCase();
+    const textForAgent = boundCart && !new RegExp(`\\bcart\\s+${boundCart}\\b`, "i").test(text) ? `cart ${boundCart} ${text}` : text;
     await runtime.enqueue({
       id: `desk-${randomUUID()}`,
       conversationId,
-      text,
+      text: textForAgent,
     });
     const session = deps.store.getSession(conversationId);
     res.json({ turns: session?.turns ?? [], reading: false });
