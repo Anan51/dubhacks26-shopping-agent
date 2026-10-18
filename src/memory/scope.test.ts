@@ -254,6 +254,9 @@ function fakeClient(): BackboardClient & { added: { assistantId: string; content
     async resetMemories() {
       return undefined;
     },
+    async deleteMemory() {
+      return undefined;
+    },
   };
   return client;
 }

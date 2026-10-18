@@ -55,6 +55,10 @@ Simmer lists from the Mongo index rather than `GET /assistants/{id}/memories`. `
 
 `POST /threads/messages` is from the docs, not this live check. The client sends the stored assistant id, `memory: "Auto"`, `stream: false`, and `model_name: "gpt-4o"`. Assistant create does not take a model. The SDK's `k` is `limit` on search.
 
+## Single-memory delete
+
+The public API documents `DELETE /assistants/{assistant_id}/memories/{memory_id}` (one memory, database and vector store). It was not in the Oct 17 live check. When a shopper deletes a purchase and the matching `MemoryNote` has `backboardMemoryId`, and `BACKBOARD_API_KEY` is set, Simmer calls that route with the assistant id stored on the user. A failed call is logged. The Mongo purchase and the note are still removed. With the key unset, nothing is sent.
+
 ## Still unverified
 
 `GET /assistants/memories/operations/{operation_id}` was never triggered. The live add-memory response had no operation id. The poller is unchanged for a later write that returns `memory_operation_id` with status `IN_PROGRESS`.

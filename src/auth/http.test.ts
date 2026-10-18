@@ -45,6 +45,7 @@ describe("auth http", () => {
       },
       sendMessage: (input) => inner.sendMessage(input),
       resetMemories: (assistantId) => inner.resetMemories(assistantId),
+      deleteMemory: (assistantId, memoryId) => inner.deleteMemory(assistantId, memoryId),
     };
     const memory = createMemoryRuntime({}, { client, remote: true });
     const app = express();

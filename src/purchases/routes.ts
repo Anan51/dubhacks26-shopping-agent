@@ -59,7 +59,11 @@ export function createPurchaseRouter(deps: {
     try {
       const userId = authenticatedUserId(req);
       refuseClientScope(req, userId);
-      await deletePurchase(userId, req.params.id ?? "");
+      await deletePurchase(userId, req.params.id ?? "", {
+        directory: deps.directory,
+        client: deps.client,
+        remote: deps.remote,
+      });
       res.status(204).end();
     } catch (error: unknown) {
       sendPurchaseError(res, error);

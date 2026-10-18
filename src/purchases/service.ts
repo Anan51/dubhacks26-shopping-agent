@@ -251,7 +251,11 @@ export async function setPurchaseFeedback(
 }
 
 /** Owner-scoped hard delete. Unknown ids answer 404. Example rows are included. */
-export async function deletePurchase(userId: string, purchaseId: string): Promise<void> {
+export async function deletePurchase(
+  userId: string,
+  purchaseId: string,
+  deps: { directory: AccountDirectory; client: BackboardClient; remote: boolean },
+): Promise<void> {
   if (!/^[a-f0-9]{24}$/i.test(purchaseId) || !/^[a-f0-9]{24}$/i.test(userId)) {
     throw new PurchaseError(404, "Purchase not found.");
   }
@@ -260,7 +264,7 @@ export async function deletePurchase(userId: string, purchaseId: string): Promis
     throw new PurchaseError(404, "Purchase not found.");
   }
   try {
-    await forgetPurchaseVoteNotes(userId, purchaseId, doc.item, doc.category, doc.price);
+    await forgetPurchaseVoteNotes(userId, purchaseId, doc.item, doc.category, doc.price, deps);
   } catch (error: unknown) {
     console.error(error instanceof Error ? error.message : "Purchase vote notes were not removed.");
   }
@@ -277,21 +281,55 @@ async function forgetPurchaseVoteNotes(
   item: string,
   category: string,
   price: number,
+  deps: { directory: AccountDirectory; client: BackboardClient; remote: boolean },
 ): Promise<void> {
+  const memoryIds: string[] = [];
+  const tagged = await MemoryNote.find({ userId, "meta.purchaseId": purchaseId }).select("backboardMemoryId");
+  for (const note of tagged) {
+    pushMemoryId(memoryIds, note.backboardMemoryId);
+  }
   await MemoryNote.deleteMany({ userId, "meta.purchaseId": purchaseId });
   const sibling = await PurchaseRecord.exists({ userId, item, category, price });
-  if (sibling) {
+  if (!sibling) {
+    const lines = [purchaseVoteLine("regretted", item, category, price), purchaseVoteLine("kept", item, category, price)];
+    const notes = await MemoryNote.find({ userId, text: { $in: lines } }).select("_id meta backboardMemoryId");
+    const legacy = notes.filter((note) => !storedPurchaseId(note.meta));
+    for (const note of legacy) {
+      pushMemoryId(memoryIds, note.backboardMemoryId);
+    }
+    if (legacy.length > 0) {
+      await MemoryNote.deleteMany({ _id: { $in: legacy.map((note) => note._id) } });
+    }
+  }
+  await deleteBackboardMemories(userId, memoryIds, deps);
+}
+
+async function deleteBackboardMemories(
+  userId: string,
+  memoryIds: string[],
+  deps: { directory: AccountDirectory; client: BackboardClient; remote: boolean },
+): Promise<void> {
+  if (!deps.remote || memoryIds.length === 0) {
     return;
   }
-  const lines = [purchaseVoteLine("regretted", item, category, price), purchaseVoteLine("kept", item, category, price)];
-  const notes = await MemoryNote.find({ userId, text: { $in: lines } }).select("_id meta");
-  const legacyIds = notes.flatMap((note) => (storedPurchaseId(note.meta) ? [] : [note._id]));
-  if (legacyIds.length === 0) {
+  const user = await deps.directory.findById(userId);
+  const assistantId = user?.backboardAssistantId;
+  if (!assistantId) {
     return;
   }
-  await MemoryNote.deleteMany({ _id: { $in: legacyIds } });
-  // TODO: BackboardClient has no per-memory delete. resetMemories wipes the assistant,
-  // and deleteAssistant removes the assistant. The vote line written with addMemory stays on Backboard.
+  for (const memoryId of memoryIds) {
+    try {
+      await deps.client.deleteMemory(assistantId, memoryId);
+    } catch (error: unknown) {
+      console.error(error instanceof Error ? error.message : "Backboard memory was not removed.");
+    }
+  }
+}
+
+function pushMemoryId(memoryIds: string[], value: unknown): void {
+  if (typeof value === "string" && value.trim().length > 0) {
+    memoryIds.push(value.trim());
+  }
 }
 
 function storedPurchaseId(meta: unknown): string | null {

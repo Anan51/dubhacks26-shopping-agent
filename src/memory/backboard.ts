@@ -46,6 +46,11 @@ export type BackboardClient = {
   searchMemories(assistantId: string, query: string, limit: number): Promise<MemorySearchHit[]>;
   sendMessage(input: { content: string; assistantId: string }): Promise<{ content: string; memoryOperationId: string | null }>;
   resetMemories(assistantId: string): Promise<void>;
+  /**
+   * Documented as DELETE /assistants/{assistant_id}/memories/{memory_id}.
+   * Not part of the Oct 17 live check. Removes one memory from that assistant.
+   */
+  deleteMemory(assistantId: string, memoryId: string): Promise<void>;
 };
 
 type FetchImpl = typeof fetch;
@@ -139,6 +144,18 @@ export class HttpBackboardClient implements BackboardClient {
     await this.request("DELETE", `/assistants/${encodeURIComponent(assistantId)}/memories`);
   }
 
+  async deleteMemory(assistantId: string, memoryId: string): Promise<void> {
+    requireAssistant(assistantId);
+    const trimmed = memoryId.trim();
+    if (!trimmed) {
+      throw new Error("memory_id is required.");
+    }
+    await this.request(
+      "DELETE",
+      `/assistants/${encodeURIComponent(assistantId)}/memories/${encodeURIComponent(trimmed)}`,
+    );
+  }
+
   /** Live-checked: DELETE /assistants/{id} → 200 { message, assistant_id, deleted_at }. */
   async deleteAssistant(assistantId: string): Promise<void> {
     requireAssistant(assistantId);
@@ -213,10 +230,21 @@ export class InMemoryBackboardClient implements BackboardClient {
 
   async searchMemories(assistantId: string, query: string, limit: number): Promise<MemorySearchHit[]> {
     requireAssistant(assistantId);
-    const needle = query.toLowerCase();
+    const needle = query.trim().toLowerCase();
+    const capped = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0;
+    if (!needle || capped === 0) {
+      return [];
+    }
+    const tokens = needle.split(/[^a-z0-9]+/).filter((token) => token.length >= 3);
     const hits = (this.memories.get(assistantId) ?? [])
-      .filter((memory) => memory.content.toLowerCase().includes(needle))
-      .slice(0, limit);
+      .filter((memory) => {
+        const content = memory.content.toLowerCase();
+        if (content.includes(needle)) {
+          return true;
+        }
+        return tokens.length > 0 && tokens.every((token) => content.includes(token));
+      })
+      .slice(0, capped);
     return hits.map((memory) => ({
       id: memory.id,
       content: memory.content,
@@ -234,6 +262,22 @@ export class InMemoryBackboardClient implements BackboardClient {
   async resetMemories(assistantId: string): Promise<void> {
     requireAssistant(assistantId);
     this.memories.set(assistantId, []);
+  }
+
+  async deleteMemory(assistantId: string, memoryId: string): Promise<void> {
+    requireAssistant(assistantId);
+    const trimmed = memoryId.trim();
+    if (!trimmed) {
+      throw new Error("memory_id is required.");
+    }
+    const list = this.memories.get(assistantId);
+    if (!list) {
+      return;
+    }
+    this.memories.set(
+      assistantId,
+      list.filter((memory) => memory.id !== trimmed),
+    );
   }
 
   private requireKnown(assistantId: string): void {
