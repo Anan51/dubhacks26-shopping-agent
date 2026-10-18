@@ -613,6 +613,24 @@ describe("purchase feedback", () => {
     assert.equal(await MemoryNote.countDocuments({ userId: ada.id, text: line }), 0);
   });
 
+  it("drops the week check-in when the purchase is removed", async () => {
+    const ada = await signup("ada-checkin-delete@example.com");
+    const row = await PurchaseRecord.create({
+      userId: ada.id,
+      item: "Cable",
+      category: "cable",
+      price: 19,
+      feedback: null,
+      isExample: false,
+    });
+    await CheckIn.create({ userId: ada.id, purchaseId: row._id, dueAt: new Date() });
+    assert.equal(await CheckIn.countDocuments({ purchaseId: row._id, userId: ada.id }), 1);
+    const removed = await del(`/purchases/${row._id.toString()}`, ada.cookie);
+    assert.equal(removed.status, 204);
+    assert.equal(await PurchaseRecord.countDocuments({ _id: row._id }), 0);
+    assert.equal(await CheckIn.countDocuments({ purchaseId: row._id }), 0);
+  });
+
   it("returns 204 when vote note cleanup fails after the purchase is gone", async () => {
     const ada = await signup("ada-note-fail@example.com");
     const row = await PurchaseRecord.create({

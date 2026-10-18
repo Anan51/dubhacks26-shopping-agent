@@ -7,6 +7,7 @@ import { assistantForUser } from "../memory/service.js";
 import { isRecord } from "../record.js";
 import { waitForMemoryWrite, type BackboardClient, type MemoryKind } from "../memory/backboard.js";
 import { rememberCheckIn } from "../checkins/ensure.js";
+import { CheckIn } from "../checkins/model.js";
 import { PurchaseRecord } from "./model.js";
 
 export type PurchaseFeedback = "regretted" | "kept";
@@ -236,7 +237,7 @@ export async function setPurchaseFeedback(
   }
   if (doc.feedback === feedback) {
     if (feedback) {
-      await rememberVoteIfMissing(userId, doc.item, doc.category, doc.price, feedback, deps);
+      await rememberVoteIfMissing(userId, doc._id.toString(), doc.item, doc.category, doc.price, feedback, deps);
     }
     return toView(doc);
   }
@@ -260,6 +261,7 @@ export async function deletePurchase(userId: string, purchaseId: string): Promis
   }
   try {
     await forgetPurchaseVoteNotes(userId, purchaseId, doc.item, doc.category, doc.price);
+    await CheckIn.deleteMany({ userId, purchaseId });
   } catch (error: unknown) {
     console.error(error instanceof Error ? error.message : "Purchase vote notes were not removed.");
   }
@@ -336,6 +338,7 @@ export async function recordCheckedOutBag(userId: string, cart: Cart): Promise<{
 
 async function rememberVoteIfMissing(
   userId: string,
+  purchaseId: string,
   item: string,
   category: string,
   price: number,
@@ -347,7 +350,7 @@ async function rememberVoteIfMissing(
   if (saved) {
     return;
   }
-  await writeVoteMemory(userId, item, category, price, feedback, deps);
+  await writeVoteMemory(userId, purchaseId, item, category, price, feedback, deps);
 }
 
 async function writeVoteMemory(
