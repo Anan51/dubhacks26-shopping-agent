@@ -256,10 +256,12 @@ function page(href: string, body: string): Document {
   return new JSDOM(`<!doctype html>${body}`, { url: href }).window.document;
 }
 
-function control(doc: Document, selector: string): HTMLInputElement {
+function control(doc: Document, selector: string): HTMLInputElement | HTMLButtonElement {
+  const view = doc.defaultView;
+  assert.ok(view);
   const node = doc.querySelector(selector);
-  assert.ok(node instanceof doc.defaultView?.HTMLInputElement || node instanceof doc.defaultView?.HTMLButtonElement);
-  return node as HTMLInputElement;
+  assert.ok(node instanceof view.HTMLInputElement || node instanceof view.HTMLButtonElement);
+  return node;
 }
 
 function click(button: Element): Event {
