@@ -49,6 +49,8 @@ export type OverlayModel = {
   purchaseScore: number | null;
   scoreBucket: "free" | "soft" | "strict" | null;
   scoreReason: string | null;
+  /** Break-even sentence for a carrier switch. Absent on Apple and Amazon. */
+  carrierLine?: string | null;
 };
 
 export type OverlayActions = {
@@ -133,6 +135,7 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
           </p>
         )}
         {model.fallbackPage ? <p className="fine">Example data.</p> : null}
+        {model.carrierLine ? <p className="why">{model.carrierLine}</p> : null}
         {unreadable ? null : (
           <p className="clock" aria-live="polite">
             {clock}
@@ -154,7 +157,9 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
         {import.meta.env?.VITE_SIMMER_DEMO === "1" && actions.demoReply ? <DemoReplyForm onSend={actions.demoReply} /> : null}
         {open ? (
           <div>
-            <p className="why">{unreadable ? "The Apple bag could not be read." : pauseSentence(glance)}</p>
+            {model.carrierLine ? null : (
+              <p className="why">{unreadable ? "The Apple bag could not be read." : pauseSentence(glance)}</p>
+            )}
             {unreadable ? null : <p>{priceLine(model.totalCents, { cents: glance.decision?.costLaterCents ?? 0, example: true })}</p>}
             <div className="row">
               {showSleepControl(model) ? (

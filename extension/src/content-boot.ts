@@ -344,6 +344,7 @@ function start(site: StoreAdapter): Running {
           totalCents: bag.total,
           parsed: true,
           pageHost: page.location.hostname,
+          ...(bag.carrier ? { carrier: bag.carrier } : {}),
         },
         (value) => {
           const body = unwrap(value);
@@ -530,6 +531,7 @@ function modelFrom(
     purchaseScore: typeof cart.purchaseScore === "number" ? cart.purchaseScore : null,
     scoreBucket: cart.scoreBucket === "free" || cart.scoreBucket === "soft" || cart.scoreBucket === "strict" ? cart.scoreBucket : null,
     scoreReason: typeof cart.scoreReason === "string" ? cart.scoreReason : null,
+    ...(typeof cart.carrierLine === "string" && cart.carrierLine.length > 0 ? { carrierLine: cart.carrierLine } : {}),
   };
 }
 

@@ -63,7 +63,18 @@ export function isFallbackBag(url: string): boolean {
   }
   const host = parsed.hostname.toLowerCase();
   const path = parsed.pathname.toLowerCase();
-  return isLocalFallback(host, path) || isLocalAmazonPath(host, path);
+  return isLocalFallback(host, path) || isLocalAmazonPath(host, path) || isLocalCarrierPath(host, path);
+}
+
+/** Local plan-switch fixture. Not a live carrier site. */
+export function isLocalCarrierFixture(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  return isLocalCarrierPath(parsed.hostname.toLowerCase(), parsed.pathname.toLowerCase());
 }
 
 /** Local Amazon cart fixture. Not an Apple bag, and not a live amazon.com page. */
@@ -83,6 +94,10 @@ function isLocalFallback(host: string, path: string): boolean {
 
 function isLocalAmazonPath(host: string, path: string): boolean {
   return (host === "127.0.0.1" || host === "localhost") && (path === "/amazon" || path.startsWith("/amazon/"));
+}
+
+function isLocalCarrierPath(host: string, path: string): boolean {
+  return (host === "127.0.0.1" || host === "localhost") && (path === "/carrier-switch" || path.startsWith("/carrier-switch/"));
 }
 
 function isCheckoutHost(host: string): boolean {

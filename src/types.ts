@@ -174,6 +174,11 @@ export type Cart = {
   reading: boolean;
   userId: string | null;
   lastPing: CheckoutPing | null;
+  /**
+   * Plain carrier-switch sentence for the corner card.
+   * Absent on Apple and Amazon carts. Not part of `Decision`.
+   */
+  carrierLine?: string | null;
 };
 
 /** Sleep on it, or end marinating. Switches on `action` use `assertNever`. */

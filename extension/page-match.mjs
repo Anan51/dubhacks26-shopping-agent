@@ -11,7 +11,7 @@ export function shouldInjectContent(url) {
   }
   const host = parsed.hostname.toLowerCase();
   const path = parsed.pathname.toLowerCase();
-  if (isLocalHost(host) && (isFallbackPath(path) || isLocalAmazonPath(path))) {
+  if (isLocalHost(host) && (isFallbackPath(path) || isLocalAmazonPath(path) || isCarrierPath(path))) {
     return true;
   }
   if (isAppleRetail(host) && isBagPath(path)) {
@@ -36,6 +36,10 @@ function isFallbackPath(path) {
 
 function isLocalAmazonPath(path) {
   return path === "/amazon" || path.startsWith("/amazon/");
+}
+
+function isCarrierPath(path) {
+  return path === "/carrier-switch" || path.startsWith("/carrier-switch/");
 }
 
 function isAppleRetail(host) {

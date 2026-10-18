@@ -43,6 +43,7 @@ import { phraseDecision, polishPhrase } from "./phrase.js";
 import { ReminderScheduler } from "./reminders.js";
 import { createRuntime, type Runtime } from "./runtime.js";
 import { applyImpulseReading, readingForCart } from "./scoring/cartReading.js";
+import { applyCarrierLine, carrierVerdict, parseCarrierFacts } from "./scoring/carrierSwitch.js";
 import type { PhoneLink, Store } from "./store.js";
 import type { Cart, Decision, Session } from "./types.js";
 
@@ -212,6 +213,10 @@ export function createApp(deps: AppDeps): RunningApp {
     res.type("html").send(readFileSync(path.join(process.cwd(), "web", "amazon-cart.html"), "utf8"));
   });
 
+  app.get("/carrier-switch", (_req, res) => {
+    res.type("html").send(readFileSync(path.join(process.cwd(), "web", "carrier-switch.html"), "utf8"));
+  });
+
   app.get("/api/config", (_req, res) => {
     res.json({
       synthetic: true,
@@ -303,18 +308,27 @@ export function createApp(deps: AppDeps): RunningApp {
     }
     const persona = personaFor(userId, assignedPersonas);
     cart.personaId = persona.id;
+    const carrier = parseCarrierFacts(body.carrier);
     const keyword = keywordNecessity(bagText);
     applyNecessity(cart, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason });
-    if (!keyword.necessary && bag.totalCents >= PAUSE_FLOOR_CENTS) {
+    if (!keyword.necessary && bag.totalCents >= PAUSE_FLOOR_CENTS && !(carrier && carrierVerdict(carrier) === "pass")) {
       await pingCart(cart, false);
     }
     await attachImpulse(cart, req.user?.id, "create");
     if (req.user?.id) {
       assignAuthUser(cart, req.user.id);
     }
+    if (carrier) {
+      applyCarrierLine(cart, carrier);
+      if (carrierVerdict(carrier) === "pass") {
+        scheduler.disarm(cart.code);
+      }
+    }
     deps.store.saveCart(cart);
     res.status(201).json(publicCart(cart, deps.agentHandle));
-    refineNecessity(cart.code, bagText, req.user?.id);
+    if (!carrier) {
+      refineNecessity(cart.code, bagText, req.user?.id);
+    }
   }));
 
   app.get("/api/carts/:code", (req, res) => {

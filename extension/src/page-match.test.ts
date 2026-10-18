@@ -18,6 +18,8 @@ describe("content script injection urls", () => {
       "https://secure6.store.apple.com/shop/checkout",
       "http://127.0.0.1:4321/fallback",
       "http://localhost:4321/amazon",
+      "http://127.0.0.1:4321/carrier-switch",
+      "http://127.0.0.1:4321/carrier-switch?case=pass",
       "https://www.amazon.com/gp/cart/view.html",
       "https://www.amazon.com/cart",
     ]) {

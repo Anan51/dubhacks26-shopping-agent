@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Switch to Verizon</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: Georgia, "Iowan Old Style", serif;
+        background: #f4f1ea;
+        color: #241c14;
+      }
+      main {
+        max-width: 36rem;
+        margin: 2rem auto;
+        padding: 1.5rem;
+      }
+      .note {
+        background: #f3e2cf;
+        padding: 0.8rem 1rem;
+        border-radius: 0.8rem;
+      }
+      .plan {
+        background: white;
+        border-radius: 1rem;
+        padding: 1rem 1.2rem;
+        margin: 1rem 0;
+      }
+      .plan p {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        margin: 0.45rem 0;
+      }
+      button {
+        font: inherit;
+        border: 0;
+        border-radius: 999px;
+        padding: 0.7rem 1.2rem;
+        background: #243044;
+        color: white;
+      }
+      nav,
+      footer {
+        padding: 0.8rem 1.2rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="note">Example data. Synthetic plan checkout. This page never contacts a carrier and never takes a card.</p>
+      <h1>Switch to Verizon</h1>
+      <section class="plan" id="carrier-plan" data-case="wait">
+        <p><span>Current plan</span> <span data-carrier="current-monthly">$80.00</span> a month</p>
+        <p><span>New plan</span> <span data-carrier="new-monthly">$74.00</span> a month</p>
+        <p><span>Device financing left</span> <span data-carrier="balance">$360.00</span></p>
+        <p><span>Months left</span> <span data-carrier="months">12</span></p>
+        <p><span>Early-termination fee</span> <span data-carrier="fee">$120.00</span></p>
+      </section>
+      <p>
+        <button type="button" id="switch">Switch</button>
+      </p>
+      <p id="result" hidden>The button is uncovered. No order was placed.</p>
+    </main>
+    <nav>
+      <button type="button" id="nav-switch">Switch</button>
+    </nav>
+    <footer>
+      <button type="button" id="footer-confirm">Confirm</button>
+    </footer>
+    <script type="application/json" id="carrier-cases">
+      {
+        "wait": {
+          "currentMonthlyCents": 8000,
+          "newMonthlyCents": 7400,
+          "balanceCents": 36000,
+          "monthsLeft": 12,
+          "feeCents": 12000
+        },
+        "pass": {
+          "currentMonthlyCents": 8000,
+          "newMonthlyCents": 5500,
+          "balanceCents": 0,
+          "monthsLeft": 0,
+          "feeCents": 0
+        }
+      }
+    </script>
+    <script>
+      const cases = JSON.parse(document.getElementById("carrier-cases").textContent);
+      const which = new URLSearchParams(location.search).get("case") === "pass" ? "pass" : "wait";
+      const facts = cases[which];
+      const plan = document.getElementById("carrier-plan");
+      plan.dataset.case = which;
+      const money = (cents) => "$" + (cents / 100).toFixed(2);
+      document.querySelector('[data-carrier="current-monthly"]').textContent = money(facts.currentMonthlyCents);
+      document.querySelector('[data-carrier="new-monthly"]').textContent = money(facts.newMonthlyCents);
+      document.querySelector('[data-carrier="balance"]').textContent = money(facts.balanceCents);
+      document.querySelector('[data-carrier="months"]').textContent = String(facts.monthsLeft);
+      document.querySelector('[data-carrier="fee"]').textContent = money(facts.feeCents);
+      document.getElementById("switch").addEventListener("click", () => {
+        document.getElementById("result").hidden = false;
+      });
+    </script>
+  </body>
+</html>

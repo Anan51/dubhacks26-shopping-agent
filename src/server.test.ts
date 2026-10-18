@@ -233,6 +233,23 @@ describe("apple bag lock", () => {
     assert.match(amazonHtml, /Buy Now/);
     assert.doesNotMatch(amazonHtml, /Visa/);
     assert.doesNotMatch(amazonHtml, /amazon\.com\/gp\/buy/);
+
+    const carrier = await fetch(`${base}/carrier-switch`);
+    assert.equal(carrier.status, 200);
+    const carrierHtml = await carrier.text();
+    assert.match(carrierHtml, /Example data/);
+    assert.match(carrierHtml, /Switch to Verizon/);
+    assert.match(carrierHtml, /\$80\.00/);
+    assert.match(carrierHtml, /\$74\.00/);
+    assert.match(carrierHtml, /\$360\.00/);
+    assert.match(carrierHtml, /\$120\.00/);
+    assert.match(carrierHtml, />Switch</);
+    const carrierPass = await fetch(`${base}/carrier-switch?case=pass`);
+    assert.equal(carrierPass.status, 200);
+    const passHtml = await carrierPass.text();
+    assert.match(passHtml, /"balanceCents": 0/);
+    assert.match(passHtml, /"feeCents": 0/);
+    assert.doesNotMatch(passHtml, /verizon\.com|t-mobile\.com|tmobile\.com/i);
   });
 
   it("caps item names only after cleanup so a real title survives the screen-reader suffix", async () => {

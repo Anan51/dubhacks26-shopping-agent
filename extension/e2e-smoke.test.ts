@@ -8,6 +8,8 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { chromium, type BrowserContext, type Page } from "playwright";
 
+import { CARRIER_PASS, CARRIER_WAIT, carrierSentence } from "../src/scoring/carrierSwitch.js";
+
 const root = path.resolve(import.meta.dirname, "..");
 const extensionDir = path.join(root, "extension", "dist");
 const origin = "http://127.0.0.1:4321";
@@ -105,7 +107,44 @@ describe("built extension smoke", { concurrency: 1 }, () => {
     }
   });
 
-  async function openBag(pathname: "/fallback" | "/amazon"): Promise<Page> {
+  it("shows the Simmer card on /carrier-switch?case=wait and blocks Switch", { timeout: 60_000 }, async () => {
+    const page = await openBag("/carrier-switch?case=wait");
+    try {
+      await assertSimmerCard(page, "carrier", pageNotes.get(page) ?? []);
+      await page.getByText(carrierSentence(CARRIER_WAIT)).waitFor({ state: "visible", timeout: 20_000 });
+      await assertCheckoutStaysPut(page, "#switch");
+    } finally {
+      await page.close();
+    }
+  });
+
+  it("lets Switch through on /carrier-switch?case=pass", { timeout: 60_000 }, async () => {
+    const page = await openBag("/carrier-switch?case=pass");
+    try {
+      const notes = pageNotes.get(page) ?? [];
+      const root = page.locator("#simmer-root");
+      try {
+        await root.waitFor({ state: "attached", timeout: 20_000 });
+        await page.getByText(carrierSentence(CARRIER_PASS)).waitFor({ state: "visible", timeout: 20_000 });
+      } catch (error) {
+        const body = await page.locator("body").innerText().catch(() => "");
+        throw new Error(`Pass card did not appear.\n${notes.join("\n")}\n${body.slice(0, 500)}\n${String(error)}`);
+      }
+      assert.equal(await root.getAttribute("data-simmer-store"), "carrier");
+      assert.equal((await page.locator(".kicker").innerText()).trim(), "Simmer · example data");
+      const control = page.locator("#switch");
+      await control.waitFor({ state: "visible" });
+      assert.equal(await control.getAttribute("data-simmer-blocked"), null);
+      assert.equal(await control.isDisabled(), false);
+      await control.click();
+      await page.locator("#result").waitFor({ state: "visible", timeout: 5_000 });
+      assert.equal(await page.locator("#result").isHidden(), false);
+    } finally {
+      await page.close();
+    }
+  });
+
+  async function openBag(pathname: string): Promise<Page> {
     if (!context) {
       throw new Error("Chromium is not running.");
     }

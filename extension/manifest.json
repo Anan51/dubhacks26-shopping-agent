@@ -75,7 +75,9 @@
         "http://127.0.0.1:4321/fallback*",
         "http://localhost:4321/fallback*",
         "http://127.0.0.1:4321/amazon*",
-        "http://localhost:4321/amazon*"
+        "http://localhost:4321/amazon*",
+        "http://127.0.0.1:4321/carrier-switch*",
+        "http://localhost:4321/carrier-switch*"
       ],
       "js": ["content.js"],
       "run_at": "document_start",
