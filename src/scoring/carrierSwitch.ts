@@ -100,10 +100,11 @@ export function carrierCardLine(facts: CarrierFacts, regretWhy: string | null): 
 }
 
 /**
- * Stores the card line and opens checkout on a pass.
- * Call this after `readingForCart` so `impulse.why` is the current regret score.
- * A pass lifts a vault: nothing is owed and the plan is cheaper, so the click goes through.
- * A wait stays locked, including a vault the impulse score already opened.
+ * Stores the card line and applies the carrier verdict.
+ * The line is the carrier sentence, plus `impulse.why` when that regret line is already on the cart.
+ * A pass marks the bag necessary and lifts the lock, including a vault.
+ * A wait marks the bag unnecessary. A cart that already has a purchase score, or that is already
+ * in a vault, keeps its current lock. Any other cart is locked and its score reason is cleared.
  */
 export function applyCarrierLine(cart: Cart, facts: CarrierFacts): void {
   const line = carrierCardLine(facts, cart.impulse?.why ?? null);

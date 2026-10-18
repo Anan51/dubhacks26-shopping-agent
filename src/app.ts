@@ -273,6 +273,7 @@ export function createApp(deps: AppDeps): RunningApp {
         assignAuthUser(existing, authUserId);
       }
       rememberHiddenItemCount(existing, bag.hiddenItemCount);
+      const carrier = parseCarrierFacts(body.carrier);
       if (existing.necessity == null) {
         const keyword = keywordNecessity(bagText);
         applyNecessity(existing, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason });
@@ -280,9 +281,17 @@ export function createApp(deps: AppDeps): RunningApp {
           await pingCart(existing, false);
         }
         deps.store.saveCart(existing);
-        refineNecessity(existing.code, bagText);
+        if (!carrier) {
+          refineNecessity(existing.code, bagText);
+        }
       }
       await attachImpulse(existing, req.user?.id, "refresh");
+      if (carrier) {
+        applyCarrierLine(existing, carrier);
+        if (carrierVerdict(carrier) === "pass") {
+          scheduler.disarm(existing.code);
+        }
+      }
       deps.store.saveCart(existing);
       res.json(publicCart(existing, deps.agentHandle));
       return;

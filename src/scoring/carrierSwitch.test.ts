@@ -173,6 +173,34 @@ describe("carrier switch reasoning", () => {
     assert.equal(passing.carrierLine, carrierCardLine(CARRIER_PASS, REGRET_WHY));
   });
 
+  it("leaves the lock alone on wait when a purchase score is already set", () => {
+    const scored = startLockedCart({
+      items: itemsForBag(["Switch to Carrier X"], CARRIER_WAIT.newMonthlyCents, true),
+      totalCents: CARRIER_WAIT.newMonthlyCents,
+      parsedFromPage: true,
+      pageHost: "127.0.0.1",
+      fingerprint: "score-wait",
+      now: NOW,
+      demo: false,
+      lockMs: 600_000,
+      userId: "user-score-wait",
+      code: "SCORE3",
+    });
+    scored.purchaseScore = 5;
+    scored.scoreBucket = "free";
+    scored.status = "unlocked";
+    scored.isUnlocked = true;
+    scored.scoreReason = "Clear reason.";
+    scored.necessity = "necessary";
+    applyCarrierLine(scored, CARRIER_WAIT);
+    assert.equal(scored.purchaseScore, 5);
+    assert.equal(scored.status, "unlocked");
+    assert.equal(scored.isUnlocked, true);
+    assert.equal(scored.scoreReason, "Clear reason.");
+    assert.equal(scored.necessity, "unnecessary");
+    assert.equal(scored.carrierLine, carrierSentence(CARRIER_WAIT));
+  });
+
   it("keeps one priced plan line after the carrier sentence, and an iPhone still scores over a cable", async () => {
     const planCents = 3_500;
     const carrier = startLockedCart({
@@ -388,6 +416,98 @@ describe("carrier switch on the cart route", () => {
       assert.equal(again.necessity, "necessary");
       assert.equal(again.carrierLine, carrierSentence(CARRIER_PASS));
       assert.equal(grokCalls, 0);
+    } finally {
+      running.scheduler.stop();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("keeps a carrier wait under $40 locked on a second post, and a pass stays unlocked", async () => {
+    const underFloor: CarrierFacts = {
+      currentMonthlyCents: 8_000,
+      newMonthlyCents: 3_500,
+      balanceCents: 36_000,
+      monthsLeft: 12,
+      feeCents: 12_000,
+    };
+    const store = createMemoryStore();
+    const running = createApp({
+      store,
+      origin: "http://127.0.0.1",
+      lockMs: 600_000,
+      demoReminderMs: 60_000,
+      demoDefault: false,
+      agentHandle: null,
+      photon: null,
+      xaiModel: "grok-4.20-0309-non-reasoning",
+      xaiTimeoutMs: 8_000,
+      polish: async (template) => template,
+    });
+    const server = createServer(running.app);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${address.port}`;
+    try {
+      const waitBody = {
+        userId: "user-repost",
+        itemNames: ["Switch to Carrier X"],
+        totalCents: underFloor.newMonthlyCents,
+        parsed: true,
+        pageHost: "127.0.0.1",
+        demo: false,
+        carrier: underFloor,
+      };
+      const created = await post(base, "/api/carts", waitBody);
+      assert.equal(created.status, 201);
+      const cart = created.body as CartSnap;
+      assert.equal(cart.status, "locked");
+      assert.equal(cart.isUnlocked, false);
+      const stored = store.getCart(cart.code);
+      assert.ok(stored);
+      stored.necessity = null;
+      stored.necessitySource = null;
+      stored.necessityReason = null;
+      store.saveCart(stored);
+      const again = await post(base, "/api/carts", waitBody);
+      assert.equal(again.status, 200);
+      const replay = again.body as CartSnap;
+      assert.equal(replay.code, cart.code);
+      assert.equal(replay.necessity, "unnecessary");
+      assert.equal(replay.status, "locked");
+      assert.equal(replay.isUnlocked, false);
+      assert.match(replay.carrierLine ?? "", /\$360 left on the phone/);
+
+      const passBody = {
+        userId: "user-repost-pass",
+        itemNames: ["Switch to Carrier X"],
+        totalCents: CARRIER_PASS.newMonthlyCents,
+        parsed: true,
+        pageHost: "127.0.0.1",
+        demo: false,
+        carrier: CARRIER_PASS,
+      };
+      const passed = await post(base, "/api/carts", passBody);
+      assert.equal(passed.status, 201);
+      const open = passed.body as CartSnap;
+      assert.equal(open.status, "unlocked");
+      assert.equal(open.isUnlocked, true);
+      const storedPass = store.getCart(open.code);
+      assert.ok(storedPass);
+      storedPass.necessity = null;
+      storedPass.necessitySource = null;
+      storedPass.necessityReason = null;
+      store.saveCart(storedPass);
+      const passedAgain = await post(base, "/api/carts", passBody);
+      assert.equal(passedAgain.status, 200);
+      const stillOpen = passedAgain.body as CartSnap;
+      assert.equal(stillOpen.code, open.code);
+      assert.equal(stillOpen.necessity, "necessary");
+      assert.equal(stillOpen.status, "unlocked");
+      assert.equal(stillOpen.isUnlocked, true);
     } finally {
       running.scheduler.stop();
       await new Promise<void>((resolve, reject) => {
