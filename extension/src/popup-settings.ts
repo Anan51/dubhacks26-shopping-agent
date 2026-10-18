@@ -58,6 +58,9 @@ export function attachSettings(
         return;
       }
       const body = (await response.json()) as unknown;
+      if (id !== loadId) {
+        return;
+      }
       if (!isRecord(body)) {
         showError("Could not load your settings.");
         return;
@@ -104,6 +107,9 @@ export function attachSettings(
       }
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as unknown;
+        if (id !== loadId) {
+          return;
+        }
         const message = response.status === 400 && isRecord(body) && typeof body.error === "string" ? body.error : "Couldn't save settings.";
         showError(message);
         return;
@@ -124,6 +130,9 @@ export function attachSettings(
       }
       saved.hidden = false;
     } catch {
+      if (id !== loadId) {
+        return;
+      }
       showError("Couldn't save settings.");
     }
   }

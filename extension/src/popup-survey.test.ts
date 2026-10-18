@@ -397,6 +397,79 @@ describe("popup survey", () => {
     assert.deepEqual(patches[1], { hourlyRate: 55 });
   });
 
+  it("keeps a saved amount when the settings body arrives after Save", async () => {
+    globalThis.document = dom.window.document;
+    installChrome();
+    let releaseBody: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseBody = resolve;
+    });
+    let settingsGets = 0;
+    const patches: { hourlyRate?: number; weeklyBudget?: number }[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/auth/me")) {
+        return json({ error: "Authentication required." }, 401);
+      }
+      if (url.endsWith("/auth/signup")) {
+        return json({ user: { id: "user-1", email: "ada@example.com" }, token: "jwt-from-signup" });
+      }
+      if (url.endsWith("/onboarding/survey")) {
+        return json({ completed: true, hourlyRate: null, weeklyBudget: null });
+      }
+      if (url.endsWith("/settings") && method === "PATCH") {
+        const body = JSON.parse(String(init?.body)) as { hourlyRate?: number; weeklyBudget?: number };
+        patches.push(body);
+        return json({ hourlyRate: body.hourlyRate ?? null, weeklyBudget: body.weeklyBudget ?? null });
+      }
+      if (url.endsWith("/settings")) {
+        settingsGets += 1;
+        if (settingsGets === 1) {
+          return heldJson({ hourlyRate: null, weeklyBudget: null }, gate);
+        }
+        return json({ hourlyRate: null, weeklyBudget: null });
+      }
+      if (url.includes("/purchases/history")) {
+        return json({ purchases: [] });
+      }
+      return json({ error: "missing" }, 404);
+    }) as typeof fetch;
+
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    mountPopupAuth(parent, "http://127.0.0.1:4321");
+    await waitFor(() => document.querySelector("#simmer-auth form") instanceof dom.window.HTMLFormElement);
+    const email = document.querySelector<HTMLInputElement>("input[name='email']");
+    const password = document.querySelector<HTMLInputElement>("input[name='password']");
+    assert.ok(email && password);
+    email.value = "ada@example.com";
+    password.value = "correct horse battery";
+    document.querySelectorAll("button")[0]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    await waitFor(() => stored.simmer_token === "jwt-from-signup");
+    const settingsTab = [...document.querySelectorAll("button")].find((button) => button.textContent === "Settings");
+    assert.ok(settingsTab);
+    settingsTab.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    await waitFor(() => settingsGets === 1);
+    const income = document.querySelector<HTMLInputElement>("#simmer-settings input[name='income']");
+    assert.ok(income);
+    income.value = "40";
+    const save = [...document.querySelectorAll("#simmer-settings button")].find((button) => button.textContent === "Save");
+    assert.ok(save);
+    save.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    await waitFor(() => patches.length === 1 && document.body.textContent?.includes("Saved.") === true);
+    assert.equal(income.value, "40");
+    releaseBody();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(income.value, "40");
+    const savedNote = [...document.querySelectorAll("#simmer-settings p")].find((node) => node.textContent === "Saved.");
+    assert.equal(savedNote?.hidden, false);
+    income.value = "55";
+    save.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    await waitFor(() => patches.length === 2);
+    assert.deepEqual(patches[1], { hourlyRate: 55 });
+  });
+
   it("shows the saved amounts when the popup is opened again", async () => {
     globalThis.document = dom.window.document;
     installChrome();
@@ -495,6 +568,20 @@ function installChrome(): void {
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function heldJson(body: unknown, gate: Promise<void>): Response {
+  const stream = new ReadableStream({
+    async start(controller) {
+      await gate;
+      controller.enqueue(new TextEncoder().encode(JSON.stringify(body)));
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    status: 200,
     headers: { "content-type": "application/json" },
   });
 }
