@@ -16,7 +16,7 @@ import { InMemoryBackboardClient, type BackboardClient } from "../memory/backboa
 import { createMemoryRuntime } from "../memory/runtime.js";
 import { PurchaseRecord } from "../purchases/model.js";
 import { createPurchaseRouter } from "../purchases/routes.js";
-import { budgetMemoryLine, countRegrets, getBudgetProfile, getHourlyRate, getSavedGoals, getWeeklyBudget, purchaseVoteLine, weeklySpend, writeUserMemoryLine } from "../purchases/service.js";
+import { budgetMemoryLine, countRegrets, getBudgetProfile, getHourlyRate, getSavedGoals, getWeeklyBudget, hasRegrettedPurchase, purchaseVoteLine, weeklySpend, writeUserMemoryLine } from "../purchases/service.js";
 import { createOnboardingRouter } from "./routes.js";
 
 const SECRET = "survey-test-secret";
@@ -27,6 +27,7 @@ describe("onboarding survey", () => {
   let close: () => Promise<void>;
   let directory: AccountDirectory;
   const writes: string[] = [];
+  let memoryThrows = false;
 
   before(async () => {
     mongod = await MongoMemoryReplSet.create({
@@ -39,6 +40,9 @@ describe("onboarding survey", () => {
     const client: BackboardClient = {
       createAssistant: (input) => inner.createAssistant(input),
       addMemory: async (assistantId, input) => {
+        if (memoryThrows) {
+          throw new Error("Backboard down");
+        }
         writes.push(input.content);
         return inner.addMemory(assistantId, input);
       },
@@ -269,13 +273,43 @@ describe("onboarding survey", () => {
       { userId: ada.id, item: "Case", category: "case", price: 5, feedback: "regretted", isExample: false },
       { userId: ada.id, item: "Cable", category: "cable", price: 2, feedback: "kept", isExample: false },
       { userId: ada.id, item: "Demo phone", category: "phone", price: 1, feedback: "regretted", isExample: true },
+      { userId: ada.id, item: "Demo buds", category: "audio", price: 1, feedback: "regretted", isExample: true },
       { userId: blake.id, item: "Watch", category: "watch", price: 3, feedback: "regretted", isExample: false },
     ]);
     assert.equal(await countRegrets(ada.id), 2);
     assert.equal(await countRegrets(ada.id, "phone"), 1);
     assert.equal(await countRegrets(ada.id, "watch"), 0);
     assert.equal(await countRegrets(blake.id), 1);
+    assert.equal(await hasRegrettedPurchase(ada.id, "phone"), true);
+    assert.equal(await hasRegrettedPurchase(ada.id, "audio"), false);
+    assert.equal(await countRegrets(ada.id, "audio"), 0);
     assert.deepEqual(await getSavedGoals(ada.id), []);
+  });
+
+  it("saves the survey when a Backboard write throws and 404s a missing user", async () => {
+    const ada = await signup("ada-memory-down@example.com");
+    memoryThrows = true;
+    try {
+      const saved = await post(
+        "/onboarding/survey",
+        { hourlyRate: 20, weeklyBudget: 40, recentPurchases: [{ item: "AirPods", price: 179, regretted: true }] },
+        ada.token,
+      );
+      assert.equal(saved.status, 201);
+      const body = saved.body as { completed: boolean; hourlyRate: number; purchases: { item: string }[] };
+      assert.equal(body.completed, true);
+      assert.equal(body.hourlyRate, 20);
+      assert.equal(body.purchases[0]?.item, "AirPods");
+      assert.equal(await surveyCompleted(ada.id), true);
+    } finally {
+      memoryThrows = false;
+    }
+
+    const gone = await signup("ada-gone@example.com");
+    await User.deleteOne({ _id: gone.id });
+    const missing = await post("/onboarding/survey", { hourlyRate: 1, weeklyBudget: 1, recentPurchases: [] }, gone.token);
+    assert.equal(missing.status, 404);
+    assert.equal((missing.body as { error: string }).error, "User not found.");
   });
 
   it("rejects a Backboard write that never completes", async () => {

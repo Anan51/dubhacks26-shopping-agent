@@ -136,6 +136,15 @@ describe("purchase feedback", () => {
     assert.equal(foreignList.status, 400);
 
     await post(`/purchases/${adaRow._id}/feedback`, { feedback: "regretted" }, ada.cookie);
+    assert.equal(await hasRegrettedPurchase(ada.id, adaRow.category), false);
+    await PurchaseRecord.create({
+      userId: ada.id,
+      item: "Real item",
+      category: adaRow.category,
+      price: 10,
+      feedback: "regretted",
+      isExample: false,
+    });
     assert.equal(await hasRegrettedPurchase(ada.id, adaRow.category), true);
     assert.equal(await hasRegrettedPurchase(blake.id, adaRow.category), false);
     assert.equal(await hasRegrettedPurchase(ada.id, "not-a-category"), false);

@@ -57,6 +57,13 @@ export async function submitSurvey(
   try {
     await session.withTransaction(async () => {
       purchases = [];
+      const existing = await User.findById(userId).session(session);
+      if (!existing) {
+        throw new SurveyError(404, "User not found.");
+      }
+      if (existing.surveyCompleted === true) {
+        throw new SurveyError(409, "Survey already completed.");
+      }
       const updated = await User.updateOne(
         { _id: userId, surveyCompleted: { $ne: true } },
         { $set: { hourlyRate: parsed.hourlyRate, weeklyBudget: parsed.weeklyBudget, surveyCompleted: true } },
@@ -84,31 +91,50 @@ export async function submitSurvey(
   } finally {
     await session.endSession();
   }
-  if (parsed.hourlyRate !== null) {
-    await writeUserMemoryLine(userId, budgetMemoryLine("hourly rate", parsed.hourlyRate), "goal", deps, { field: "hourlyRate" });
-  }
-  if (parsed.weeklyBudget !== null) {
-    await writeUserMemoryLine(userId, budgetMemoryLine("weekly budget", parsed.weeklyBudget), "goal", deps, { field: "weeklyBudget" });
-  }
-  for (const purchase of parsed.recentPurchases) {
-    if (!purchase.regretted) {
-      continue;
-    }
-    const category = categoryForItem(purchase.item);
-    await writeUserMemoryLine(
-      userId,
-      purchaseVoteLine("regretted", purchase.item, category, purchase.price),
-      "regret",
-      deps,
-      { category, feedback: "regretted" },
-    );
-  }
+  await rememberSurvey(userId, parsed, deps);
   return {
     completed: true,
     hourlyRate: parsed.hourlyRate,
     weeklyBudget: parsed.weeklyBudget,
     purchases,
   };
+}
+
+async function rememberSurvey(
+  userId: string,
+  parsed: { hourlyRate: number | null; weeklyBudget: number | null; recentPurchases: SurveyPurchaseInput[] },
+  deps: { directory: AccountDirectory; client: BackboardClient; remote: boolean },
+): Promise<void> {
+  if (parsed.hourlyRate !== null) {
+    await rememberLine(userId, budgetMemoryLine("hourly rate", parsed.hourlyRate), "goal", deps, { field: "hourlyRate" });
+  }
+  if (parsed.weeklyBudget !== null) {
+    await rememberLine(userId, budgetMemoryLine("weekly budget", parsed.weeklyBudget), "goal", deps, { field: "weeklyBudget" });
+  }
+  for (const purchase of parsed.recentPurchases) {
+    if (!purchase.regretted) {
+      continue;
+    }
+    const category = categoryForItem(purchase.item);
+    await rememberLine(userId, purchaseVoteLine("regretted", purchase.item, category, purchase.price), "regret", deps, {
+      category,
+      feedback: "regretted",
+    });
+  }
+}
+
+async function rememberLine(
+  userId: string,
+  line: string,
+  kind: "goal" | "regret",
+  deps: { directory: AccountDirectory; client: BackboardClient; remote: boolean },
+  meta: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await writeUserMemoryLine(userId, line, kind, deps, meta);
+  } catch (error: unknown) {
+    console.error(error instanceof Error ? error.message : "Survey memory was not saved.");
+  }
 }
 
 function parseSurvey(body: unknown): { hourlyRate: number | null; weeklyBudget: number | null; recentPurchases: SurveyPurchaseInput[] } {

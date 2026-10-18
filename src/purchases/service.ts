@@ -168,6 +168,7 @@ export async function hasRegrettedPurchase(userId: string, category: string): Pr
     userId,
     category: category.trim().toLowerCase(),
     feedback: "regretted",
+    isExample: false,
   });
   return found != null;
 }
