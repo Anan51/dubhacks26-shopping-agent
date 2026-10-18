@@ -38,7 +38,7 @@ export type AppConfig = {
   lockMs: number;
   demoReminderMs: number;
   demoDefault: boolean;
-  /** Null uses the in-memory store. A path selects the JSON file store. */
+  /** JSON file for carts, chats, and phone links. Unset uses data/waitmate.json. Null still selects memory. */
   storePath: string | null;
   channel: "auto" | "photon" | "stub";
   xaiApiKey?: string;
@@ -61,7 +61,7 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     lockMs: numberFrom(env.WAITMATE_LOCK_MS, DEFAULT_LOCK_MS),
     demoReminderMs: numberFrom(env.WAITMATE_DEMO_REMINDER_MS, 60_000),
     demoDefault: env.WAITMATE_DEMO === "1",
-    storePath: env.WAITMATE_STORE_PATH?.trim() || null,
+    storePath: env.WAITMATE_STORE_PATH?.trim() || "data/waitmate.json",
     channel,
     ...(xaiApiKey ? { xaiApiKey } : {}),
     xaiModel: xaiModelFrom(env),

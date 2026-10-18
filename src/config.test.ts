@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 
 import { photonConfigured, readAppConfig, readConfig } from "./config.js";
 
+const DEFAULT_STORE_PATH = "data/waitmate.json";
+
 describe("Photon env", () => {
   it("reads the project id, line number, and API key from the environment", () => {
     const config = readConfig({
@@ -27,5 +29,14 @@ describe("Photon env", () => {
     assert.equal(photonConfigured({}), false);
     assert.equal(readAppConfig({ PHOTON_TEST_NUMBER: "+15555550100" }).testNumber, "+15555550100");
     assert.equal(readAppConfig({}).testNumber, null);
+  });
+});
+
+describe("store path", () => {
+  it("defaults to data/waitmate.json and lets an explicit path override", () => {
+    assert.equal(readAppConfig({}).storePath, DEFAULT_STORE_PATH);
+    assert.equal(readAppConfig({ WAITMATE_STORE_PATH: "" }).storePath, DEFAULT_STORE_PATH);
+    assert.equal(readAppConfig({ WAITMATE_STORE_PATH: "   " }).storePath, DEFAULT_STORE_PATH);
+    assert.equal(readAppConfig({ WAITMATE_STORE_PATH: "tmp/carts.json" }).storePath, "tmp/carts.json");
   });
 });
