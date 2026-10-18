@@ -11,6 +11,11 @@ import { chromium, type BrowserContext, type Page } from "playwright";
 const root = path.resolve(import.meta.dirname, "..");
 const extensionDir = path.join(root, "extension", "dist");
 const origin = "http://127.0.0.1:4321";
+let activeServer: ChildProcess | undefined;
+
+process.on("exit", () => {
+  killServer(activeServer);
+});
 
 const blankKeys = [
   "HOST",
@@ -48,12 +53,18 @@ describe("built extension smoke", { concurrency: 1 }, () => {
     server = await startServer((chunk) => {
       serverLog = `${serverLog}${chunk}`.slice(-12_000);
     });
+    activeServer = server;
     userDataDir = mkdtempSync(path.join(tmpdir(), "simmer-e2e-"));
     context = await launchExtension(userDataDir);
+    context.setDefaultTimeout(20_000);
+    context.setDefaultNavigationTimeout(20_000);
     if (context.serviceWorkers().length === 0) {
-      await context.waitForEvent("serviceworker", { timeout: 20_000 });
+      await Promise.race([
+        context.waitForEvent("serviceworker").then(() => undefined),
+        delay(15_000),
+      ]);
     }
-  }, { timeout: 180_000 });
+  }, { timeout: 90_000 });
 
   after(async () => {
     try {
@@ -122,12 +133,17 @@ async function buildDefaultExtension(): Promise<void> {
 }
 
 function launchExtension(userDataDir: string): Promise<BrowserContext> {
+  // headless: false keeps Playwright from adding --headless. --headless=new is the
+  // Chromium mode that still loads unpacked extensions.
   return chromium.launchPersistentContext(userDataDir, {
     channel: "chromium",
-    headless: true,
+    headless: false,
+    timeout: 20_000,
     viewport: { width: 1280, height: 800 },
+    chromiumSandbox: false,
     ignoreDefaultArgs: ["--disable-extensions"],
     args: [
+      "--headless=new",
       `--disable-extensions-except=${extensionDir}`,
       `--load-extension=${extensionDir}`,
     ],
@@ -197,7 +213,7 @@ async function startServer(onLog: (chunk: string) => void): Promise<ChildProcess
       throw new Error(`npm run dev exited ${child.exitCode}`);
     }
     try {
-      const response = await fetch(`${origin}/api/health`);
+      const response = await fetch(`${origin}/api/health`, { signal: AbortSignal.timeout(2_000) });
       if (response.ok) {
         return child;
       }
@@ -227,29 +243,42 @@ function serverEnv(): NodeJS.ProcessEnv {
 }
 
 function stopServer(child: ChildProcess | undefined): Promise<void> {
-  if (!child || child.pid === undefined || child.exitCode !== null) {
+  if (!child) {
     return Promise.resolve();
   }
-  const pid = child.pid;
-  try {
-    process.kill(-pid, "SIGTERM");
-  } catch {
-    child.kill("SIGTERM");
+  killServer(child);
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+  child.unref();
+  if (child.exitCode !== null) {
+    return Promise.resolve();
   }
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
-      try {
-        process.kill(-pid, "SIGKILL");
-      } catch {
-        child.kill("SIGKILL");
-      }
+      killServer(child);
       resolve();
-    }, 5_000);
+    }, 1_000);
     child.once("exit", () => {
       clearTimeout(timer);
       resolve();
     });
   });
+}
+
+function killServer(child: ChildProcess | undefined): void {
+  if (!child?.pid || child.exitCode !== null) {
+    return;
+  }
+  const pid = child.pid;
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      return;
+    }
+  }
 }
 
 function run(command: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<void> {
