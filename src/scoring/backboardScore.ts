@@ -260,9 +260,7 @@ function similarRegretWeight(
  */
 function regretMatchesBag(bagCategory: string, bagItem: string, content: string): boolean {
   const subject = memorySubject(content);
-  if (bagCategory === "other") {
-    return itemNamesOverlap(bagItem, subject);
-  }
+  if (bagCategory === "other") return itemNamesOverlap(bagItem, subject);
   return categoryOfMemory(content) === bagCategory || categoryForItem(subject) === bagCategory;
 }
 

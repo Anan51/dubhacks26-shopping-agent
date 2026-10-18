@@ -331,6 +331,29 @@ describe("regret search scoring", { concurrency: false }, () => {
     assert.equal(unrelatedOther.score, 4.5);
     assert.equal(unrelatedOther.why, null);
 
+    const socksBag = await computeImpulseScore(ada.id, socks, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [hit("regretted purchase: ceramic mug (other, $18)", 0.44)]),
+    });
+    assert.equal(socksBag.score, 4.5);
+    assert.equal(socksBag.why, null);
+
+    const lego: ImpulseItem = { item: "lego set", category: "other", price: 40, necessary: false };
+    const legoFlat = await computeImpulseScore(ada.id, lego, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [hit("regretted purchase: concert tickets (other, $40)", 0.44)]),
+    });
+    assert.equal(legoFlat.score, 4.5);
+    assert.equal(legoFlat.why, null);
+
+    const yoga: ImpulseItem = { item: "yoga mat", category: "other", price: 40, necessary: false };
+    const yogaFlat = await computeImpulseScore(ada.id, yoga, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [hit("regretted purchase: blender (other, $40)", 0.44)]),
+    });
+    assert.equal(yogaFlat.score, 4.5);
+    assert.equal(yogaFlat.why, null);
+
     const overlappingOther = await computeImpulseScore(ada.id, hikingSocks, undefined, {
       backboardEnabled: true,
       client: scriptedClient(async () => [socksRegret]),
@@ -433,6 +456,18 @@ describe("regret search scoring", { concurrency: false }, () => {
     assert.ok(raised.impulse.score1to8 > 4.5);
     assert.equal(raised.impulse.score1to8, 4.9);
     assert.equal(raised.impulse.why, "You regretted a similar purchase before.");
+
+    const galaxy = await scoreReadCart(ada.id, "Galaxy S24", [iphone]);
+    assert.ok(galaxy.impulse.score1to8 > 4.5);
+    assert.equal(galaxy.impulse.score1to8, 4.9);
+
+    const watch = await scoreReadCart(ada.id, "Galaxy Watch", [iphone]);
+    assert.equal(watch.impulse.score1to8, 4.5);
+    assert.equal(watch.impulse.why, null);
+
+    const tablet = await scoreReadCart(ada.id, "Pixel Tablet", [iphone]);
+    assert.equal(tablet.impulse.score1to8, 4.5);
+    assert.equal(tablet.impulse.why, null);
   });
 
   it("raises a Galaxy S24 cart from a Pixel phone regret without a shared name token", async () => {
