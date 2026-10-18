@@ -8,6 +8,7 @@ import { attachSurvey } from "./popup-survey.js";
 const LOGIN_ERROR = "Invalid email or password.";
 const SIGNUP_ERROR = "Could not sign up.";
 const REACH_ERROR = "Could not reach the server.";
+const AUTH_HINT = "Set the Auth server URL in Options (http://127.0.0.1:<port>) to sign in.";
 
 export type PopupAccount = {
   id: string;
@@ -22,6 +23,7 @@ export function mountPopupAuth(
 ): boolean {
   const parsed = authOriginFromStorage(originValue);
   if (!parsed) {
+    mountAuthServerHint(parent);
     return false;
   }
   const origin: string = parsed;
@@ -271,6 +273,44 @@ export function mountPopupAuth(
     error.hidden = true;
     error.textContent = "";
   }
+}
+
+function mountAuthServerHint(parent: HTMLElement): void {
+  const style = document.createElement("style");
+  style.textContent = [
+    "#simmer-auth-hint { padding: 0.7rem 0.9rem 0; }",
+    "#simmer-auth-hint p { color: #7a5b45; font-size: 0.78rem; margin: 0 0 0.45rem; }",
+    "#simmer-auth-hint button { font: inherit; background: #8a4b24; color: white; border: 0; border-radius: 999px; padding: 0.35rem 0.7rem; cursor: pointer; }",
+  ].join("");
+
+  const section = document.createElement("section");
+  section.id = "simmer-auth-hint";
+  const message = document.createElement("p");
+  message.className = "fine";
+  message.textContent = AUTH_HINT;
+  const options = actionButton("Options");
+  options.addEventListener("click", () => {
+    openOptionsPage();
+  });
+  section.append(message, options);
+  parent.prepend(style, section);
+}
+
+function openOptionsPage(): void {
+  const runtime = extensionRuntime();
+  if (!runtime || typeof runtime.openOptionsPage !== "function") {
+    return;
+  }
+  try {
+    void Promise.resolve(runtime.openOptionsPage()).catch(() => undefined);
+  } catch {
+    return;
+  }
+}
+
+function extensionRuntime(): { openOptionsPage?: () => void | Promise<unknown> } | null {
+  const host = globalThis as { chrome?: { runtime?: { openOptionsPage?: () => void | Promise<unknown> } } };
+  return host.chrome?.runtime ?? null;
 }
 
 function tabButton(text: string): HTMLButtonElement {
