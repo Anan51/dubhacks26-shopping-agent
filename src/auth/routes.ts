@@ -198,7 +198,7 @@ function credentials(req: Request): { email: string; password: string } {
 async function sendSession(res: Response, user: AccountUser, secret: string, status: 200 | 201): Promise<void> {
   const token = await signSession({ id: user.id, email: user.email }, secret);
   setSessionCookie(res, token);
-  res.status(status).json({ user: publicUser(user) });
+  res.status(status).json({ user: publicUser(user), token });
 }
 
 function parseRemember(body: unknown): RememberInput | null {

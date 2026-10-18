@@ -14,6 +14,7 @@ import { createApp } from "./app.js";
 import { PhotonChannel } from "./channels/photon.js";
 import { photonConfigured, readAppConfig, readConfig } from "./config.js";
 import { createMemoryRuntime } from "./memory/runtime.js";
+import { createOnboardingRouter } from "./onboarding/routes.js";
 import { createPurchaseRouter } from "./purchases/routes.js";
 import { recordUnlockedPurchase } from "./purchases/service.js";
 import { createDefaultStore } from "./store.js";
@@ -98,15 +99,14 @@ export async function startServer(): Promise<void> {
     ...(accountConfig.backboardEnabled ? { provision: provisionAssistant(memory.client, memory.directory) } : {}),
   });
   if (jwtSecret && mongoState() === "ready") {
-    running.app.use(
-      "/purchases",
-      createPurchaseRouter({
-        authenticate: requireUser(jwtSecret),
-        directory: memory.directory,
-        client: memory.client,
-        remote: memory.remote,
-      }),
-    );
+    const accountRoutes = {
+      authenticate: requireUser(jwtSecret),
+      directory: memory.directory,
+      client: memory.client,
+      remote: memory.remote,
+    };
+    running.app.use("/purchases", createPurchaseRouter(accountRoutes));
+    running.app.use("/onboarding", createOnboardingRouter(accountRoutes));
   }
 
   await attachClient(running.app);

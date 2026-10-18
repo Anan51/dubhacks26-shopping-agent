@@ -18,6 +18,9 @@ const userSchema = new Schema(
       },
     },
     backboardAssistantId: { type: String, unique: true, sparse: true },
+    hourlyRate: { type: Number, default: null },
+    weeklyBudget: { type: Number, default: null },
+    surveyCompleted: { type: Boolean, default: false },
   },
   { timestamps: true },
 );

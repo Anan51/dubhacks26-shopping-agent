@@ -1,6 +1,7 @@
 import { isRecord } from "../../src/record.js";
 import { authOriginFromStorage } from "./auth-flag.js";
 import { attachPurchaseHistory } from "./popup-purchases.js";
+import { attachSurvey } from "./popup-survey.js";
 
 const LOGIN_ERROR = "Invalid email or password.";
 const SIGNUP_ERROR = "Could not sign up.";
@@ -49,7 +50,18 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
   signed.append(who, logout);
 
   section.append(form, signed);
-  const history = attachPurchaseHistory(section, origin);
+  let sessionToken: string | null = null;
+  const authorization = async (): Promise<string | null> => {
+    if (sessionToken) {
+      return sessionToken;
+    }
+    sessionToken = await readStoredToken();
+    return sessionToken;
+  };
+  const history = attachPurchaseHistory(section, origin, authorization);
+  const survey = attachSurvey(section, origin, authorization, () => {
+    history.show();
+  });
   parent.prepend(style, section);
 
   signup.addEventListener("click", () => {
@@ -83,7 +95,7 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
         showError(kind === "login" ? LOGIN_ERROR : SIGNUP_ERROR);
         return;
       }
-      showSignedIn(account.email);
+      await showSignedIn(account.email, account.token);
     } catch {
       showError(REACH_ERROR);
     }
@@ -101,7 +113,7 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
         showSignedOut();
         return;
       }
-      showSignedIn(account.email);
+      await showSignedIn(account.email);
     } catch {
       showSignedOut();
     }
@@ -116,20 +128,32 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
       return;
     }
     password.input.value = "";
+    sessionToken = null;
+    await clearStoredToken();
     showSignedOut();
   }
 
-  function showSignedIn(address: string): void {
+  async function showSignedIn(address: string, token?: string | null): Promise<void> {
+    if (token) {
+      sessionToken = token;
+      await storeToken(token);
+    }
     form.hidden = true;
     signed.hidden = false;
     who.textContent = address;
-    history.show();
+    const completed = await survey.refresh();
+    if (completed) {
+      history.show();
+    } else {
+      history.hide();
+    }
   }
 
   function showSignedOut(): void {
     form.hidden = false;
     signed.hidden = true;
     who.textContent = "";
+    survey.hide();
     history.hide();
   }
 
@@ -176,11 +200,33 @@ async function authFetch(origin: string, path: string, body?: unknown): Promise<
   });
 }
 
-async function readUser(response: Response): Promise<{ email: string } | null> {
+async function readUser(response: Response): Promise<{ email: string; token: string | null } | null> {
   const body = (await response.json()) as unknown;
   if (!isRecord(body) || !isRecord(body.user) || typeof body.user.email !== "string") {
     return null;
   }
-  return { email: body.user.email };
+  const token = typeof body.token === "string" && body.token.length > 0 ? body.token : null;
+  return { email: body.user.email, token };
+}
+
+function storeToken(token: string): Promise<void> {
+  return new Promise((resolve) => {
+    chrome.storage.local.set({ simmer_token: token }, () => resolve());
+  });
+}
+
+function clearStoredToken(): Promise<void> {
+  return new Promise((resolve) => {
+    chrome.storage.local.set({ simmer_token: "" }, () => resolve());
+  });
+}
+
+function readStoredToken(): Promise<string | null> {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(["simmer_token"], (items) => {
+      const value = items.simmer_token;
+      resolve(typeof value === "string" && value.length > 0 ? value : null);
+    });
+  });
 }
 

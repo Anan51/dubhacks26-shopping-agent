@@ -12,7 +12,11 @@ export type PurchaseRow = {
   isExample: boolean;
 };
 
-export function attachPurchaseHistory(parent: HTMLElement, origin: string): { show(): void; hide(): void } {
+export function attachPurchaseHistory(
+  parent: HTMLElement,
+  origin: string,
+  authorization?: () => Promise<string | null>,
+): { show(): void; hide(): void } {
   const style = document.createElement("style");
   style.textContent = [
     "#simmer-purchases { padding: 0.2rem 0 0.4rem; }",
@@ -57,7 +61,7 @@ export function attachPurchaseHistory(parent: HTMLElement, origin: string): { sh
     try {
       const response = await fetch(`${origin}/purchases/history?limit=15`, {
         credentials: "include",
-        headers: { accept: "application/json" },
+        headers: { accept: "application/json", ...(await bearerHeader(authorization)) },
       });
       if (!response.ok) {
         status.hidden = false;
@@ -115,7 +119,7 @@ export function attachPurchaseHistory(parent: HTMLElement, origin: string): { sh
       const response = await fetch(`${origin}/purchases/${purchase._id}/feedback`, {
         method: "POST",
         credentials: "include",
-        headers: { accept: "application/json", "content-type": "application/json" },
+        headers: { accept: "application/json", "content-type": "application/json", ...(await bearerHeader(authorization)) },
         body: JSON.stringify({ feedback }),
       });
       if (!response.ok) {
@@ -129,6 +133,17 @@ export function attachPurchaseHistory(parent: HTMLElement, origin: string): { sh
       status.textContent = "Could not save that rating.";
     }
   }
+}
+
+async function bearerHeader(authorization?: () => Promise<string | null>): Promise<Record<string, string>> {
+  if (!authorization) {
+    return {};
+  }
+  const token = await authorization();
+  if (!token) {
+    return {};
+  }
+  return { authorization: `Bearer ${token}` };
 }
 
 function formatPrice(price: number): string {
