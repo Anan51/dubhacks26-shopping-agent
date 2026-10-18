@@ -65,6 +65,30 @@ describe("necessity gate", () => {
     assert.equal(keywordNecessity("iPhone 16 Pro").necessary, false);
   });
 
+  it("counts a bag as necessary only when every item is", () => {
+    const phoneCable = keywordNecessity("iPhone\nUSB-C cable");
+    const cableFirst = keywordNecessity("USB-C cable\niPhone");
+    const headphones = keywordNecessity("Headphones\nUSB-C charger");
+    const chargerFirst = keywordNecessity("USB-C charger\nHeadphones");
+    const parts = keywordNecessity("USB-C charge cable\n20W USB-C Power Adapter");
+    assert.equal(phoneCable.necessary, false);
+    assert.equal(locksCheckout(phoneCable), true);
+    assert.equal(cableFirst.necessary, false);
+    assert.equal(locksCheckout(cableFirst), true);
+    assert.equal(headphones.necessary, false);
+    assert.equal(locksCheckout(headphones), true);
+    assert.equal(chargerFirst.necessary, false);
+    assert.equal(parts.necessary, true);
+    assert.equal(locksCheckout(parts), false);
+    assert.equal(keywordNecessity("USB-C charge cable").necessary, true);
+    assert.equal(keywordNecessity("USB-C cable").necessary, true);
+    assert.equal(keywordNecessity("USB-C charger").necessary, true);
+    assert.equal(keywordNecessity("iPhone").necessary, false);
+    assert.equal(keywordNecessity("Headphones").necessary, false);
+    assert.equal(keywordNecessity("Example phone").necessary, false);
+    assert.equal(locksCheckout(keywordNecessity("Example phone")), true);
+  });
+
   it("classifies real accessory names as necessary when Grok is absent", () => {
     for (const name of [
       "Apple Watch Magnetic Fast Charger to USB-C Cable",
@@ -78,28 +102,57 @@ describe("necessity gate", () => {
     }
   });
 
-  it("uses Grok when the JSON is valid and keywords when the call fails", async () => {
+  it("lets Grok veto a keyword-necessary bag and keeps the keyword result when Grok fails", async () => {
     let calls = 0;
-    const grok = await classifyNecessity("Example phone", {
+    const veto = await classifyNecessity("USB-C charge cable\nMagSafe Charger", {
       apiKey: "test-key",
       fetchImpl: async () => {
         calls += 1;
         return Response.json({
-          choices: [{ message: { content: '{"necessary": false, "reason": "Upgrade."}' } }],
+          choices: [{ message: { content: '{"necessary": false, "reason": "Stocking up."}' } }],
         });
       },
     });
     assert.equal(calls, 1);
-    assert.equal(grok.source, "grok");
-    assert.equal(grok.necessary, false);
-    assert.equal(locksCheckout(grok), true);
+    assert.equal(veto.source, "grok");
+    assert.equal(veto.necessary, false);
+    assert.equal(locksCheckout(veto), true);
+
+    const singleVeto = await classifyNecessity("USB-C charge cable", {
+      apiKey: "test-key",
+      fetchImpl: async () => {
+        calls += 1;
+        return Response.json({
+          choices: [{ message: { content: '{"necessary": false, "reason": "Want."}' } }],
+        });
+      },
+    });
+    assert.equal(calls, 2);
+    assert.equal(singleVeto.source, "grok");
+    assert.equal(singleVeto.necessary, false);
 
     const broken = await classifyNecessity("USB-C charge cable", {
       apiKey: "test-key",
-      fetchImpl: async () => Response.json({ choices: [{ message: { content: "nope" } }] }),
+      fetchImpl: async () => {
+        calls += 1;
+        return Response.json({ choices: [{ message: { content: "nope" } }] });
+      },
     });
+    assert.equal(calls, 3);
     assert.equal(broken.source, "keywords");
     assert.equal(broken.necessary, true);
+
+    const failed = await classifyNecessity("USB-C charge cable", {
+      apiKey: "test-key",
+      fetchImpl: async () => {
+        calls += 1;
+        throw new Error("timeout");
+      },
+    });
+    assert.equal(calls, 4);
+    assert.equal(failed.source, "keywords");
+    assert.equal(failed.necessary, true);
+    assert.equal(locksCheckout(failed), false);
 
     let network = false;
     const offline = await classifyNecessity("USB-C charge cable", {
@@ -111,6 +164,31 @@ describe("necessity gate", () => {
     assert.equal(network, false);
     assert.equal(offline.source, "keywords");
     assert.equal(offline.necessary, true);
+  });
+
+  it("does not let a Grok true loosen a bag that fails the keyword check", async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = async () => {
+      calls += 1;
+      return Response.json({
+        choices: [{ message: { content: '{"necessary": true, "reason": "Yes."}' } }],
+      });
+    };
+    const mixed = await classifyNecessity("iPhone\nUSB-C cable", { apiKey: "test-key", fetchImpl });
+    const phone = await classifyNecessity("iPhone", { apiKey: "test-key", fetchImpl });
+    const phoneOnly = await classifyNecessity("Example phone", { apiKey: "test-key", fetchImpl });
+    assert.equal(calls, 0);
+    assert.equal(mixed.necessary, false);
+    assert.equal(mixed.source, "keywords");
+    assert.equal(locksCheckout(mixed), true);
+    assert.equal(phone.necessary, false);
+    assert.equal(phone.source, "keywords");
+    assert.equal(phoneOnly.necessary, false);
+    assert.equal(phoneOnly.source, "keywords");
+
+    const cable = await classifyNecessity("USB-C charge cable", {});
+    assert.equal(cable.necessary, true);
+    assert.equal(cable.source, "keywords");
   });
 });
 
@@ -483,6 +561,163 @@ describe("checkout ping and a repeat post", () => {
   });
 });
 
+describe("mixed bags on both cart routes", () => {
+  it("locks a new mixed bag and still opens a bag whose every item is necessary", async () => {
+    const running = createApp({
+      store: createMemoryStore(),
+      origin: "http://127.0.0.1",
+      lockMs: 600_000,
+      demoReminderMs: 60_000,
+      demoDefault: true,
+      agentHandle: null,
+      photon: null,
+      xaiModel: "grok-4.20-0309-non-reasoning",
+      xaiTimeoutMs: 8_000,
+      polish: async (template) => template,
+    });
+    const server = createServer(running.app);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${address.port}`;
+    try {
+      const phoneCable = await post(base, "/api/carts", postedItems("user-phone-cable", ["iPhone", "USB-C cable"], 80_900));
+      assert.equal(phoneCable.status, 201);
+      const mixed = phoneCable.body as CartSnap;
+      assert.equal(mixed.necessity, "unnecessary");
+      assert.equal(mixed.necessitySource, "keywords");
+      assert.equal(mixed.status, "locked");
+      assert.equal(mixed.isUnlocked, false);
+      assert.notEqual(mixed.lastPing, null);
+      assert.equal(mixed.impulse?.score1to8, 4.5);
+      assert.equal(mixed.impulse?.band, "soft");
+      const held = await post(base, "/api/pay", { code: mixed.code });
+      assert.equal(held.status, 423);
+
+      const headphones = await post(
+        base,
+        "/api/carts",
+        postedItems("user-headphones", ["Headphones", "USB-C charger"], 12_900),
+      );
+      const audio = headphones.body as CartSnap;
+      assert.equal(headphones.status, 201);
+      assert.equal(audio.necessity, "unnecessary");
+      assert.equal(audio.status, "locked");
+      assert.equal(audio.isUnlocked, false);
+      assert.notEqual(audio.lastPing, null);
+
+      const parts = await post(
+        base,
+        "/api/carts",
+        postedItems("user-parts", ["USB-C charge cable", "20W USB-C Power Adapter"], 3_800),
+      );
+      const open = parts.body as CartSnap;
+      assert.equal(parts.status, 201);
+      assert.equal(open.necessity, "necessary");
+      assert.equal(open.necessitySource, "keywords");
+      assert.equal(open.status, "unlocked");
+      assert.equal(open.isUnlocked, true);
+      assert.equal(open.lastPing, null);
+      const paid = await post(base, "/api/pay", { code: open.code });
+      assert.equal(paid.status, 200);
+
+      const cable = await post(base, "/api/carts", postedItems("user-one-cable", ["USB-C charge cable"], 1_900));
+      const singleCable = cable.body as CartSnap;
+      assert.equal(cable.status, 201);
+      assert.equal(singleCable.necessity, "necessary");
+      assert.equal(singleCable.isUnlocked, true);
+      assert.equal(singleCable.lastPing, null);
+
+      const phone = await post(base, "/api/carts", postedItems("user-one-phone", ["Example phone"], 120_000));
+      const singlePhone = phone.body as CartSnap;
+      assert.equal(phone.status, 201);
+      assert.equal(singlePhone.necessity, "unnecessary");
+      assert.equal(singlePhone.status, "locked");
+      assert.equal(singlePhone.isUnlocked, false);
+      assert.notEqual(singlePhone.lastPing, null);
+    } finally {
+      running.scheduler.stop();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("repairs a deduped cart per item when necessity was never stored", async () => {
+    const store = createMemoryStore();
+    const running = createApp({
+      store,
+      origin: "http://127.0.0.1",
+      lockMs: 600_000,
+      demoReminderMs: 60_000,
+      demoDefault: true,
+      agentHandle: null,
+      photon: null,
+      xaiModel: "grok-4.20-0309-non-reasoning",
+      xaiTimeoutMs: 8_000,
+      polish: async (template) => template,
+    });
+    const server = createServer(running.app);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${address.port}`;
+    try {
+      const phoneCable = await repostWithoutNecessity(store, base, postedItems("user-repair-phone", ["iPhone", "USB-C cable"], 80_900));
+      assert.equal(phoneCable.httpStatus, 200);
+      assert.equal(phoneCable.cart.necessity, "unnecessary");
+      assert.equal(phoneCable.cart.necessitySource, "keywords");
+      assert.equal(phoneCable.cart.status, "locked");
+      assert.equal(phoneCable.cart.isUnlocked, false);
+      assert.notEqual(phoneCable.cart.lastPing, null);
+
+      const headphones = await repostWithoutNecessity(
+        store,
+        base,
+        postedItems("user-repair-audio", ["Headphones", "USB-C charger"], 12_900),
+      );
+      assert.equal(headphones.httpStatus, 200);
+      assert.equal(headphones.cart.necessity, "unnecessary");
+      assert.equal(headphones.cart.status, "locked");
+      assert.equal(headphones.cart.isUnlocked, false);
+      assert.notEqual(headphones.cart.lastPing, null);
+
+      const parts = await repostWithoutNecessity(
+        store,
+        base,
+        postedItems("user-repair-parts", ["USB-C charge cable", "MagSafe Charger"], 4_800),
+      );
+      assert.equal(parts.httpStatus, 200);
+      assert.equal(parts.cart.necessity, "necessary");
+      assert.equal(parts.cart.necessitySource, "keywords");
+      assert.equal(parts.cart.status, "unlocked");
+      assert.equal(parts.cart.isUnlocked, true);
+      assert.equal(parts.cart.lastPing, null);
+
+      const cable = await repostWithoutNecessity(store, base, postedItems("user-repair-cable", ["USB-C charge cable"], 1_900));
+      assert.equal(cable.httpStatus, 200);
+      assert.equal(cable.cart.necessity, "necessary");
+      assert.equal(cable.cart.status, "unlocked");
+      assert.equal(cable.cart.isUnlocked, true);
+      assert.equal(cable.cart.lastPing, null);
+
+      const phone = await repostWithoutNecessity(store, base, postedItems("user-repair-phone-only", ["iPhone 16 Pro"], 119_900));
+      assert.equal(phone.httpStatus, 200);
+      assert.equal(phone.cart.necessity, "unnecessary");
+      assert.equal(phone.cart.status, "locked");
+      assert.equal(phone.cart.isUnlocked, false);
+      assert.notEqual(phone.cart.lastPing, null);
+    } finally {
+      running.scheduler.stop();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+});
+
 describe("keyword necessity on the request path", () => {
   it("answers with keywords before a slow Grok call and repairs a deduped cart", async () => {
     const store = createMemoryStore();
@@ -553,6 +788,63 @@ describe("keyword necessity on the request path", () => {
       assert.equal(revised.necessity, "unnecessary");
       assert.equal(revised.status, "locked");
       assert.equal(revised.isUnlocked, false);
+    } finally {
+      running.scheduler.stop();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("does not unlock a mixed bag when Grok says necessary", async () => {
+    const store = createMemoryStore();
+    let calls = 0;
+    const running = createApp({
+      store,
+      origin: "http://127.0.0.1",
+      lockMs: 600_000,
+      demoReminderMs: 60_000,
+      demoDefault: true,
+      agentHandle: null,
+      photon: null,
+      xaiApiKey: "test-key",
+      xaiModel: "grok-4.20-0309-non-reasoning",
+      xaiTimeoutMs: 8_000,
+      fetchImpl: async () => {
+        calls += 1;
+        return Response.json({
+          choices: [{ message: { content: '{"necessary": true, "reason": "Cable."}' } }],
+        });
+      },
+      polish: async (template) => template,
+    });
+    const server = createServer(running.app);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${address.port}`;
+    try {
+      const created = await post(base, "/api/carts", postedItems("user-grok-mixed", ["iPhone", "USB-C cable"], 80_900));
+      assert.equal(created.status, 201);
+      const locked = created.body as CartSnap;
+      assert.equal(locked.necessity, "unnecessary");
+      assert.equal(locked.necessitySource, "keywords");
+      assert.equal(locked.status, "locked");
+      assert.equal(locked.isUnlocked, false);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const revised = (await get(base, `/api/carts/${locked.code}`)) as CartSnap;
+      assert.equal(calls, 0);
+      assert.equal(revised.necessity, "unnecessary");
+      assert.equal(revised.necessitySource, "keywords");
+      assert.equal(revised.status, "locked");
+      assert.equal(revised.isUnlocked, false);
+      const stored = store.getCart(locked.code);
+      assert.ok(stored);
+      assert.equal(stored.isUnlocked, false);
+      assert.equal(stored.status, "locked");
+      const pay = await post(base, "/api/pay", { code: locked.code });
+      assert.equal(pay.status, 423);
     } finally {
       running.scheduler.stop();
       await new Promise<void>((resolve, reject) => {
@@ -631,7 +923,36 @@ async function listenApp(
 }
 
 function bagBody(userId: string): { userId: string; itemNames: string[]; totalCents: number; parsed: boolean; demo: boolean } {
-  return { userId, itemNames: ["Example phone"], totalCents: 120_000, parsed: true, demo: true };
+  return postedItems(userId, ["Example phone"], 120_000);
+}
+
+function postedItems(
+  userId: string,
+  itemNames: string[],
+  totalCents: number,
+): { userId: string; itemNames: string[]; totalCents: number; parsed: boolean; demo: boolean } {
+  return { userId, itemNames, totalCents, parsed: true, demo: true };
+}
+
+async function repostWithoutNecessity(
+  store: ReturnType<typeof createMemoryStore>,
+  base: string,
+  bag: { userId: string; itemNames: string[]; totalCents: number; parsed: boolean; demo: boolean },
+): Promise<{ httpStatus: number; cart: CartSnap }> {
+  const created = await post(base, "/api/carts", bag);
+  const first = created.body as CartSnap;
+  assert.equal(created.status, 201);
+  const stored = store.getCart(first.code);
+  assert.ok(stored);
+  stored.necessity = null;
+  stored.necessitySource = null;
+  stored.necessityReason = null;
+  stored.isUnlocked = true;
+  stored.status = "unlocked";
+  stored.lastPing = null;
+  store.saveCart(stored);
+  const again = await post(base, "/api/carts", bag);
+  return { httpStatus: again.status, cart: again.body as CartSnap };
 }
 
 function keptPhones(userId: string, count: number): Record<string, unknown>[] {

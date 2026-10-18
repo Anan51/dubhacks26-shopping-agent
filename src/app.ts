@@ -116,6 +116,9 @@ export function createApp(deps: AppDeps): RunningApp {
         if (!current) {
           return;
         }
+        if (necessity.necessary && !keywordNecessity(bagText).necessary) {
+          return;
+        }
         applyNecessity(current, necessity);
         await attachImpulse(current, authUserId, "refresh");
         deps.store.saveCart(current);
