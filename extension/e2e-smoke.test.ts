@@ -64,18 +64,20 @@ describe("built extension smoke", { concurrency: 1 }, () => {
         delay(15_000),
       ]);
     }
-  }, { timeout: 90_000 });
+  }, { timeout: 60_000 });
 
   after(async () => {
     try {
+      await stopServer(server);
       await context?.close();
     } finally {
-      await stopServer(server);
+      killServer(server);
+      activeServer = undefined;
       if (userDataDir) {
         rmSync(userDataDir, { recursive: true, force: true });
       }
     }
-  });
+  }, { timeout: 20_000 });
 
   it("shows the Simmer card on /fallback and blocks Check Out", { timeout: 60_000 }, async () => {
     const page = await openBag("/fallback");

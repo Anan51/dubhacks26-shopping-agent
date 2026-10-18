@@ -18,7 +18,7 @@ const ZOOMS = [67, 80, 100, 125, 150] as const;
 const WIDTHS = [1280, 800] as const;
 
 describe("overlay zoom", () => {
-  it("keeps the card inside the viewport at each zoom and width", { timeout: 120_000 }, async () => {
+  it("keeps the card inside the viewport at each zoom and width", { timeout: 60_000 }, async () => {
     const outDir = mkdtempSync(path.join(tmpdir(), "simmer-zoom-"));
     const scriptPath = path.join(outDir, "card.js");
     await esbuild.build({
