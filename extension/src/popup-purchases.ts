@@ -24,10 +24,12 @@ export function attachPurchaseHistory(
   style.textContent = [
     "#simmer-purchases { padding: 0.2rem 0 0.4rem; }",
     "#simmer-purchases ul { list-style: none; margin: 0.35rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }",
-    "#simmer-purchases li { display: flex; justify-content: space-between; gap: 0.4rem; align-items: center; background: #fffaf3; border: 1px solid #eadccb; border-radius: 0.7rem; padding: 0.4rem 0.5rem; }",
-    "#simmer-purchases .votes { display: flex; gap: 0.25rem; }",
-    "#simmer-purchases button { font: inherit; border: 1px solid #eadccb; background: #fffaf3; border-radius: 999px; padding: 0.15rem 0.4rem; cursor: pointer; }",
-    "#simmer-purchases button[aria-pressed='true'] { background: #8a4b24; border-color: #8a4b24; }",
+    "#simmer-purchases li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.4rem; align-items: center; max-width: 100%; box-sizing: border-box; background: #fffaf3; border: 1px solid #eadccb; border-radius: 0.7rem; padding: 0.4rem 0.5rem; }",
+    "#simmer-purchases .title { flex: 1 1 6rem; min-width: 0; overflow-wrap: anywhere; }",
+    "#simmer-purchases .votes { display: flex; flex-wrap: wrap; gap: 0.25rem; max-width: 100%; }",
+    "#simmer-purchases .confirm, #simmer-purchases .row-error { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 0.25rem; align-items: center; margin: 0; max-width: 100%; }",
+    "#simmer-purchases button { font: inherit; color: #3a2416; border: 1px solid #eadccb; background: #fffaf3; border-radius: 999px; padding: 0.15rem 0.4rem; cursor: pointer; max-width: 100%; }",
+    "#simmer-purchases button[aria-pressed='true'] { background: #8a4b24; border-color: #8a4b24; color: #fffaf3; }",
   ].join("");
   const section = document.createElement("section");
   section.id = "simmer-purchases";
@@ -100,12 +102,92 @@ export function attachPurchaseHistory(
   function row(purchase: PurchaseRow): HTMLLIElement {
     const item = document.createElement("li");
     const title = document.createElement("span");
+    title.className = "title";
     title.textContent = `${purchase.item} · ${purchase.category} · ${formatPrice(purchase.price)}`;
     const votes = document.createElement("span");
     votes.className = "votes";
-    votes.append(voteButton(purchase, "kept", "Thumbs up"), voteButton(purchase, "regretted", "Thumbs down"));
+    votes.append(voteButton(purchase, "kept", "Thumbs up"), voteButton(purchase, "regretted", "Thumbs down"), removeButton(purchase, item));
     item.append(title, votes);
     return item;
+  }
+
+  function removeButton(purchase: PurchaseRow, item: HTMLLIElement): HTMLButtonElement {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "remove";
+    button.textContent = "Remove";
+    button.addEventListener("click", () => {
+      askRemove(purchase, item);
+    });
+    return button;
+  }
+
+  function askRemove(purchase: PurchaseRow, item: HTMLLIElement): void {
+    const existing = item.querySelector(".confirm");
+    if (existing) {
+      return;
+    }
+    const previous = item.querySelector(".row-error");
+    if (previous) {
+      previous.setAttribute("hidden", "");
+    }
+    const confirm = document.createElement("p");
+    confirm.className = "confirm";
+    const question = document.createElement("span");
+    question.textContent = "Remove this purchase?";
+    const yes = document.createElement("button");
+    yes.type = "button";
+    yes.textContent = "Yes";
+    const no = document.createElement("button");
+    no.type = "button";
+    no.textContent = "No";
+    yes.addEventListener("click", () => {
+      confirm.remove();
+      void removePurchase(purchase, item);
+    });
+    no.addEventListener("click", () => {
+      confirm.remove();
+    });
+    confirm.append(question, yes, no);
+    item.append(confirm);
+  }
+
+  async function removePurchase(purchase: PurchaseRow, item: HTMLLIElement): Promise<void> {
+    const id = ++loadId;
+    try {
+      const response = await authorizedFetch(
+        `${origin}/purchases/${purchase._id}`,
+        { method: "DELETE" },
+        authorization ?? (async () => null),
+        onUnauthorized ?? (async () => undefined),
+      );
+      if (id !== loadId || !response) {
+        return;
+      }
+      if (!response.ok) {
+        showRowError(item, "Could not remove that purchase.");
+        return;
+      }
+      item.remove();
+      empty.hidden = list.childElementCount > 0;
+    } catch {
+      if (id !== loadId) {
+        return;
+      }
+      showRowError(item, "Could not remove that purchase.");
+    }
+  }
+
+  function showRowError(item: HTMLLIElement, message: string): void {
+    let error = item.querySelector("p.row-error");
+    if (!error) {
+      const created = document.createElement("p");
+      created.className = "error row-error";
+      item.append(created);
+      error = created;
+    }
+    error.removeAttribute("hidden");
+    error.textContent = message;
   }
 
   function voteButton(purchase: PurchaseRow, choice: "kept" | "regretted", label: string): HTMLButtonElement {

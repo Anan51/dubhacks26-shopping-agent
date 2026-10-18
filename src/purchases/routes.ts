@@ -5,7 +5,7 @@ import type { AccountDirectory } from "../auth/accounts.js";
 import { authenticatedUserId, refuseClientScope, ScopeError } from "../memory/service.js";
 import type { BackboardClient } from "../memory/backboard.js";
 import { isRecord } from "../record.js";
-import { historyLimit, insertRealPurchase, listPurchases, PurchaseError, setPurchaseFeedback, type PurchaseFeedback } from "./service.js";
+import { deletePurchase, historyLimit, insertRealPurchase, listPurchases, PurchaseError, setPurchaseFeedback, type PurchaseFeedback } from "./service.js";
 
 export function createPurchaseRouter(deps: {
   authenticate: RequestHandler;
@@ -34,6 +34,17 @@ export function createPurchaseRouter(deps: {
       refuseClientScope(req, userId);
       const purchases = await listPurchases(userId, historyLimit(req.query.limit));
       res.json({ purchases });
+    } catch (error: unknown) {
+      sendPurchaseError(res, error);
+    }
+  });
+
+  router.delete("/:id", async (req, res) => {
+    try {
+      const userId = authenticatedUserId(req);
+      refuseClientScope(req, userId);
+      await deletePurchase(userId, req.params.id ?? "");
+      res.status(204).end();
     } catch (error: unknown) {
       sendPurchaseError(res, error);
     }
