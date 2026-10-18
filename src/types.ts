@@ -123,6 +123,10 @@ export type Cart = {
   lastInboundMessageId: string | null;
   /** Marinating. The extension keeps Apple's buttons blocked until this is true. */
   isUnlocked: boolean;
+  /** True after Simmer has sent advice for an inbound reply. Unlock stays hidden until then. */
+  replied: boolean;
+  /** Buy, wait, or skip, plus one plain sentence. Null until a reply is graded. */
+  advice: string | null;
   lockStartedAt: string;
   lockEndsAt: string;
   /** When set and still in the future, the Apple bag and checkout stay in the Impulse Vault. */

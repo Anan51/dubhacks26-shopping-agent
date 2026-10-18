@@ -2,18 +2,14 @@ import { useEffect, useState } from "react";
 
 import {
   getConfig,
-  getTranscript,
-  linkDesk,
   listCarts,
-  notifyCart,
   readPayGate,
-  sendDeskMessage,
+  resetDemo,
   setPersona,
   type CartResponse,
   type Decision,
   type PayGate,
   type PublicConfig,
-  type TranscriptTurn,
 } from "./api.js";
 import { Curve } from "./Curve.js";
 import { formatLongDate, formatUsd } from "./format.js";
@@ -23,14 +19,11 @@ export function Desk() {
   const [selected, setSelected] = useState<string>(() => new URLSearchParams(window.location.search).get("cart") ?? "");
   const [config, setConfig] = useState<PublicConfig | null>(null);
   const [gate, setGate] = useState<PayGate | null>(null);
-  const [turns, setTurns] = useState<TranscriptTurn[]>([]);
-  const [reading, setReading] = useState(false);
-  const [draft, setDraft] = useState("");
+  const [readError, setReadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const cart = carts.find((item) => item.code === selected) ?? null;
-  const conversationId = cart ? `desk:cart-${cart.code}` : "";
+  const cart = carts.find((item) => item.code === selected) ?? carts[0] ?? null;
 
   useEffect(() => {
     let cancel = false;
@@ -58,8 +51,9 @@ export function Desk() {
           if (cancel) {
             return;
           }
-          setCarts(next);
-          setSelected((current) => current || next[0]?.code || "");
+          setCarts(next.carts);
+          setReadError(next.readError);
+          setSelected((current) => (next.carts.some((item) => item.code === current) ? current : next.carts[0]?.code || ""));
         })
         .catch((cause: unknown) => {
           if (!cancel) {
@@ -96,39 +90,15 @@ export function Desk() {
     };
   }, [cart]);
 
-  useEffect(() => {
-    if (!conversationId) {
-      return;
-    }
-    let cancel = false;
-    const pull = () => {
-      getTranscript(conversationId)
-        .then((next) => {
-          if (!cancel) {
-            setTurns(next.turns);
-            setReading(next.reading);
-          }
-        })
-        .catch((cause: unknown) => {
-          if (!cancel) {
-            setError(cause instanceof Error ? cause.message : "Could not load the chat.");
-          }
-        });
-    };
-    pull();
-    const timer = window.setInterval(pull, 1000);
-    return () => {
-      cancel = true;
-      window.clearInterval(timer);
-    };
-  }, [conversationId]);
-
   async function run(task: () => Promise<void>) {
     setBusy(true);
     setError(null);
     try {
       await task();
-      setCarts(await listCarts());
+      const next = await listCarts();
+      setCarts(next.carts);
+      setReadError(next.readError);
+      setSelected((current) => (next.carts.some((item) => item.code === current) ? current : next.carts[0]?.code || ""));
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : "Request failed.");
     } finally {
@@ -139,11 +109,23 @@ export function Desk() {
   return (
     <div className="desk">
       <section>
-        <h1>Desk</h1>
+        <h1>Simmer</h1>
         <p className="lede">
-          Simmer marinates the Apple bag in the browser extension. This page is the hidden math and the stub phone. No
-          order is placed here. If apple.com will not load, use the fallback bag at /fallback.
+          Internal view of the current bag. Replies happen in iMessage. No order is placed here. If apple.com will not
+          load, the fallback bag is at /fallback.
         </p>
+        <button
+          type="button"
+          className="button quiet"
+          disabled={busy}
+          onClick={() =>
+            void run(async () => {
+              await resetDemo();
+            })
+          }
+        >
+          Reset demo
+        </button>
         {config ? (
           <p className="fine">
             Channel {config.channel}. Lock {Math.round(config.lockMs / 60000)} minutes. Example balance{" "}
@@ -151,6 +133,7 @@ export function Desk() {
             {config.grokEnabled ? " Grok is on." : " Grok key is empty, so parsing stays on keywords."}
           </p>
         ) : null}
+        {readError ? <p role="alert">Couldn't read bag</p> : null}
         {carts.length === 0 ? <p>Open an Apple bag with the extension loaded. Nothing is locked yet.</p> : null}
         {carts.length > 0 ? (
           <label>
@@ -178,80 +161,13 @@ export function Desk() {
                 void run(() => setPersona(userId, persona));
               }}
             >
-              <option value="impulsive">Impulsive · score 2</option>
+              <option value="impulsive">Example history: frequent buyer · score 2</option>
               <option value="deliberate">Deliberate · score 4</option>
             </select>
           </label>
         ) : null}
         {cart ? <MathPanel cart={cart} gate={gate} personas={config?.personas ?? []} /> : null}
-        {cart ? (
-          <div className="script-row">
-            <button
-              type="button"
-              className="button quiet"
-              disabled={busy || !cart.userId}
-              onClick={() =>
-                void run(async () => {
-                  if (!cart.userId) {
-                    return;
-                  }
-                  await linkDesk(cart.userId, conversationId);
-                  await notifyCart(cart.code, false);
-                })
-              }
-            >
-              Simulate linked ping
-            </button>
-            <button
-              type="button"
-              className="button quiet"
-              disabled={busy}
-              onClick={() => void run(() => notifyCart(cart.code, true).then(() => undefined))}
-            >
-              Simulate send failure
-            </button>
-          </div>
-        ) : null}
         {error ? <p role="alert">{error}</p> : null}
-      </section>
-      <section className="thread" aria-live="polite">
-        <h2>Stub phone</h2>
-        {turns.length === 0 ? <p className="fine">No messages yet.</p> : null}
-        <ol>
-          {turns.map((turn, index) => (
-            <li key={`${turn.role}-${index}`} className={turn.role === "shopper" ? "bubble mine" : "bubble"}>
-              <span className="who">{turn.role === "shopper" ? "You" : "Simmer"}</span>
-              {turn.text}
-            </li>
-          ))}
-          {reading || (busy && config?.grokEnabled) ? (
-            <li className="bubble reading">reading your reply...</li>
-          ) : null}
-        </ol>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            const text = draft.trim();
-            if (!text || !conversationId) {
-              return;
-            }
-            setDraft("");
-            void run(async () => {
-              setTurns(await sendDeskMessage(conversationId, text));
-            });
-          }}
-        >
-          <label htmlFor="desk-text">Message</label>
-          <textarea
-            id="desk-text"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder={cart ? `cart ${cart.code} my battery dies by 3pm` : "Waiting for a cart"}
-          />
-          <button className="button" type="submit" disabled={busy || !cart}>
-            Send
-          </button>
-        </form>
       </section>
     </div>
   );
@@ -293,7 +209,7 @@ function MathPanel({
         {cart.code} · {cart.status}
       </h2>
       <p>
-        {cart.parsedFromPage ? "Parsed from the Apple bag" : "Example phone — the bag could not be read"} ·{" "}
+        {cart.parsedFromPage ? "Parsed from the Apple bag" : "Couldn't read bag"} ·{" "}
         {formatUsd(cart.totalCents)}
         {cart.pageHost ? ` · ${cart.pageHost}` : ""}
       </p>
@@ -305,8 +221,8 @@ function MathPanel({
         ))}
       </ul>
       <p>
-        /api/pay {gate ? `${gate.httpStatus} ${gate.reason ?? "open"}` : "…"}. Unlock stays on the extension. This
-        endpoint only reports the lock.
+        /api/pay {gate ? `${gate.httpStatus} ${gate.reason ?? "open"}` : "…"}. A graded iMessage reply unlocks the bag.
+        This endpoint only reports the lock.
       </p>
       {persona ? (
         <div>
@@ -443,13 +359,9 @@ function MathPanel({
       </p>
       {cart.lastPing?.delivered ? <p>Last ping landed in the linked thread.</p> : null}
       {cart.lastPing && !cart.lastPing.delivered ? (
-        <div>
-          <p>
-            Ping {cart.lastPing.reason}. Fallback message: {cart.lastPing.prefilled}
-          </p>
-          {cart.lastPing.smsLink ? <p><a href={cart.lastPing.smsLink}>Open the sms: link</a></p> : null}
-          {cart.lastPing.qrDataUrl ? <img alt="QR code for the cart text" src={cart.lastPing.qrDataUrl} width={180} height={180} /> : null}
-        </div>
+        <p>
+          Ping {cart.lastPing.reason}. Text {cart.linkMessage ?? "link <userId>"} to Simmer's iMessage number.
+        </p>
       ) : null}
     </div>
   );

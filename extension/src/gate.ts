@@ -3,7 +3,7 @@ import type { ApplePage } from "../../src/sites.js";
 
 export const BLOCKED_STYLE_ID = "simmer-blocked-style";
 
-/** Attribute-scoped so the rest of apple.com is left alone. */
+/** Attribute-scoped so the rest of apple.com is left alone. The label is a sibling, so the dimming does not gray it out. */
 export const BLOCKED_BUTTON_CSS = `
 [data-simmer-blocked] {
   opacity: 0.45 !important;
@@ -11,16 +11,20 @@ export const BLOCKED_BUTTON_CSS = `
   cursor: not-allowed !important;
   pointer-events: none !important;
 }
-[data-simmer-blocked]::after {
-  content: "Marinating";
-  display: inline-block;
-  margin-left: 0.45rem;
-  font-size: 0.75rem;
-  line-height: 1;
-  letter-spacing: 0.01em;
-  color: #6b5438;
-  white-space: nowrap;
-  pointer-events: none;
+[data-simmer-badge] {
+  display: inline-block !important;
+  margin-left: 0.45rem !important;
+  padding: 0.2rem 0.5rem !important;
+  border-radius: 999px !important;
+  background: #1c1c1e !important;
+  color: #fff !important;
+  font: 600 0.75rem/1 system-ui, sans-serif !important;
+  letter-spacing: 0.01em !important;
+  white-space: nowrap !important;
+  vertical-align: middle !important;
+  opacity: 1 !important;
+  filter: none !important;
+  pointer-events: none !important;
 }
 `;
 
@@ -32,7 +36,15 @@ export type Gate = {
   stop: () => void;
 };
 
-export function installGate(doc: Document, kind: ApplePage): Gate {
+export function installGate(doc: Document, scope: ApplePage | (() => readonly Element[])): Gate {
+  const listed = typeof scope === "function" ? scope : null;
+  const kind: ApplePage | null = typeof scope === "function" ? null : scope;
+  const targeted = (node: Element) => {
+    if (listed) {
+      return listed().some((button) => button === node || button.contains(node));
+    }
+    return kind !== null && shouldBlock(node, kind);
+  };
   // Lift only clears the block. It must never click, submit, or complete Apple's button.
   let blocked = true;
   const view = doc.defaultView;
@@ -40,8 +52,8 @@ export function installGate(doc: Document, kind: ApplePage): Gate {
     if (!blocked) {
       return;
     }
-    const control = controlFrom(event.target);
-    if (!control || !isBlockedControl(control, kind)) {
+    const control = controlElement(event.target);
+    if (!control || !targeted(control)) {
       return;
     }
     event.preventDefault();
@@ -53,8 +65,8 @@ export function installGate(doc: Document, kind: ApplePage): Gate {
       return;
     }
     const submitter = "submitter" in event ? (event as SubmitEvent).submitter : null;
-    const control = controlFrom(submitter);
-    if (!control || !isBlockedControl(control, kind)) {
+    const control = controlElement(submitter);
+    if (!control || !targeted(control)) {
       return;
     }
     event.preventDefault();
@@ -68,7 +80,11 @@ export function installGate(doc: Document, kind: ApplePage): Gate {
     if (blocked) {
       ensureBlockedStyle(doc);
     }
-    paintBlockedControls(doc, kind, blocked);
+    if (listed) {
+      paintListed(doc, listed(), blocked);
+    } else if (kind) {
+      paintBlockedControls(doc, kind, blocked);
+    }
     if (!blocked) {
       removeBlockedStyle(doc);
     }
@@ -103,6 +119,39 @@ export function removeBlockedStyle(doc: Document): void {
   doc.getElementById(BLOCKED_STYLE_ID)?.remove();
 }
 
+function paintListed(doc: Document, buttons: readonly Element[], blocked: boolean): void {
+  if (!doc.body) {
+    return;
+  }
+  if (!blocked) {
+    for (const node of doc.querySelectorAll("[data-simmer-blocked]")) {
+      restoreControl(node);
+    }
+    for (const badge of doc.querySelectorAll("[data-simmer-badge]")) {
+      badge.remove();
+    }
+    return;
+  }
+  const chosen = new Set(buttons);
+  for (const node of doc.querySelectorAll("[data-simmer-blocked]")) {
+    if (!chosen.has(node)) {
+      restoreControl(node);
+    }
+  }
+  for (const node of buttons) {
+    node.setAttribute("data-simmer-blocked", "1");
+    node.setAttribute("aria-disabled", "true");
+    disableIfOurs(node);
+    ensureBadge(node);
+  }
+  for (const badge of doc.querySelectorAll("[data-simmer-badge]")) {
+    const previous = badge.previousElementSibling;
+    if (!previous?.hasAttribute("data-simmer-blocked")) {
+      badge.remove();
+    }
+  }
+}
+
 /** Mark checkout controls, or put back exactly the ones this gate changed. */
 export function paintBlockedControls(doc: Document, kind: ApplePage, blocked: boolean): void {
   if (!doc.body) {
@@ -112,17 +161,25 @@ export function paintBlockedControls(doc: Document, kind: ApplePage, blocked: bo
     for (const node of doc.querySelectorAll("[data-simmer-blocked]")) {
       restoreControl(node);
     }
+    for (const badge of doc.querySelectorAll("[data-simmer-badge]")) {
+      badge.remove();
+    }
     return;
   }
   for (const node of doc.querySelectorAll(CANDIDATES)) {
-    const control = controlFrom(node);
-    const mark = control !== null && isBlockedControl(control, kind);
-    if (mark) {
+    if (shouldBlock(node, kind)) {
       node.setAttribute("data-simmer-blocked", "1");
       node.setAttribute("aria-disabled", "true");
       disableIfOurs(node);
+      ensureBadge(node);
     } else if (node.hasAttribute("data-simmer-blocked")) {
       restoreControl(node);
+    }
+  }
+  for (const badge of doc.querySelectorAll("[data-simmer-badge]")) {
+    const previous = badge.previousElementSibling;
+    if (!previous?.hasAttribute("data-simmer-blocked")) {
+      badge.remove();
     }
   }
 }
@@ -155,18 +212,44 @@ function restoreControl(node: Element): void {
   }
   node.removeAttribute("data-simmer-blocked");
   node.removeAttribute("aria-disabled");
+  const badge = node.nextElementSibling;
+  if (badge?.hasAttribute("data-simmer-badge")) {
+    badge.remove();
+  }
 }
 
-function controlFrom(target: EventTarget | null): BagControl | null {
-  const element = isElementTarget(target) ? target : null;
-  const control = element?.closest(CANDIDATES);
-  if (!control) {
-    return null;
+const SITE_CHROME = "footer, nav, #globalheader, #globalfooter, #ac-globalfooter, #ac-globalheader, #globalnav, #ac-globalnav, .globalheader, .globalfooter, [role='banner'], [role='contentinfo']";
+
+function shouldBlock(node: Element, kind: ApplePage): boolean {
+  if (node.closest(SITE_CHROME)) {
+    return false;
   }
+  const control = controlFrom(node);
+  return control !== null && isBlockedControl(control, kind);
+}
+
+function ensureBadge(node: Element): void {
+  const next = node.nextElementSibling;
+  if (next?.hasAttribute("data-simmer-badge")) {
+    next.textContent = "Marinating";
+    return;
+  }
+  const badge = node.ownerDocument.createElement("span");
+  badge.setAttribute("data-simmer-badge", "1");
+  badge.textContent = "Marinating";
+  node.after(badge);
+}
+
+function controlElement(target: EventTarget | null): Element | null {
+  const element = isElementTarget(target) ? target : null;
+  return element?.closest(CANDIDATES) ?? null;
+}
+
+function controlFrom(node: Element): BagControl | null {
   return {
-    tag: control.tagName.toLowerCase(),
-    text: control.textContent?.replace(/\s+/g, " ").trim().slice(0, 80) ?? "",
-    ariaLabel: control.getAttribute("aria-label") ?? "",
+    tag: node.tagName.toLowerCase(),
+    text: node.textContent?.replace(/\s+/g, " ").trim().slice(0, 80) ?? "",
+    ariaLabel: node.getAttribute("aria-label") ?? "",
   };
 }
 

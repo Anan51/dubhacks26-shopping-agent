@@ -47,12 +47,15 @@ describe("checkout gate", () => {
     gate.paint();
 
     const style = document.getElementById(BLOCKED_STYLE_ID);
-    assert.ok(style?.textContent?.includes('content: "Marinating"'));
+    assert.match(style?.textContent ?? "", /\[data-simmer-badge\]/);
+    assert.match(style?.textContent ?? "", /background:\s*#1c1c1e/);
+    assert.match(style?.textContent ?? "", /color:\s*#fff/);
     assert.match(style?.textContent ?? "", /opacity:\s*0\.45/);
     assert.match(style?.textContent ?? "", /grayscale\(1\)/);
     assert.match(style?.textContent ?? "", /cursor:\s*not-allowed/);
     assert.match(style?.textContent ?? "", /pointer-events:\s*none/);
     assert.equal(style?.textContent?.includes("button {"), false);
+    assert.equal(style?.textContent?.includes("::after"), false);
 
     for (const button of [checkout, apple, pay, go]) {
       assert.equal(button.getAttribute("data-simmer-blocked"), "1");
@@ -61,6 +64,10 @@ describe("checkout gate", () => {
     assert.equal(checkout.disabled, true);
     assert.equal(checkout.getAttribute("data-simmer-disabled"), "1");
     assert.equal(checkout.textContent, "Check Out");
+    const badge = checkout.nextElementSibling;
+    assert.equal(badge?.getAttribute("data-simmer-badge"), "1");
+    assert.equal(badge?.textContent, "Marinating");
+    assert.equal(badge?.hasAttribute("data-simmer-blocked"), false);
     assert.equal(go.disabled, true);
     assert.equal(go.getAttribute("data-simmer-disabled"), "1");
     assert.equal(go.value, "Check Out");
@@ -86,6 +93,7 @@ describe("checkout gate", () => {
 
     gate.lift();
     assert.equal(document.getElementById(BLOCKED_STYLE_ID), null);
+    assert.equal(document.querySelector("[data-simmer-badge]"), null);
     assert.equal(replacement.disabled, false);
     assert.equal(replacement.hasAttribute("data-simmer-blocked"), false);
     assert.equal(replacement.hasAttribute("data-simmer-disabled"), false);
@@ -99,5 +107,37 @@ describe("checkout gate", () => {
     assert.equal(already.hasAttribute("data-simmer-blocked"), false);
     assert.equal(click(replacement).defaultPrevented, false);
     assert.equal(click(already).defaultPrevented, false);
+  });
+
+  it("leaves footer, nav, and global chrome alone and still blocks checkout buttons", () => {
+    const document = new JSDOM(`<!doctype html><html><body>
+      <footer><a id="footer-link" href="/apple-pay/">Apple Pay</a></footer>
+      <nav><a id="nav-link" href="/shop/browse/finance/apple_pay">Apple Pay</a></nav>
+      <div id="globalheader"><a id="header-link" href="/apple-pay/">Apple Pay</a></div>
+      <div id="globalfooter"><button id="footer-checkout" type="button">Check Out</button></div>
+      <button type="button" id="checkout">Check Out</button>
+      <button type="button" id="apple">Apple Pay</button>
+      <apple-pay-button id="pay"></apple-pay-button>
+      <button type="button" id="card">Pay with Apple Card</button>
+      <a id="learn" href="/apple-card/">Learn more about Apple Card Monthly Installments</a>
+    </body></html>`).window.document;
+    const gate = installGate(document, "bag");
+    gate.paint();
+    for (const id of ["footer-link", "nav-link", "header-link", "footer-checkout", "learn"]) {
+      const node = document.querySelector(`#${id}`);
+      assert.ok(node);
+      assert.equal(node.hasAttribute("data-simmer-blocked"), false, id);
+      assert.equal(click(node).defaultPrevented, false, id);
+    }
+    for (const id of ["checkout", "apple", "pay", "card"]) {
+      const node = document.querySelector(`#${id}`);
+      assert.ok(node);
+      assert.equal(node.getAttribute("data-simmer-blocked"), "1", id);
+      assert.equal(node.nextElementSibling?.textContent, "Marinating", id);
+      assert.equal(click(node).defaultPrevented, true, id);
+    }
+    gate.lift();
+    assert.equal(document.querySelector("[data-simmer-badge]"), null);
+    assert.equal(document.querySelector("#checkout")?.hasAttribute("data-simmer-blocked"), false);
   });
 });

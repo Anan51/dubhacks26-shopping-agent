@@ -8,10 +8,12 @@
   },
   "scripts": {
     "dev": "tsx src/server.ts",
+    "dev:demo": "node scripts/dev-demo.mjs",
     "dev:agent": "tsx src/server.ts",
     "start": "NODE_ENV=production tsx src/server.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json && tsc --noEmit -p extension/tsconfig.json",
     "build": "tsc && vite build --config web/vite.config.ts && vite build --config extension/vite.config.ts",
+    "build:demo": "node scripts/build-demo.mjs",
     "test": "tsx --test src/*.test.ts extension/src/*.test.ts",
     "smoke:grok": "tsx src/smoke-grok.ts"
   },

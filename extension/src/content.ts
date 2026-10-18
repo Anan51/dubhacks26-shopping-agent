@@ -1,11 +1,14 @@
 import css from "./overlay.css?inline";
 
-import { bagOrFallback } from "../../src/apple-bag.js";
-import { applePage, hostOptedOut, type ApplePage } from "../../src/sites.js";
+import { applePage, hostOptedOut, isFallbackBag } from "../../src/sites.js";
 import { bagContentKey, bagReadAction, readPageBag, watchBagDom, type BagWatch, type PageBag } from "./bag-dom.js";
 import { deliverExtensionMessage, extensionContextAlive } from "./extension-context.js";
 import { installGate } from "./gate.js";
-import { mountOverlay, type OverlayModel } from "./overlay.js";
+import { buttonsToBlock } from "./overlay/block.js";
+import { mountSimmerCard } from "./overlay/mount.js";
+import type { OverlayModel } from "./overlay.js";
+import { adapterFor } from "./stores/index.js";
+import type { StoreAdapter } from "./stores/adapter.js";
 
 let onContextDead = (): void => undefined;
 
@@ -23,12 +26,12 @@ type ApiResult = {
   error?: string;
 };
 
-const page = applePage(location.href);
-if (page) {
-  void start(page);
+const adapter = adapterFor(location);
+if (adapter) {
+  void start(adapter);
 }
 
-async function start(kind: ApplePage): Promise<void> {
+async function start(site: StoreAdapter): Promise<void> {
   let stopped = false;
   onContextDead = () => {
     stopped = true;
@@ -37,22 +40,14 @@ async function start(kind: ApplePage): Promise<void> {
   if (stopped || !extensionContextAlive(chrome.runtime) || hostOptedOut(location.hostname, settings.optOut)) {
     return;
   }
-  const gate = installGate(document, kind);
-  const host = document.createElement("div");
-  host.id = "simmer-root";
-  const shadow = host.attachShadow({ mode: "open" });
-  const style = document.createElement("style");
-  style.textContent = css;
-  shadow.append(style);
-  (document.documentElement ?? document).append(host);
+  const gate = installGate(document, () => buttonsToBlock(site, document));
+  let card: { update: (next: OverlayModel) => void; unmount: () => void } | null = null;
 
   let code = "";
   let posting = false;
   let postedKey: string | null = null;
   let watching = false;
   let quantity: number | null = null;
-  let update = (_next: OverlayModel): void => undefined;
-  let mounted = false;
   let pollTimer = 0;
   let fallbackTimer = 0;
   let showBlock = false;
@@ -69,7 +64,7 @@ async function start(kind: ApplePage): Promise<void> {
     bagWatch?.disconnect();
     pageObserver?.disconnect();
     gate.stop();
-    host.remove();
+    card?.unmount();
   };
   onContextDead = shutdown;
 
@@ -83,19 +78,21 @@ async function start(kind: ApplePage): Promise<void> {
     skipVault: () => {
       void post(`/api/carts/${code}/skip-vault`).then(() => refresh());
     },
-    send: (text: string) => {
-      const conversationId = `desk:cart-${code}`;
-      void post("/api/dev/messages", { conversationId, text }).then(() => refresh());
-    },
+    ...(import.meta.env.VITE_SIMMER_DEMO === "1"
+      ? {
+          demoReply: () => {
+            void post("/api/dev/reply", { code, text: "simmer-demo-reply" }).then(() => refresh());
+          },
+        }
+      : {}),
   };
 
   const show = (model: OverlayModel) => {
-    if (!mounted) {
-      update = mountOverlay(shadow, model, actions);
-      mounted = true;
+    if (!card) {
+      card = mountSimmerCard(site, document, css, model, actions);
       return;
     }
-    update(model);
+    card.update(model);
   };
 
   const refresh = async () => {
@@ -104,7 +101,6 @@ async function start(kind: ApplePage): Promise<void> {
     }
     const current = code;
     const cart = await getJson(`/api/carts/${current}`);
-    const thread = await getJson(`/api/dev/messages?conversationId=${encodeURIComponent(`desk:cart-${current}`)}`);
     if (current !== code || stopped) {
       return;
     }
@@ -121,14 +117,14 @@ async function start(kind: ApplePage): Promise<void> {
       gate.paint();
     }
     if (cart.necessity === "necessary") {
-      show(modelFrom(cart, thread, settings, null, quantity));
+      show(modelFrom(cart, null, settings, null, quantity));
       return;
     }
     if (unlocked) {
       shutdown();
       return;
     }
-    show(modelFrom(cart, thread, settings, null, quantity));
+    show(modelFrom(cart, null, settings, null, quantity));
   };
 
   const publish = async (interpreted: PageBag) => {
@@ -144,21 +140,33 @@ async function start(kind: ApplePage): Promise<void> {
       quantity = interpreted.quantity;
     }
     try {
-      if (!interpreted.parsed && settings.cartCode && kind === "checkout") {
+      if (site.isOrderConfirmation(document)) {
+        return;
+      }
+      if (!interpreted.parsed && settings.cartCode && applePage(location.href) === "checkout") {
         code = settings.cartCode;
         await refresh();
         return;
       }
-      if (isAppleHost(location.hostname) && (!interpreted.parsed || interpreted.itemNames.length === 0)) {
-        show(emptyModel(settings, "------", "couldn't read bag"));
+      const bag = site.readBag(document);
+      if (!bag) {
+        show(emptyModel(settings, code || "------", "Couldn't read bag"));
+        if (!code) {
+          await post("/api/carts", {
+            userId: settings.userId,
+            itemNames: [],
+            totalCents: 0,
+            parsed: false,
+            pageHost: location.hostname,
+          });
+        }
         return;
       }
-      const bag = bagOrFallback(interpreted);
       const created = await post("/api/carts", {
         userId: settings.userId,
-        itemNames: bag.itemNames.slice(0, 1),
-        totalCents: bag.totalCents,
-        parsed: bag.parsed,
+        itemNames: bag.items.map((item) => item.item).slice(0, 1),
+        totalCents: bag.total,
+        parsed: true,
         pageHost: location.hostname,
       });
       if (stopped) {
@@ -252,14 +260,21 @@ async function start(kind: ApplePage): Promise<void> {
   });
   fallbackTimer = window.setTimeout(() => {
     if (!code && !stopped) {
-      readBagNow();
+      const interpreted = document.body ? readPageBag(document.body) : null;
+      if (interpreted && interpreted.parsed && interpreted.itemNames.length > 0) {
+        void publish(interpreted);
+        return;
+      }
+      show(emptyModel(settings, "------", "Couldn't read bag"));
+      void post("/api/carts", {
+        userId: settings.userId,
+        itemNames: [],
+        totalCents: 0,
+        parsed: false,
+        pageHost: location.hostname,
+      });
     }
   }, 4000);
-}
-
-function isAppleHost(hostname: string): boolean {
-  const host = hostname.toLowerCase();
-  return host === "apple.com" || host.endsWith(".apple.com");
 }
 
 function modelFrom(
@@ -279,6 +294,8 @@ function modelFrom(
     code: typeof cart.code === "string" ? cart.code : "",
     status,
     isUnlocked: cart.isUnlocked === true,
+    replied: cart.replied === true,
+    advice: typeof cart.advice === "string" ? cart.advice : null,
     lockEndsAt: typeof cart.lockEndsAt === "string" ? cart.lockEndsAt : new Date(Date.now() + 600_000).toISOString(),
     vaultUntil: typeof cart.vaultUntil === "string" ? cart.vaultUntil : null,
     totalCents: typeof cart.totalCents === "number" ? cart.totalCents : 0,
@@ -292,6 +309,7 @@ function modelFrom(
     reading: cart.reading === true,
     userId: settings.userId,
     linkMessage: typeof cart.linkMessage === "string" ? cart.linkMessage : `link ${settings.userId}`,
+    fallbackPage: isFallbackBag(location.href),
     pingDelivered: ping?.delivered === true,
     pingReason: ping?.reason === "send_failed" || ping?.reason === "unlinked" ? ping.reason : null,
     smsLink: typeof ping?.smsLink === "string" ? ping.smsLink : typeof cart.smsLink === "string" ? cart.smsLink : null,
@@ -388,6 +406,8 @@ function emptyModel(settings: Settings, code: string, error: string): OverlayMod
     code,
     status: "locked",
     isUnlocked: false,
+    replied: false,
+    advice: null,
     lockEndsAt: new Date(Date.now() + 600_000).toISOString(),
     vaultUntil: null,
     totalCents: 0,
@@ -401,6 +421,7 @@ function emptyModel(settings: Settings, code: string, error: string): OverlayMod
     reading: false,
     userId: settings.userId,
     linkMessage: `link ${settings.userId}`,
+    fallbackPage: isFallbackBag(location.href),
     pingDelivered: false,
     pingReason: "unlinked",
     smsLink: null,

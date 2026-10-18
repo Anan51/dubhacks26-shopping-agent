@@ -1,6 +1,5 @@
 import type { OutboundMessage } from "./channel.js";
 import { formatLongDate } from "./format.js";
-import { deskChatUrl } from "./links.js";
 import type { Store } from "./store.js";
 import type { Cart } from "./types.js";
 
@@ -9,7 +8,7 @@ const MAX_TIMEOUT_MS = 2_147_000_000;
 export function reminderCopy(cart: Cart, origin: string): string {
   const name = cart.items[0]?.name ?? "your bag";
   const until = cart.vaultUntil ? formatLongDate(cart.vaultUntil) : "the saved date";
-  return `Simmer here. Cart ${cart.code} (${name}) stays covered in the Vault until ${until}. Your Apple bag stays marinating. Desk: ${origin.replace(/\/$/, "")}${deskChatUrl(cart.code)}`;
+  return `Simmer here. Cart ${cart.code} (${name}) stays covered in the Vault until ${until}. Your Apple bag stays marinating.`;
 }
 
 export class ReminderScheduler {

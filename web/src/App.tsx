@@ -11,7 +11,7 @@ export function App() {
         order.
       </p>
       <header className="top">
-        <a className="wordmark" href="/dev">
+        <a className="wordmark" href="/">
           <span className="mark" aria-hidden="true">
             <i />
             <i />
@@ -19,8 +19,8 @@ export function App() {
           Simmer
         </a>
         <nav>
-          <a href="/dev" aria-current="page">
-            Desk
+          <a href="/" aria-current="page">
+            Simmer
           </a>
         </nav>
       </header>

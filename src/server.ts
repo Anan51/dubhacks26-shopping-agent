@@ -74,7 +74,7 @@ export async function startServer(): Promise<void> {
   const server = createServer(running.app);
   server.listen(appConfig.port, () => {
     console.log(`Simmer listening on ${appConfig.origin}`);
-    console.log(photon ? "Photon live connection is starting." : "Desk chat is standing in for Photon. No API key needed.");
+    console.log(photon ? "Photon live connection is starting." : "Photon is not configured. Replies stay on iMessage when a line is connected.");
   });
 
   const shutdown = () => {

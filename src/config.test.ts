@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { photonConfigured, readConfig } from "./config.js";
+import { photonConfigured, readAppConfig, readConfig } from "./config.js";
 
 describe("Photon env", () => {
   it("reads the project id, line number, and API key from the environment", () => {
@@ -25,5 +25,7 @@ describe("Photon env", () => {
       true,
     );
     assert.equal(photonConfigured({}), false);
+    assert.equal(readAppConfig({ PHOTON_TEST_NUMBER: "+15555550100" }).testNumber, "+15555550100");
+    assert.equal(readAppConfig({}).testNumber, null);
   });
 });

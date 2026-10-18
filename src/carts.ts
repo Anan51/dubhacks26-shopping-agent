@@ -105,6 +105,8 @@ export function startLockedCart(input: {
     agentSenderId: null,
     lastInboundMessageId: null,
     isUnlocked: false,
+    replied: false,
+    advice: null,
     lockStartedAt: createdAt,
     lockEndsAt: new Date(input.now.getTime() + input.lockMs).toISOString(),
     vaultUntil: null,
@@ -139,6 +141,15 @@ export function liftCart(cart: Cart): Cart {
 
 export function isEnforcedVault(cart: Cart, now: Date): boolean {
   return isVaultActive(cart, now) && cart.vaultMode !== "soft";
+}
+
+/** A reply records advice but leaves checkout blocked until Unlock is clicked. */
+export function holdForUnlock(cart: Cart): Cart {
+  cart.isUnlocked = false;
+  cart.status = "locked";
+  cart.vaultUntil = null;
+  cart.vaultMode = null;
+  return cart;
 }
 
 export function unlockCart(cart: Cart, now: Date = new Date()): Cart {

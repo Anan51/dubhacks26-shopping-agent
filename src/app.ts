@@ -5,7 +5,8 @@ import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 
 import { handleWebhook } from "../api/webhook.js";
-import { bagOrFallback } from "./apple-bag.js";
+import { currentCarts } from "./current-cart.js";
+import { demoReplyOpen, devRoutesOpen, manualUnlockOpen } from "./dev-access.js";
 import {
   bagFingerprint,
   FALLBACK_TOTAL_CENTS,
@@ -50,6 +51,8 @@ export type AppDeps = {
   fetchImpl?: typeof fetch;
   now?: () => Date;
   polish?: (template: string, action: Decision["action"]) => Promise<string>;
+  /** Test override. Request handlers read this instead of process.env when set. */
+  env?: NodeJS.ProcessEnv;
 };
 
 export type RunningApp = {
@@ -60,7 +63,9 @@ export type RunningApp = {
 
 export function createApp(deps: AppDeps): RunningApp {
   const now = deps.now ?? (() => new Date());
+  const env = deps.env ?? process.env;
   const assignedPersonas = new Map<string, PersonaId>();
+  let bagReadError: string | null = null;
   const extractOptions = {
     ...(deps.xaiApiKey ? { apiKey: deps.xaiApiKey } : {}),
     model: deps.xaiModel,
@@ -147,6 +152,7 @@ export function createApp(deps: AppDeps): RunningApp {
       channel: deps.photon ? "photon" : "stub",
       grokEnabled: Boolean(deps.xaiApiKey),
       agentHandle: deps.agentHandle,
+      testNumber: env.PHOTON_TEST_NUMBER?.trim() || null,
       lockMs: deps.lockMs,
       demoReminderMs: deps.demoReminderMs,
       demoDefault: deps.demoDefault,
@@ -158,9 +164,10 @@ export function createApp(deps: AppDeps): RunningApp {
     });
   });
 
-  app.get("/api/carts", (_req, res) => {
-    const carts = deps.store.listCarts().sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-    res.json({ synthetic: true, carts: carts.map((cart) => publicCart(cart, deps.agentHandle)) });
+  app.get("/api/carts", (req, res) => {
+    const userId = typeof req.query.userId === "string" ? req.query.userId : null;
+    const carts = currentCarts(deps.store.listCarts(), userId);
+    res.json({ synthetic: true, readError: bagReadError, carts: carts.map((cart) => publicCart(cart, deps.agentHandle)) });
   });
 
   app.post("/api/carts", settle(async (req, res) => {
@@ -171,6 +178,12 @@ export function createApp(deps: AppDeps): RunningApp {
       return;
     }
     const bag = postedBag(body);
+    if (!bag) {
+      bagReadError = "Couldn't read bag";
+      res.status(422).json({ error: "Couldn't read bag" });
+      return;
+    }
+    bagReadError = null;
     const bagText = bag.itemNames.join("\n");
     const fingerprint = bagFingerprint(userId, bag.itemNames, bag.totalCents);
     const existing = deps.store
@@ -247,13 +260,19 @@ export function createApp(deps: AppDeps): RunningApp {
       res.status(404).json({ error: "Cart not found." });
       return;
     }
-    if (isEnforcedVault(cart, now())) {
-      res.status(423).json({
-        error: "This bag is in the Impulse Vault.",
-        vaultUntil: cart.vaultUntil,
-        cart: publicCart(cart, deps.agentHandle),
-      });
-      return;
+    if (!cart.replied) {
+      if (isEnforcedVault(cart, now())) {
+        res.status(423).json({
+          error: "This bag is in the Impulse Vault.",
+          vaultUntil: cart.vaultUntil,
+          cart: publicCart(cart, deps.agentHandle),
+        });
+        return;
+      }
+      if (!manualUnlockOpen(env)) {
+        res.status(403).json({ error: "Reply with a reason to unlock." });
+        return;
+      }
     }
     unlockCart(cart, now());
     deps.store.saveCart(cart);
@@ -319,7 +338,7 @@ export function createApp(deps: AppDeps): RunningApp {
     const userId = typeof body.userId === "string" ? body.userId : "";
     const personaId = typeof body.persona === "string" ? body.persona : "";
     if (!isUserId(userId) || !isPersonaId(personaId)) {
-      res.status(400).json({ error: "userId and persona (impulsive or deliberate) are required." });
+      res.status(400).json({ error: "userId and a persona id are required." });
       return;
     }
     assignedPersonas.set(userId, personaId);
@@ -369,7 +388,49 @@ export function createApp(deps: AppDeps): RunningApp {
     res.json({ linked: true, conversationId });
   });
 
+  app.post("/api/dev/reply", settle(async (req, res) => {
+    if (!demoReplyOpen(env)) {
+      res.status(403).json({ error: "Not available." });
+      return;
+    }
+    const body = isRecord(req.body) ? req.body : {};
+    const code = typeof body.code === "string" ? body.code : "";
+    const cart = loadCart(code);
+    if (!cart) {
+      res.status(404).json({ error: "Cart not found." });
+      return;
+    }
+    const text = typeof body.text === "string" && body.text.trim() ? body.text.trim() : "I've thought about it.";
+    const conversationId = cart.conversationId ?? `desk:cart-${cart.code}`;
+    await runtime.enqueue({
+      id: `demo-${randomUUID()}`,
+      conversationId,
+      text: `cart ${cart.code} ${text}`,
+    });
+    const fresh = loadCart(code);
+    if (!fresh) {
+      res.status(404).json({ error: "Cart not found." });
+      return;
+    }
+    res.json(publicCart(fresh, deps.agentHandle));
+  }));
+
+  app.post("/api/dev/reset", (_req, res) => {
+    if (devClosed(res)) {
+      return;
+    }
+    for (const cart of deps.store.listCarts()) {
+      scheduler.disarm(cart.code);
+    }
+    deps.store.reset();
+    bagReadError = null;
+    res.json({ ok: true });
+  });
+
   app.get("/api/dev/messages", (req, res) => {
+    if (devClosed(res)) {
+      return;
+    }
     const conversationId = typeof req.query.conversationId === "string" ? req.query.conversationId : "";
     if (!DESK_ID.test(conversationId)) {
       res.status(400).json({ error: "conversationId must look like desk:<id>." });
@@ -381,6 +442,9 @@ export function createApp(deps: AppDeps): RunningApp {
   });
 
   app.post("/api/dev/messages", settle(async (req, res) => {
+    if (devClosed(res)) {
+      return;
+    }
     const body = isRecord(req.body) ? req.body : {};
     const conversationId = typeof body.conversationId === "string" ? body.conversationId : "";
     const text = typeof body.text === "string" ? body.text.trim() : "";
@@ -457,6 +521,14 @@ export function createApp(deps: AppDeps): RunningApp {
     deps.store.saveSession(session);
   }
 
+  function devClosed(res: Response): boolean {
+    if (devRoutesOpen(env)) {
+      return false;
+    }
+    res.status(403).json({ error: "Not available." });
+    return true;
+  }
+
   function loadCart(code: string | undefined): Cart | undefined {
     if (!code) {
       return undefined;
@@ -503,13 +575,16 @@ function applyNecessity(
   }
 }
 
-function postedBag(body: Record<string, unknown>): { itemNames: string[]; totalCents: number; parsed: boolean } {
+function postedBag(body: Record<string, unknown>): { itemNames: string[]; totalCents: number; parsed: true } | null {
   const names = Array.isArray(body.itemNames)
     ? body.itemNames.filter((name): name is string => typeof name === "string").slice(0, 12).map((name) => name.slice(0, 140))
     : [];
   const total = typeof body.totalCents === "number" && Number.isInteger(body.totalCents) ? body.totalCents : null;
-  const parsed = body.parsed === true && total !== null && total > 0 && total <= 10_000_000;
-  return bagOrFallback({ itemNames: names, totalCents: parsed ? total : null, parsed });
+  const parsed = body.parsed === true && total !== null && total > 0 && total <= 10_000_000 && names.length > 0;
+  if (!parsed || total === null) {
+    return null;
+  }
+  return { itemNames: names, totalCents: total, parsed: true };
 }
 
 function publicCart(cart: Cart, agentHandle: string | null) {
