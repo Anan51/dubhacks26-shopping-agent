@@ -28,7 +28,7 @@ Stay signed out. Do not enter a card. Do not go past the checkout entry.
 4. If the phone is not linked, the card says to text `link <userId>` to Simmer's iMessage number. Reply in that iMessage thread. The overlay says **Reply to Simmer's iMessage to unlock.**
 5. Text:
    `the new color looks nice`
-   Keywords grade that **-2**. Starting impulsiveness is **4.5** of 8 (soft), so the legacy base is **2**. Purchase score = `2 + -2`, clamped to **1** (strict). Advice on the card is **Skip** (`Skip. This looks like a want, not a need.`). The explanation says `Impulsiveness 4.5 of 8`. The corner card does not. It stays **Marinating**, and the status line says **This one can wait.** Checkout stays blocked. Score 1 does not open a 24-hour vault, and the title does not become **Paused**. **Sleep on it** is not shown. A low score does not unlock an unnecessary bag. **Why** is one plain sentence plus the price now.
+   Keywords grade that **-2**. Starting impulsiveness is **4.5** of 8 (soft), so the legacy base is **2**. Purchase score = `2 + -2`, clamped to **1** (strict). Advice on the card is **Skip** (`Skip. This looks like a want, not a need. This one can wait.`). The explanation says `Impulsiveness 4.5 of 8`. The corner card does not. It stays **Marinating**, and the status line says **This one can wait.** Checkout stays blocked. Score 1 does not open a 24-hour vault, and the title does not become **Paused**. **Sleep on it** is not shown. A low score does not unlock an unnecessary bag. **Why** is one plain sentence plus the price now.
 6. **Demo: end the pause** stays hidden after that reply, because the bag is not paused. The button only ends a pause that is already open, and it leaves checkout locked.
 7. Text:
    `I need it for work`
@@ -47,9 +47,9 @@ The control sends typed text or a preset. The text is graded on the same inbound
 
 | Preset | Keyword grade | Purchase score | Band | Card |
 | --- | --- | --- | --- | --- |
-| `new color looks nice` | -2 | 1 | strict | **Skip. This looks like a want, not a need.** Explanation adds `Impulsiveness 4.5 of 8`. The card does not. |
-| `cracked screen` | 0, so no purchase score | unchanged | unchanged | **Wait. Your current phone is broken.** No impulsiveness line. |
-| `I need it for work tomorrow` | +2 | 4 | free | **Buy. This looks like a need.** Explanation adds `Impulsiveness 4.5 of 8`. The card does not. |
+| `new color looks nice` | -2 | 1 | strict | **Skip. This looks like a want, not a need. This one can wait.** Explanation adds `Impulsiveness 4.5 of 8`. The card does not. |
+| `cracked screen` | 0, so no purchase score | unchanged | unchanged | **Wait. Your current phone is broken. Give it a little time before you check out.** No impulsiveness line. |
+| `I need it for work tomorrow` | +2 | 4 | free | **Buy. This looks like a need. You can check out after you press Unlock.** Explanation adds `Impulsiveness 4.5 of 8`. The card does not. |
 
 To show opt-out: extension options, add `127.0.0.1` (or `apple.com`), save, reload the bag. The overlay stays off and Check Out works again. Remove the line and reload to turn Simmer back on.
 

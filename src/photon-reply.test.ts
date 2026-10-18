@@ -2,8 +2,13 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { itemsForBag, startLockedCart } from "./carts.js";
+import type { OutboundMessage } from "./channel.js";
+import type { AgentConfig } from "./config.js";
+import { sendPhotonMessage } from "./photon-send.js";
 import { createRuntime } from "./runtime.js";
 import { createMemoryStore } from "./store.js";
+
+const UNLOCK_REPLY = "Wait. This looks like a need. Give it a little time before you check out.";
 
 const NOW = new Date("2026-10-18T00:00:00.000Z");
 const SPACE = "pho_spc_00000000000000000000000000";
@@ -299,7 +304,107 @@ describe("Photon inbound replies", () => {
     assert.equal(store.getCart("MN12PQ")?.isUnlocked, false);
     assert.equal(store.hasHandledInbound("pho_msg_before_send"), true);
   });
+
+  it("sends the full unlock reply in one body with or without a parent id", async () => {
+    const store = createMemoryStore();
+    const cart = startLockedCart({
+      items: itemsForBag(["iPad Pro 11"], 79_900, true),
+      totalCents: 79_900,
+      parsedFromPage: true,
+      pageHost: "www.apple.com",
+      fingerprint: "user-impulsive|79900|ipad pro 11",
+      now: NOW,
+      demo: true,
+      lockMs: 600_000,
+      userId: "user-impulsive",
+      code: "IPAD11",
+    });
+    cart.necessity = "unnecessary";
+    cart.userImpulseScore = 2;
+    cart.reminderFireAt = new Date(NOW.getTime() + 60_000).toISOString();
+    store.saveCart(cart);
+    store.savePhoneLink({
+      userId: "user-impulsive",
+      conversationId: SPACE,
+      agentSenderId: "pho_usr_agent",
+      linkedAt: NOW.toISOString(),
+    });
+
+    const sent: OutboundMessage[] = [];
+    const runtime = createRuntime({
+      store,
+      now: () => NOW,
+      demoReminderMs: 60_000,
+      send: async (message) => {
+        sent.push(message);
+      },
+      armReminder: () => undefined,
+      disarmReminder: () => undefined,
+      polish: async (template) => template,
+    });
+    await runtime.enqueue({
+      id: "pho_msg_ipad_need",
+      conversationId: SPACE,
+      text: "I need it for work",
+      agentSenderId: "pho_usr_agent",
+    });
+
+    assert.equal(sent.length, 1);
+    const outbound = sent[0];
+    assert.ok(outbound);
+    assert.equal(outbound.text, UNLOCK_REPLY);
+    assert.equal(outbound.text.includes("Give it a little time before you check out."), true);
+    assert.equal(store.getCart("IPAD11")?.advice, UNLOCK_REPLY);
+    assert.equal(store.getCart("IPAD11")?.replied, true);
+    assert.equal(store.getCart("IPAD11")?.isUnlocked, false);
+    assert.equal(store.getCart("IPAD11")?.reminderFireAt, null);
+
+    const posted = await postPhotonBodies(outbound);
+    assert.equal(posted.length, 2);
+    for (const body of posted) {
+      assert.equal(body.content?.text, UNLOCK_REPLY);
+      assert.equal(body.content?.type, "text");
+      assert.notEqual(body.parentMessageId, UNLOCK_REPLY);
+    }
+    assert.equal(posted[0]?.parentMessageId, undefined);
+    assert.equal(posted[1]?.content?.text, posted[0]?.content?.text);
+  });
 });
+
+const PHOTON_CONFIG: AgentConfig = {
+  apiKey: "pho_sk_example",
+  projectId: "pho_prj_example",
+  platform: "imessage",
+  agentHandle: "simmer",
+  apiOrigin: "http://127.0.0.1:9",
+};
+
+async function postPhotonBodies(message: OutboundMessage): Promise<{ content?: { text?: string; type?: string }; parentMessageId?: string }[]> {
+  const withoutParent: OutboundMessage = {
+    conversationId: message.conversationId,
+    text: message.text,
+    ...(message.agentSenderId ? { agentSenderId: message.agentSenderId } : {}),
+    idempotencyKey: `${message.idempotencyKey}:plain`,
+  };
+  const bodies: { content?: { text?: string; type?: string }; parentMessageId?: string }[] = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : null;
+    const raw = request ? await request.clone().text() : typeof init?.body === "string" ? init.body : "";
+    bodies.push(JSON.parse(raw) as { content?: { text?: string; type?: string }; parentMessageId?: string });
+    return new Response(JSON.stringify({ detail: "rejected" }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    await assert.rejects(sendPhotonMessage(PHOTON_CONFIG, withoutParent));
+    await assert.rejects(sendPhotonMessage(PHOTON_CONFIG, message));
+  } finally {
+    globalThis.fetch = original;
+  }
+  return bodies;
+}
 
 function linkedStore(code: string) {
   const store = createMemoryStore();

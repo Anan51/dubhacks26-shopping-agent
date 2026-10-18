@@ -49,20 +49,34 @@ export function adviceChoice(item: GlanceItem): AdviceChoice {
   return "Wait";
 }
 
-/** The iMessage Simmer sends before the overlay may show Unlock. */
+/** The second sentence. A specific why does not replace it. */
+function adviceFollowThrough(choice: AdviceChoice): string {
+  switch (choice) {
+    case "Buy":
+      return "You can check out after you press Unlock.";
+    case "Skip":
+      return "This one can wait.";
+    case "Wait":
+      return "Give it a little time before you check out.";
+    default: {
+      const unexpected: never = choice;
+      return unexpected;
+    }
+  }
+}
+
+/**
+ * The iMessage Simmer sends before the overlay may show Unlock.
+ * The call and the follow-through travel in one body.
+ */
 export function adviceMessage(item: GlanceItem): string {
   const choice = adviceChoice(item);
   const why = pauseSentence(item);
+  const follow = adviceFollowThrough(choice);
   if (why.startsWith("Simmer paused")) {
-    if (choice === "Buy") {
-      return "Buy. You can check out after you press Unlock.";
-    }
-    if (choice === "Skip") {
-      return "Skip. This one can wait.";
-    }
-    return "Wait. Give it a little time before you check out.";
+    return `${choice}. ${follow}`;
   }
-  return `${choice}. ${why}`;
+  return `${choice}. ${why} ${follow}`;
 }
 
 export function priceLine(totalCents: number, wait: { cents: number; example: boolean } | null): string {
