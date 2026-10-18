@@ -302,6 +302,70 @@ describe("memory scope", () => {
     assert.deepEqual(narrowed, [secret]);
     assert.deepEqual(local.calls, []);
   });
+
+  it("falls back to the caller's token matches when Backboard hits match none of their rows", async () => {
+    const phone = record(USER, "regret", "lost the phone", "bb-ada");
+    const milk = record(USER, "goal", "milk and eggs", null);
+    const other = record(OTHER, "regret", "someone else's phone note", "bb-other");
+    const client = searchClient([
+      { id: "bb-other", content: "Regret: someone else's phone note", score: 0.99, createdAt: null },
+    ]);
+    const found = await searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "phone" } }), {
+      directory: directoryOfUsers([account(USER, "asst-ada"), account(OTHER, "asst-other")]),
+      client,
+      index: listing([other, milk, phone]),
+      remote: true,
+    });
+    assert.deepEqual(found, [phone]);
+    assert.equal(
+      found.every((memory) => memory.userId === USER),
+      true,
+    );
+    assert.deepEqual(client.calls, [{ assistantId: "asst-ada", query: "phone", limit: 10 }]);
+  });
+
+  it("returns every owned row for an empty query and none of another user's", async () => {
+    const goal = record(USER, "goal", "wait a month");
+    const regret = record(USER, "regret", "bought the headphones");
+    const other = record(OTHER, "regret", "bought the headphones");
+    const client = searchClient([
+      { id: "bb-other", content: "Regret: bought the headphones", score: 1, createdAt: null },
+    ]);
+    const deps = {
+      directory: directoryOfUsers([account(USER, "asst-ada"), account(OTHER, "asst-other")]),
+      client,
+      index: listing([other, regret, goal]),
+      remote: true,
+    };
+    const blank = await searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "" } }), deps);
+    const spaces = await searchMemoriesForCurrentUser(request({ id: USER }, { query: { query: "   " } }), deps);
+    assert.deepEqual(blank, [regret, goal]);
+    assert.deepEqual(spaces, [regret, goal]);
+    assert.equal(
+      blank.every((memory) => memory.userId === USER),
+      true,
+    );
+    assert.equal(
+      spaces.every((memory) => memory.userId === USER),
+      true,
+    );
+    assert.deepEqual(client.calls, []);
+  });
+
+  it("ignores short filler tokens and still matches a real word", async () => {
+    const phone = record(USER, "regret", "left the phone on the desk", null);
+    const other = record(OTHER, "regret", "left the phone on the desk", null);
+    const deps = {
+      directory: directoryOf(account(USER, null)),
+      client: searchClient([]),
+      index: listing([other, phone]),
+      remote: false,
+    };
+    const found = await searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "my phone" } }), deps);
+    assert.deepEqual(found, [phone]);
+    const filler = await searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "to my" } }), deps);
+    assert.deepEqual(filler, []);
+  });
 });
 
 function request(user: { id: string }, extra: { query?: Request["query"]; body?: unknown; params?: Request["params"] } = {}): Request {

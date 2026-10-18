@@ -47,19 +47,21 @@ export async function searchMemoriesForCurrentUser(
   const userId = authenticatedUserId(req);
   refuseClientScope(req, userId);
   const query = readSearchQuery(req);
-  if (!query) {
-    throw new ScopeError(400, "query is required.");
-  }
   const user = await deps.directory.findById(userId);
   if (!user) {
     throw new ScopeError(401, "Authentication required.");
   }
   const owned = await ownedMemories(deps.index, userId);
+  // An empty search is the caller's full list. Still only rows from ownedMemories.
+  if (!query) {
+    return owned;
+  }
   // Backboard hits have no Simmer user id. Rank only Mongo rows owned by req.user.id.
+  // Usable hits that match none of those rows fall through to the token scan.
   if (deps.remote && user.backboardAssistantId) {
     const hits = await deps.client.searchMemories(user.backboardAssistantId, query, 10);
     const ranked = rankOwnedByHits(owned, hits);
-    if (ranked !== null) {
+    if (ranked !== null && ranked.length > 0) {
       return ranked;
     }
   }
@@ -207,13 +209,16 @@ function sameBackboardId(hitId: string | null, memoryId: string | null): boolean
   return left.length > 0 && left === right;
 }
 
+const QUERY_TOKEN_STOPWORDS = new Set(["my", "to", "an", "of", "in", "on", "at", "by", "or", "the", "a"]);
+
 function matchesAnyQueryToken(memory: MemoryRecord, query: string): boolean {
   const haystack = memoryContent(memory.type, memory.text).toLowerCase();
   return query
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    // A one-letter piece, such as the "a" in "secret-regret-from-a", matches inside unrelated words.
-    .filter((token) => token.length >= 2)
+    // One-letter pieces ("a" in "secret-regret-from-a") and other tokens shorter than 3
+    // characters match inside unrelated words. The same is true of short filler such as "the".
+    .filter((token) => token.length >= 3 && !QUERY_TOKEN_STOPWORDS.has(token))
     .some((token) => haystack.includes(token));
 }
 
