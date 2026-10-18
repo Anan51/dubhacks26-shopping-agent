@@ -1,3 +1,5 @@
+import type { CarrierFacts } from "../../../src/scoring/carrierSwitch.js";
+
 export interface BagItem {
   item: string;
   /** Line total in integer cents (unit price times quantity). */
@@ -13,6 +15,8 @@ export interface Bag {
   total: number;
   /** Units of the first line. The card sums every line's quantity. */
   quantity?: number;
+  /** Plan signals from the local carrier fixture. Absent on Apple and Amazon. */
+  carrier?: CarrierFacts;
 }
 
 export interface StoreAdapter {

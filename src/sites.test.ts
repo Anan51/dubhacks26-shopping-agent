@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
-import { applePage, isFallbackBag, isLocalAmazonFixture, shouldEngage } from "./sites.js";
+import { applePage, isFallbackBag, isLocalAmazonFixture, isLocalCarrierFixture, shouldEngage } from "./sites.js";
 
 const MANIFEST = new URL("../extension/manifest.json", import.meta.url);
 
@@ -39,6 +39,8 @@ describe("apple pages", () => {
     assert.equal(shouldEngage("http://127.0.0.1:4321/fallback/cable", []), true);
     assert.equal(shouldEngage("http://localhost:4321/fallback", []), true);
     assert.equal(shouldEngage("http://127.0.0.1:4321/amazon", []), false);
+    assert.equal(shouldEngage("http://127.0.0.1:4321/carrier-switch", []), false);
+    assert.equal(shouldEngage("http://127.0.0.1:4321/carrier-switch?case=pass", []), false);
     assert.equal(shouldEngage("http://127.0.0.1:4321/dev", []), false);
     assert.equal(applePage("http://127.0.0.1:4321/amazon"), null);
     assert.equal(isLocalAmazonFixture("http://127.0.0.1:4321/amazon"), true);
@@ -46,6 +48,11 @@ describe("apple pages", () => {
     assert.equal(isLocalAmazonFixture("https://www.amazon.com/gp/cart/view.html"), false);
     assert.equal(isFallbackBag("http://127.0.0.1:4321/amazon"), true);
     assert.equal(isFallbackBag("http://127.0.0.1:4321/fallback"), true);
+    assert.equal(isFallbackBag("http://127.0.0.1:4321/carrier-switch"), true);
+    assert.equal(isLocalCarrierFixture("http://127.0.0.1:4321/carrier-switch?case=wait"), true);
+    assert.equal(isLocalCarrierFixture("http://localhost:4321/carrier-switch/"), true);
+    assert.equal(isLocalCarrierFixture("https://www.carrier-x.example/"), false);
+    assert.equal(applePage("http://127.0.0.1:4321/carrier-switch"), null);
   });
 
   it("does not inject the content script on product or buy-flow pages", () => {
@@ -70,6 +77,8 @@ describe("apple pages", () => {
       "https://secure.store.apple.com/us/shop/bag",
       "https://secure6.store.apple.com/shop/checkout",
       "http://127.0.0.1:4321/fallback",
+      "http://127.0.0.1:4321/carrier-switch",
+      "http://localhost:4321/carrier-switch",
     ]) {
       assert.equal(patterns.some((pattern) => matchPattern(pattern, url)), true, url);
     }
