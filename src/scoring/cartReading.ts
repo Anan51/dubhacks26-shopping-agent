@@ -1,8 +1,9 @@
 import mongoose from "mongoose";
 
 import { sleepCart, VAULT_MS } from "../carts.js";
+import { keywordNecessity } from "../impulse.js";
 import { categoryForItem, getBudgetProfile, type BudgetProfile } from "../purchases/service.js";
-import { type Cart, type Decision, type ScoreBucket } from "../types.js";
+import { type Cart, type CartItem, type Decision, type ScoreBucket } from "../types.js";
 import { computeImpulseScore, type ImpulseScoreOptions } from "./backboardScore.js";
 import { hoursOfWork, hoursOfWorkText, type HoursOfWork } from "./hoursOfWork.js";
 import { impulseBand, legacyImpulseBase } from "./lockBand.js";
@@ -75,7 +76,7 @@ export function readingForCart(
   cart: Cart,
   options?: ImpulseScoreOptions,
 ): Promise<CartReading> {
-  const item = cart.items[0]?.name ?? "Apple bag";
+  const item = scoredItemName(cart);
   return readImpulse(
     userId,
     {
@@ -86,6 +87,48 @@ export function readingForCart(
     },
     options,
   );
+}
+
+/**
+ * The line whose name drives the impulse category.
+ * Prefer the priciest item `keywordNecessity` does not call necessary.
+ * When every priced item is necessary, or no name has a per-item read, use the priciest.
+ * Missing integer cent prices keep the first line.
+ */
+function scoredItemName(cart: Cart): string {
+  const fallback = cart.items[0]?.name ?? "Apple bag";
+  const priced = cart.items.filter((item) => integerCents(item.priceCents) != null);
+  if (priced.length === 0) {
+    return fallback;
+  }
+  const unnecessary = priced.filter((item) => necessityOf(item.name) === false);
+  const chosen = priciest(unnecessary.length > 0 ? unnecessary : priced);
+  return chosen?.name ?? fallback;
+}
+
+/** Null when the name is blank, so there is nothing for the keyword check to read. */
+function necessityOf(name: string): boolean | null {
+  if (name.trim().length === 0) {
+    return null;
+  }
+  return keywordNecessity(name).necessary;
+}
+
+function integerCents(value: number): number | null {
+  if (!Number.isInteger(value) || value < 0) {
+    return null;
+  }
+  return value;
+}
+
+function priciest(items: readonly CartItem[]): CartItem | null {
+  let best: CartItem | null = null;
+  for (const item of items) {
+    if (best == null || item.priceCents > best.priceCents) {
+      best = item;
+    }
+  }
+  return best;
 }
 
 export type ImpulseApply = "create" | "refresh";
