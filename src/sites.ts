@@ -12,11 +12,11 @@ export function applePage(url: string): ApplePage | null {
   }
   const host = parsed.hostname.toLowerCase();
   const path = parsed.pathname.toLowerCase();
+  if ((RETAIL_HOSTS.has(host) || isCheckoutHost(host)) && /\/shop\/bag(?:\/|$)/.test(path)) {
+    return "bag";
+  }
   if (isCheckoutHost(host) && path.includes("checkout")) {
     return "checkout";
-  }
-  if (RETAIL_HOSTS.has(host) && /\/shop\/bag(?:\/|$)/.test(path)) {
-    return "bag";
   }
   if (isLocalFallback(host, path)) {
     return "bag";

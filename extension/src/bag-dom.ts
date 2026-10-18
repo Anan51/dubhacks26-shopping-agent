@@ -219,7 +219,11 @@ function linePriceFrom(row: ParentNode): number | null {
 }
 
 function summaryCents(root: ParentNode, autom: string): number | null {
-  const node = root.querySelector(`[data-autom="${autom}"]`);
+  // Live bag.js stamps data-autom="bagtotalvalue" on the label and the value.
+  // The label comes first. The price is the .rs-summary-value node.
+  const node =
+    root.querySelector(`.rs-summary-value[data-autom="${autom}"]`) ??
+    root.querySelector(`[data-autom="${autom}"]:not(.rs-summary-label)`);
   if (!node) {
     return null;
   }
@@ -343,6 +347,7 @@ export function watchBagDom(doc: Document, onChange: () => void, timer?: BagTime
   const cancel = timer?.cancel ?? ((id: unknown) => (view ?? globalThis).clearTimeout(id as ReturnType<typeof setTimeout>));
   const ObserverCtor = view?.MutationObserver ?? globalThis.MutationObserver;
   let observer: MutationObserver | null = null;
+  let presence: MutationObserver | null = null;
   let targets: Element[] = [];
   let timerId: unknown = 0;
   let timerLive = false;
@@ -364,12 +369,36 @@ export function watchBagDom(doc: Document, onChange: () => void, timer?: BagTime
     targets = [];
   };
 
+  const disarmPresence = () => {
+    presence?.disconnect();
+    presence = null;
+  };
+
+  // The bag shell ships with an empty #bag-container. Item rows arrive in a later
+  // React commit that may not include a pay control, so the gate observer never sees it.
+  const armPresence = () => {
+    if (presence || !doc.documentElement) {
+      return;
+    }
+    presence = new ObserverCtor((records) => {
+      if (records.every(mutationIsOurs)) {
+        return;
+      }
+      if (retarget()) {
+        kick();
+      }
+    });
+    presence.observe(doc.documentElement, { childList: true, subtree: true });
+  };
+
   const retarget = (): boolean => {
     const next = bagWatchTargets(doc);
     if (next.length === 0) {
       disconnectObserver();
+      armPresence();
       return false;
     }
+    disarmPresence();
     if (observer && sameTargets(targets, next) && next.every((node) => node.isConnected)) {
       return true;
     }
@@ -396,6 +425,7 @@ export function watchBagDom(doc: Document, onChange: () => void, timer?: BagTime
         cancel(timerId);
       }
       timerLive = false;
+      disarmPresence();
       disconnectObserver();
     },
   };

@@ -60,7 +60,7 @@ export function mountOverlay(
   initial: OverlayModel,
   actions: OverlayActions,
 ): (next: OverlayModel) => void {
-  const mount = document.createElement("div");
+  const mount = parent.ownerDocument.createElement("div");
   parent.append(mount);
   let model = initial;
   const listeners = new Set<() => void>();
