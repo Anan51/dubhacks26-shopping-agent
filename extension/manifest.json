@@ -18,7 +18,8 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Simmer"
+    "default_title": "Simmer",
+    "default_popup": "popup.html"
   },
   "options_page": "options.html",
   "content_scripts": [

@@ -248,6 +248,8 @@ function modelFrom(cart: Record<string, unknown>, thread: unknown, settings: Set
     itemNames: names,
     explanation: typeof cart.explanation === "string" ? cart.explanation : null,
     decision: isRecord(cart.decision) ? decisionFrom(cart.decision) : null,
+    signals: signalsFrom(cart.signals),
+    motiveSources: sourcesFrom(cart.motiveSources),
     reading: cart.reading === true,
     userId: settings.userId,
     linkMessage: typeof cart.linkMessage === "string" ? cart.linkMessage : `link ${settings.userId}`,
@@ -257,6 +259,31 @@ function modelFrom(cart: Record<string, unknown>, thread: unknown, settings: Set
     qrDataUrl: typeof ping?.qrDataUrl === "string" ? ping.qrDataUrl : null,
     turns,
     error,
+  };
+}
+
+function signalsFrom(value: unknown): OverlayModel["signals"] {
+  if (!isRecord(value)) {
+    return {};
+  }
+  return {
+    ...(typeof value.needVsWant === "string" ? { needVsWant: value.needVsWant } : {}),
+    ...(typeof value.urgency === "string" ? { urgency: value.urgency } : {}),
+    ...(typeof value.currentPhoneBroken === "boolean" ? { currentPhoneBroken: value.currentPhoneBroken } : {}),
+    ...(typeof value.reasonText === "string" ? { reasonText: value.reasonText } : {}),
+  };
+}
+
+function sourcesFrom(value: unknown): OverlayModel["motiveSources"] {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const read = (key: string) => (typeof value[key] === "string" ? value[key] : "default");
+  return {
+    needVsWant: read("needVsWant"),
+    urgency: read("urgency"),
+    currentPhoneBroken: read("currentPhoneBroken"),
+    reasonText: read("reasonText"),
   };
 }
 
@@ -319,6 +346,8 @@ function emptyModel(settings: Settings, code: string, error: string): OverlayMod
     itemNames: [],
     explanation: null,
     decision: null,
+    signals: {},
+    motiveSources: null,
     reading: false,
     userId: settings.userId,
     linkMessage: `link ${settings.userId}`,

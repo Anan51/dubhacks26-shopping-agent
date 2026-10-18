@@ -4,18 +4,17 @@
 
 .panel {
   position: fixed;
-  inset: 0;
+  right: 1rem;
+  bottom: 1rem;
   z-index: 2147483646;
-  display: grid;
-  place-items: center;
-  background: rgba(58, 36, 22, 0.28);
+  width: min(22rem, calc(100vw - 2rem));
   font-family: Georgia, "Iowan Old Style", serif;
   color: #3a2416;
 }
 
 .card {
   width: min(28rem, calc(100vw - 2rem));
-  max-height: calc(100vh - 2rem);
+  max-height: min(70vh, 28rem);
   overflow: auto;
   background: #f6efe4;
   border-radius: 1.4rem;
@@ -111,6 +110,10 @@ textarea {
   padding: 0.45rem 0.6rem;
   white-space: pre-wrap;
 }
+
+dl { margin: 0.4rem 0 0; }
+dt { color: #7a5b45; font-size: 0.75rem; }
+dd { margin: 0 0 0.35rem; }
 
 .note {
   background: #f3e2cf;

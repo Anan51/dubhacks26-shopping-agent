@@ -28,7 +28,7 @@ Stay signed out. Do not enter a card. Do not go past the checkout entry.
 7. Send:
    `the new color looks nice`
 8. Why now says this is a want with low urgency and **Sleep on it**.
-9. Click **Sleep on it**. The overlay becomes **Covered in the Vault**, names the unblock time about 24 hours out, and still shows **Unlock**. Check Out is still blocked. Nothing is purchased.
+9. Click **Why**, then **Sleep on it**. The overlay becomes **In the Vault**, names the hours left, and still shows **Unlock**. Check Out is still blocked. Nothing is purchased. The toolbar popup lists the same bag as a short card. Click the card for the breakdown.
 10. Refresh the desk. It shows the verdict, trade-in and financing numbers, each signal with its source, and the example offer with its saving.
 
 To show opt-out: extension options, add `127.0.0.1` (or `apple.com`), save, reload the bag. The overlay stays off and Check Out works again. Remove the line and reload to turn Simmer back on.

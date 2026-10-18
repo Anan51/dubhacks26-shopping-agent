@@ -2,6 +2,7 @@ import { copyFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { build } from "esbuild";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 
@@ -10,11 +11,19 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 function copyStatic(): Plugin {
   return {
     name: "copy-simmer-extension",
-    closeBundle() {
+    async closeBundle() {
       const dist = path.join(root, "dist");
-      for (const file of ["manifest.json", "background.js", "options.html", "options.js"]) {
+      for (const file of ["manifest.json", "background.js", "options.html", "options.js", "popup.html"]) {
         copyFileSync(path.join(root, file), path.join(dist, file));
       }
+      await build({
+        absWorkingDir: root,
+        entryPoints: ["src/popup.ts"],
+        bundle: true,
+        format: "iife",
+        platform: "browser",
+        outfile: path.join(dist, "popup.js"),
+      });
     },
   };
 }

@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 
 import { formatUsd } from "../../src/format.js";
+import { breakdownLines, oneLineVerdict, type GlanceItem, type GlanceSignals, type GlanceSources } from "../../src/glance.js";
 import { UPGRADE_PROMPT } from "../../src/links.js";
 import type { Decision } from "../../src/types.js";
 
@@ -16,6 +17,8 @@ export type OverlayModel = {
   itemNames: string[];
   explanation: string | null;
   decision: Decision | null;
+  signals: GlanceSignals;
+  motiveSources: GlanceSources | null;
   reading: boolean;
   userId: string;
   linkMessage: string | null;
@@ -65,128 +68,102 @@ export function mountOverlay(
 
 function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActions }) {
   const [now, setNow] = useState(() => Date.now());
+  const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 500);
     return () => window.clearInterval(timer);
   }, []);
   const remaining = Math.max(0, new Date(model.lockEndsAt).getTime() - now);
-  const clock = clockFrom(remaining);
-  const curve = model.decision?.tradeInCurve ?? [];
+  const glance = toGlance(model);
+  const title = model.status === "unlocked" ? "Unlocked" : model.status === "vault" ? "In the Vault" : "Marinating";
   return (
     <div className="panel">
       <section className="card" role="dialog" aria-labelledby="simmer-title">
-        <div className="rings" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-        </div>
-        <p className="kicker">Marinating · example trade-in data</p>
-        <h1 id="simmer-title">{model.status === "vault" ? "Covered in the Vault" : "Marinating"}</h1>
+        <p className="kicker">Simmer · example data</p>
+        <h1 id="simmer-title">{title}</h1>
         <p>
-          {model.parsedFromPage ? "Read from this Apple bag" : "Example phone — the bag could not be read"} ·{" "}
-          {formatUsd(model.totalCents)}
+          {model.itemNames[0] ?? "Apple bag"} · {formatUsd(model.totalCents)}
         </p>
-        <p className="fine">{model.itemNames.join(" · ")}</p>
-        {model.status === "vault" ? (
-          <p className="note">
-            The pot stays covered until {model.vaultUntil ? new Date(model.vaultUntil).toLocaleString() : "tomorrow"}.
-            Unlock stays here. It only turns Apple's own button back on after this rest, and Simmer never clicks it.
-          </p>
-        ) : (
-          <p className="clock" aria-live="polite">
-            {remaining > 0 ? clock : "0:00"}
-          </p>
-        )}
-        {model.status !== "vault" && remaining === 0 ? (
-          <p>Ten minutes are up. Unlock is still your choice. Simmer will not place the order.</p>
-        ) : null}
+        <p className="clock" aria-live="polite">
+          {model.status === "vault" ? oneLineVerdict(glance, now) : remaining > 0 ? clockFrom(remaining) : "0:00"}
+        </p>
         <div className="row">
           <button type="button" onClick={actions.unlock}>
             Unlock
           </button>
-          <button type="button" className="quiet" onClick={actions.sleep}>
-            Sleep on it
+          <button type="button" className="quiet" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+            Why
           </button>
-          {model.status === "vault" ? (
-            <button type="button" className="quiet" onClick={actions.skipVault}>
-              Demo: skip 24 hours
-            </button>
-          ) : null}
         </div>
-        <h2>Why</h2>
-        {model.explanation ? <p>{model.explanation}</p> : null}
-        {model.reading ? <p className="fine">reading your reply...</p> : null}
-        <Curve points={curve} waitMonths={model.decision?.waitMonths ?? 0} />
-        <p className="fine">Unlock only re-enables Apple's button. Cart {model.code}.</p>
-        <p className="fine">Text this once: {model.linkMessage}</p>
-        {model.pingDelivered ? <p>Simmer texted your linked phone.</p> : null}
-        {!model.pingDelivered ? (
-          <div className="note">
-            <p>
-              {model.pingReason === "send_failed" ? "The text did not send." : "No phone is linked yet."} Use this
-              message if you want to reply from Messages.
-            </p>
-            {model.smsLink ? <p><a href={model.smsLink}>Open the sms: link</a></p> : null}
-            {model.qrDataUrl ? <img alt="QR code that opens the cart text" src={model.qrDataUrl} width={160} height={160} /> : null}
+        {open ? (
+          <div>
+            <dl>
+              {breakdownLines(glance).map((line) => (
+                <div key={line.label}>
+                  <dt>{line.label}</dt>
+                  <dd>{line.value}</dd>
+                </div>
+              ))}
+            </dl>
+            <div className="row">
+              <button type="button" className="quiet" onClick={actions.sleep}>
+                Sleep on it
+              </button>
+              {model.status === "vault" ? (
+                <button type="button" className="quiet" onClick={actions.skipVault}>
+                  Demo: skip 24 hours
+                </button>
+              ) : null}
+            </div>
+            <p className="fine">{UPGRADE_PROMPT}</p>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                const text = draft.trim();
+                if (!text) {
+                  return;
+                }
+                setDraft("");
+                actions.send(text);
+              }}
+            >
+              <textarea value={draft} onChange={(event) => setDraft(event.target.value)} aria-label="Message Simmer" />
+              <button type="submit">Send</button>
+            </form>
+            {!model.pingDelivered && model.smsLink ? <p><a href={model.smsLink}>sms: link</a></p> : null}
           </div>
         ) : null}
-        <h2>{UPGRADE_PROMPT}</h2>
-        <ol className="turns">
-          {model.turns.map((turn, index) => (
-            <li key={`${turn.role}-${index}`}>{turn.text}</li>
-          ))}
-        </ol>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            const text = draft.trim();
-            if (!text) {
-              return;
-            }
-            setDraft("");
-            actions.send(text);
-          }}
-        >
-          <textarea
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder="my battery dies by 3pm and I owe $420"
-            aria-label="Message Simmer"
-          />
-          <button type="submit">Send</button>
-        </form>
         {model.error ? <p role="alert">{model.error}</p> : null}
       </section>
     </div>
   );
 }
 
-function Curve({ points, waitMonths }: { points: { month: number; cents: number }[]; waitMonths: number }) {
-  if (points.length < 2) {
-    return null;
-  }
-  const width = 280;
-  const height = 96;
-  const max = Math.max(...points.map((point) => point.cents));
-  const min = Math.min(...points.map((point) => point.cents));
-  const span = Math.max(1, max - min);
-  const coords = points.map((point, index) => {
-    const x = 8 + (index / (points.length - 1)) * (width - 16);
-    const y = 8 + (1 - (point.cents - min) / span) * (height - 16);
-    return `${x},${y}`;
-  });
-  const laterIndex = Math.min(points.length - 1, Math.max(0, waitMonths));
-  return (
-    <figure>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Example trade-in curve">
-        <polyline points={coords.join(" ")} fill="none" stroke="currentColor" strokeWidth="2" />
-        <circle cx={coords[0]?.split(",")[0]} cy={coords[0]?.split(",")[1]} r="3.5" />
-        <circle cx={coords[laterIndex]?.split(",")[0]} cy={coords[laterIndex]?.split(",")[1]} r="3.5" />
-      </svg>
-      <figcaption>Example data. Today versus the suggested wait.</figcaption>
-    </figure>
-  );
+function toGlance(model: OverlayModel): GlanceItem {
+  return {
+    code: model.code,
+    name: model.itemNames[0] ?? "Apple bag",
+    priceCents: model.totalCents,
+    status: model.status,
+    vaultUntil: model.vaultUntil,
+    decision: model.decision
+      ? {
+          action: model.decision.action,
+          waitMonths: model.decision.waitMonths,
+          savingsCents: model.decision.savingsCents,
+          offerName: model.decision.offerName,
+          costNowCents: model.decision.costNowCents,
+          costLaterCents: model.decision.costLaterCents,
+          tradeInNowCents: model.decision.tradeInNowCents,
+          tradeInLaterCents: model.decision.tradeInLaterCents,
+          financingNowCents: model.decision.financingNowCents,
+          financingLaterCents: model.decision.financingLaterCents,
+        }
+      : null,
+    signals: model.signals,
+    motiveSources: model.motiveSources,
+  };
 }
 
 function clockFrom(ms: number): string {
