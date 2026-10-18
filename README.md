@@ -43,7 +43,7 @@ The manifest matches the Apple bag (`/shop/bag`, including regional paths), `sec
 2. Add one item and open the bag. Simmer covers the page with **Marinating**, steam rings, and a 10-minute timer. Reply to Simmer's iMessage to unlock. Simmer does not click Apple's button.
 3. The overlay shows the product name and total. If the page cannot be read, it says **Couldn't read bag**.
 4. Text `link <userId>` once so a later checkout can reach that iMessage thread.
-5. **Sleep on it** shows only for a score of 2 or 3. **Demo: end the pause** (demo build) ends a pause and leaves the bag locked. Neither one unlocks checkout. A graded reply shows Skip, Wait, or Buy. An unnecessary bag stays locked until Unlock, after the advice has been sent. Score 1 does not open a 24-hour vault.
+5. **Sleep on it** shows only for a score of 2 or 3. **Demo: end the pause** (demo build) ends a pause and leaves the bag locked. Neither one unlocks checkout. A graded reply shows Skip, Wait, or Buy. An unnecessary bag with no reply unlocks by itself when the countdown runs out (0:00, which is 60s in demo mode), unless a vault is active, in which case it stays locked. A reply plus **Unlock** also opens it. A low score never unlocks it. Score 1 does not open a 24-hour vault.
 6. If apple.com will not load, open [http://127.0.0.1:4321/fallback](http://127.0.0.1:4321/fallback). That page is example data and the same extension path. It is not the main demo.
 
 `/api/pay` only reports the lock for the desk. It does not charge anyone.
