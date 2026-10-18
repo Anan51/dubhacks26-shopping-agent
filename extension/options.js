@@ -1,11 +1,15 @@
 const originInput = document.getElementById("origin");
+const authOriginInput = document.getElementById("auth-origin");
 const optOutInput = document.getElementById("optout");
 const userLine = document.getElementById("user");
 const saved = document.getElementById("saved");
 
-chrome.storage.local.get(["simmerOrigin", "simmerOptOut", "simmerUserId"], (items) => {
+chrome.storage.local.get(["simmerOrigin", "simmerAuthOrigin", "simmerOptOut", "simmerUserId"], (items) => {
   if (typeof items.simmerOrigin === "string" && items.simmerOrigin) {
     originInput.value = items.simmerOrigin;
+  }
+  if (typeof items.simmerAuthOrigin === "string") {
+    authOriginInput.value = items.simmerAuthOrigin;
   }
   if (Array.isArray(items.simmerOptOut)) {
     optOutInput.value = items.simmerOptOut.join("\n");
@@ -18,7 +22,14 @@ document.getElementById("save").addEventListener("click", () => {
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
-  chrome.storage.local.set({ simmerOrigin: originInput.value.trim(), simmerOptOut: optOut }, () => {
-    saved.hidden = false;
-  });
+  chrome.storage.local.set(
+    {
+      simmerOrigin: originInput.value.trim(),
+      simmerAuthOrigin: authOriginInput.value.trim(),
+      simmerOptOut: optOut,
+    },
+    () => {
+      saved.hidden = false;
+    },
+  );
 });

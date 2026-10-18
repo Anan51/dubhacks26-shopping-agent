@@ -14,12 +14,16 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json && tsc --noEmit -p extension/tsconfig.json",
     "build": "tsc && vite build --config web/vite.config.ts && vite build --config extension/vite.config.ts",
     "build:demo": "node scripts/build-demo.mjs",
-    "test": "tsx --test src/*.test.ts extension/src/*.test.ts",
-    "smoke:grok": "tsx src/smoke-grok.ts"
+    "test": "tsx --test src/*.test.ts src/auth/*.test.ts src/memory/*.test.ts extension/src/*.test.ts",
+    "smoke:grok": "tsx src/smoke-grok.ts",
+    "check:mongo": "tsx src/check-mongo.ts"
   },
   "dependencies": {
     "@photon-ai/api": "0.5.0",
+    "argon2": "^0.45.1",
     "express": "^4.22.3",
+    "jose": "^6.2.12",
+    "mongoose": "^9.11.2",
     "qrcode": "^1.5.4",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
@@ -35,6 +39,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "jsdom": "^29.1.1",
+    "mongodb-memory-server": "^11.3.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"
   }

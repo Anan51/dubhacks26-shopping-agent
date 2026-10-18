@@ -6,9 +6,14 @@ import { pathToFileURL } from "node:url";
 import express from "express";
 import { createServer as createViteServer } from "vite";
 
+import { readAccountConfig } from "./auth/config.js";
+import { connectMongo } from "./auth/db.js";
+import { provisionAssistant, attachAccounts } from "./auth/routes.js";
+import { readOptionalUser } from "./auth/session.js";
 import { createApp } from "./app.js";
 import { PhotonChannel } from "./channels/photon.js";
 import { photonConfigured, readAppConfig, readConfig } from "./config.js";
+import { createMemoryRuntime } from "./memory/runtime.js";
 import { createDefaultStore } from "./store.js";
 
 const webRoot = path.join(process.cwd(), "web");
@@ -43,6 +48,21 @@ function loadEnvFile(): void {
 
 export async function startServer(): Promise<void> {
   loadEnvFile();
+  const accountConfig = readAccountConfig();
+  if (accountConfig.mongodbUri) {
+    try {
+      await connectMongo(accountConfig.mongodbUri);
+    } catch (error: unknown) {
+      console.error(error instanceof Error ? error.message : "MongoDB connection failed.");
+    }
+  } else {
+    console.log("MongoDB is not configured. Email login is off.");
+  }
+  const memory = createMemoryRuntime();
+  if (!accountConfig.backboardEnabled) {
+    console.log("Backboard is not configured. Memory nudges are off.");
+  }
+  const jwtSecret = accountConfig.jwtSecret;
   const appConfig = readAppConfig();
   const wantPhoton = appConfig.channel === "photon" || (appConfig.channel === "auto" && photonConfigured());
   if (appConfig.channel === "photon" && !photonConfigured()) {
@@ -63,6 +83,16 @@ export async function startServer(): Promise<void> {
     ...(appConfig.xaiApiKey ? { xaiApiKey: appConfig.xaiApiKey } : {}),
     xaiModel: appConfig.xaiModel,
     xaiTimeoutMs: appConfig.xaiTimeoutMs,
+    ...(jwtSecret ? { readSession: (req) => readOptionalUser(req, jwtSecret) } : {}),
+    ...(accountConfig.backboardEnabled
+      ? { personalizeNudge: (text: string, userId: string) => memory.personalize(text, userId) }
+      : {}),
+  });
+  attachAccounts(running.app, {
+    jwtSecret,
+    directory: memory.directory,
+    memory,
+    ...(accountConfig.backboardEnabled ? { provision: provisionAssistant(memory.client, memory.directory) } : {}),
   });
 
   await attachClient(running.app);

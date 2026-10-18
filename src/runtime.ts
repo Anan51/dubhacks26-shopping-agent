@@ -17,6 +17,8 @@ export function createRuntime(deps: {
   armReminder: (cart: Cart) => void;
   disarmReminder: (code: string) => void;
   polish: (template: string, action: Decision["action"]) => Promise<string>;
+  /** Set only when Backboard is configured. Called with the Mongo user id, never a cart id. */
+  personalizeNudge?: (text: string, authenticatedUserId: string) => Promise<string>;
   extract?: ExtractOptions;
 }): Runtime {
   const queues = new Map<string, Promise<void>>();
@@ -59,6 +61,18 @@ export function createRuntime(deps: {
       const last = result.session.turns.at(-1);
       if (last?.role === "agent") {
         last.text = reply;
+      }
+    }
+    if (deps.personalizeNudge && message.authUserId && result.cart?.explanation) {
+      const before = result.cart.explanation;
+      const personalized = await deps.personalizeNudge(before, message.authUserId);
+      if (personalized !== before && reply.includes(before)) {
+        reply = reply.replace(before, personalized);
+        result.cart.explanation = personalized;
+        const last = result.session.turns.at(-1);
+        if (last?.role === "agent") {
+          last.text = reply;
+        }
       }
     }
 
