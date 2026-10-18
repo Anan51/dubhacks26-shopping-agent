@@ -2,6 +2,7 @@ import css from "./overlay.css?inline";
 
 import { applePage, hostOptedOut, isFallbackBag } from "../../src/sites.js";
 import { bagContentKey, bagReadAction, readPageBag, watchBagDom, type BagWatch, type PageBag } from "./bag-dom.js";
+import { bindCheckoutClicks } from "./checkout-record.js";
 import { deliverExtensionMessage, extensionContextAlive } from "./extension-context.js";
 import { installGate } from "./gate.js";
 import { buttonsToBlock } from "./overlay/block.js";
@@ -44,6 +45,7 @@ async function start(site: StoreAdapter): Promise<void> {
   let card: { update: (next: OverlayModel) => void; unmount: () => void } | null = null;
 
   let code = "";
+  let bagOpen = false;
   let posting = false;
   let postedKey: string | null = null;
   let watching = false;
@@ -53,6 +55,7 @@ async function start(site: StoreAdapter): Promise<void> {
   let showBlock = false;
   let bagWatch: BagWatch | null = null;
   let pageObserver: MutationObserver | null = null;
+  let stopCheckout = (): void => undefined;
 
   const shutdown = () => {
     if (stopped) {
@@ -65,8 +68,33 @@ async function start(site: StoreAdapter): Promise<void> {
     pageObserver?.disconnect();
     gate.stop();
     card?.unmount();
+    stopCheckout();
   };
   onContextDead = shutdown;
+
+  const releasePage = () => {
+    if (stopped) {
+      return;
+    }
+    window.clearInterval(pollTimer);
+    window.clearTimeout(fallbackTimer);
+    bagWatch?.disconnect();
+    bagWatch = null;
+    pageObserver?.disconnect();
+    pageObserver = null;
+    showBlock = false;
+    gate.lift();
+    gate.stop();
+    card?.unmount();
+    card = null;
+  };
+
+  stopCheckout = bindCheckoutClicks(
+    document,
+    () => site.checkoutButtons(document),
+    () => ({ code, unlocked: bagOpen }),
+    recordCheckout,
+  );
 
   const actions = {
     unlock: () => {
@@ -113,6 +141,7 @@ async function start(site: StoreAdapter): Promise<void> {
       return;
     }
     const unlocked = cart.isUnlocked === true && cart.status === "unlocked";
+    bagOpen = unlocked;
     if (unlocked) {
       showBlock = false;
       gate.lift();
@@ -125,7 +154,7 @@ async function start(site: StoreAdapter): Promise<void> {
       return;
     }
     if (unlocked) {
-      shutdown();
+      releasePage();
       return;
     }
     show(modelFrom(cart, null, settings, null, quantity));
@@ -191,7 +220,9 @@ async function start(site: StoreAdapter): Promise<void> {
       if (stopped) {
         return;
       }
-      if (created.isUnlocked === true && created.status === "unlocked") {
+      const opened = created.isUnlocked === true && created.status === "unlocked";
+      bagOpen = opened;
+      if (opened) {
         showBlock = false;
         gate.lift();
       } else {
@@ -202,8 +233,11 @@ async function start(site: StoreAdapter): Promise<void> {
         await refresh();
       } else {
         show(modelFrom(created, { turns: [] }, settings, null, quantity));
+        if (opened && created.necessity !== "necessary") {
+          releasePage();
+        }
       }
-      if (!watching) {
+      if (!watching && card) {
         watching = true;
         pollTimer = window.setInterval(() => {
           if (stopped || !extensionContextAlive(chrome.runtime)) {
@@ -463,6 +497,14 @@ function rememberCart(code: string): Promise<void> {
 
 function post(path: string, body?: unknown): Promise<unknown> {
   return message({ type: "simmer", action: "api", method: "POST", path, body }).then(unwrap);
+}
+
+function recordCheckout(cartCode: string): Promise<void> {
+  return message({ type: "simmer", action: "api", method: "POST", path: "/purchases", body: { cartCode } }).then((result) => {
+    if (!isRecord(result) || result.ok !== true) {
+      throw new Error("Purchase was not recorded.");
+    }
+  });
 }
 
 function getJson(path: string): Promise<unknown> {

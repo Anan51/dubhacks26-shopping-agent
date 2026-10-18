@@ -67,8 +67,6 @@ export type AppDeps = {
    * Omitted unless Backboard is configured, so demo copy stays the same.
    */
   personalizeNudge?: (text: string, authenticatedUserId: string) => Promise<string>;
-  /** Present only when Mongo auth is configured. Omitted on the demo path. */
-  recordPurchase?: (authUserId: string, cart: Cart) => Promise<void>;
   /** Present when Mongo is up. Check-in replies and the hourly sender use it. */
   checkIns?: {
     directory: AccountDirectory;
@@ -107,24 +105,11 @@ export function createApp(deps: AppDeps): RunningApp {
         if (!current) {
           return;
         }
-        const wasUnlocked = current.isUnlocked;
         applyNecessity(current, necessity);
         await attachImpulse(current, authUserId, "refresh");
         deps.store.saveCart(current);
-        if (authUserId && !wasUnlocked && current.isUnlocked) {
-          void notePurchase(authUserId, current);
-        }
       })
       .catch(() => undefined);
-  }
-
-  function notePurchase(authUserId: string, cart: Cart): Promise<void> {
-    if (!deps.recordPurchase) {
-      return Promise.resolve();
-    }
-    return deps.recordPurchase(authUserId, cart).catch((error: unknown) => {
-      console.error(error instanceof Error ? error.message : "Purchase was not recorded.");
-    });
   }
 
   async function routeSend(message: OutboundMessage): Promise<void> {
@@ -293,9 +278,6 @@ export function createApp(deps: AppDeps): RunningApp {
     }
     await attachImpulse(cart, req.user?.id, "create");
     deps.store.saveCart(cart);
-    if (req.user?.id && cart.isUnlocked) {
-      await notePurchase(req.user.id, cart);
-    }
     res.status(201).json(publicCart(cart, deps.agentHandle));
     refineNecessity(cart.code, bagText, req.user?.id);
   }));
@@ -341,13 +323,9 @@ export function createApp(deps: AppDeps): RunningApp {
         return;
       }
     }
-    const wasUnlocked = cart.isUnlocked;
     unlockCart(cart, now());
     deps.store.saveCart(cart);
     scheduler.disarm(cart.code);
-    if (!wasUnlocked && cart.isUnlocked && req.user?.id) {
-      await notePurchase(req.user.id, cart);
-    }
     res.json(publicCart(cart, deps.agentHandle));
   }));
 

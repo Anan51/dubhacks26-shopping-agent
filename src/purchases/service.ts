@@ -249,25 +249,43 @@ export async function setPurchaseFeedback(
   return toView(doc);
 }
 
-export async function recordUnlockedPurchase(userId: string, cart: Cart): Promise<void> {
+export async function recordCheckedOutBag(userId: string, cart: Cart): Promise<{ purchase: PurchaseView; created: boolean }> {
+  if (cart.isUnlocked !== true || cart.status !== "unlocked") {
+    throw new PurchaseError(409, "This bag is still locked.");
+  }
   const existing = await PurchaseRecord.findOne({ userId, cartCode: cart.code });
   if (existing) {
     await rememberCheckIn(userId, existing._id.toString());
-    return;
+    return { purchase: toView(existing), created: false };
   }
-  const item = cart.items[0]?.name ?? "Apple bag";
-  const doc = await PurchaseRecord.create({
+  const item = cart.items[0]?.name?.trim() || "Apple bag";
+  const payload = {
     userId,
     item,
     category: categoryForItem(item),
     price: cart.totalCents / 100,
     verdict: cart.decision?.action ?? "unlock",
     feedback: null,
-    isExample: false,
+    isExample: false as const,
     ratedAt: null,
     cartCode: cart.code,
-  });
-  await rememberCheckIn(userId, doc._id.toString());
+    source: "checkout" as const,
+  };
+  try {
+    const doc = await PurchaseRecord.create(payload);
+    await rememberCheckIn(userId, doc._id.toString());
+    return { purchase: toView(doc), created: true };
+  } catch (error: unknown) {
+    if (!isDuplicateKey(error)) {
+      throw error;
+    }
+    const again = await PurchaseRecord.findOne({ userId, cartCode: cart.code });
+    if (!again) {
+      throw new PurchaseError(500, "Purchase was not recorded.");
+    }
+    await rememberCheckIn(userId, again._id.toString());
+    return { purchase: toView(again), created: false };
+  }
 }
 
 async function rememberVoteIfMissing(
@@ -356,6 +374,10 @@ async function findUser(userId: string): Promise<{
     return null;
   }
   return User.findById(userId).select("hourlyRate weeklyBudget surveyCompleted goals");
+}
+
+function isDuplicateKey(error: unknown): boolean {
+  return isRecord(error) && error.code === 11000;
 }
 
 function isGoal(value: unknown): value is { text: string; targetAmount?: unknown; createdAt?: unknown } {

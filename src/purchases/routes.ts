@@ -6,13 +6,17 @@ import { authenticatedUserId, refuseClientScope, ScopeError } from "../memory/se
 import type { BackboardClient } from "../memory/backboard.js";
 import { isRecord } from "../record.js";
 import { rememberCheckIn } from "../checkins/ensure.js";
-import { historyLimit, insertRealPurchase, listPurchases, PurchaseError, setPurchaseFeedback, type PurchaseFeedback } from "./service.js";
+import type { Cart } from "../types.js";
+import { historyLimit, insertRealPurchase, listPurchases, PurchaseError, recordCheckedOutBag, setPurchaseFeedback, type PurchaseFeedback } from "./service.js";
+
+const CART_CODE = /^[A-HJ-NP-Z2-9]{6}$/;
 
 export function createPurchaseRouter(deps: {
   authenticate: RequestHandler;
   directory: AccountDirectory;
   client: BackboardClient;
   remote: boolean;
+  loadCart?: (code: string) => Cart | undefined;
 }): Router {
   const router = express.Router();
   router.use(deps.authenticate);
@@ -22,6 +26,16 @@ export function createPurchaseRouter(deps: {
       const userId = authenticatedUserId(req);
       refuseClientScope(req, userId);
       refuseAnyUserId(req);
+      const cartCode = readCartCode(req);
+      if (cartCode) {
+        const cart = deps.loadCart?.(cartCode);
+        if (!cart) {
+          throw new PurchaseError(404, "Cart not found.");
+        }
+        const recorded = await recordCheckedOutBag(userId, cart);
+        res.status(recorded.created ? 201 : 200).json({ purchase: recorded.purchase });
+        return;
+      }
       const purchase = await insertRealPurchase({ userId, feedback: null, ...readCompletedPurchase(req) });
       await rememberCheckIn(userId, purchase._id);
       res.status(201).json({ purchase });
@@ -54,6 +68,17 @@ export function createPurchaseRouter(deps: {
   });
 
   return router;
+}
+
+function readCartCode(req: Request): string | null {
+  if (!isRecord(req.body) || !("cartCode" in req.body)) {
+    return null;
+  }
+  const code = typeof req.body.cartCode === "string" ? req.body.cartCode.trim().toUpperCase() : "";
+  if (!CART_CODE.test(code)) {
+    throw new PurchaseError(400, "cartCode is invalid.");
+  }
+  return code;
 }
 
 function readCompletedPurchase(req: Request): { item: string; category: string; price: number; verdict: string | null } {

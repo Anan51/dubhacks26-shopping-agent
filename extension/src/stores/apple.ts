@@ -30,7 +30,7 @@ export const appleAdapter: StoreAdapter = {
     const href = doc.defaultView?.location.href ?? "";
     const kind = applePage(href) ?? "bag";
     return [...doc.querySelectorAll(CANDIDATES)].flatMap((node) => {
-      if (!(node instanceof HTMLElement) || node.closest(SITE_CHROME)) {
+      if (!isHtmlElement(node) || node.closest(SITE_CHROME)) {
         return [];
       }
       const control = controlFrom(node);
@@ -47,6 +47,13 @@ export const appleAdapter: StoreAdapter = {
     return false;
   },
 };
+
+function isHtmlElement(node: Element): node is HTMLElement {
+  if (typeof HTMLElement === "undefined") {
+    return true;
+  }
+  return node instanceof HTMLElement;
+}
 
 function controlFrom(node: Element): BagControl {
   return {

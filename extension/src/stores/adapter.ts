@@ -16,6 +16,6 @@ export interface StoreAdapter {
   readBag(doc: Document): Bag | null;
   /** Checkout controls to dim. Must not include nav, header, or footer. */
   checkoutButtons(doc: Document): HTMLElement[];
-  /** True on an order confirmation page. The core does not post purchases yet. */
+  /** True on an order confirmation page. */
   isOrderConfirmation(doc: Document): boolean;
 }

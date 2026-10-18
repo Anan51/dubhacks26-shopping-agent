@@ -16,7 +16,7 @@ function copyStatic(): Plugin {
       dist = config.build.outDir;
     },
     async closeBundle() {
-      for (const file of ["manifest.json", "background.js", "options.html", "options.js", "popup.html"]) {
+      for (const file of ["manifest.json", "background.js", "api-auth.mjs", "options.html", "options.js", "popup.html"]) {
         copyFileSync(path.join(root, file), path.join(dist, file));
       }
       await build({
