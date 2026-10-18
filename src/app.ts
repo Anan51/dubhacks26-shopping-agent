@@ -21,6 +21,7 @@ import {
   withCartFacts,
 } from "./carts.js";
 import type { AccountDirectory } from "./auth/accounts.js";
+import { readAccountConfig } from "./auth/config.js";
 import type { InboundMessage, OutboundMessage } from "./channel.js";
 import type { PhotonChannel } from "./channels/photon.js";
 import { demoCheckInsAllowed } from "./checkins/demo.js";
@@ -60,6 +61,11 @@ export type AppDeps = {
   polish?: (template: string, action: Decision["action"]) => Promise<string>;
   /** Test override. Request handlers read this instead of process.env when set. */
   env?: NodeJS.ProcessEnv;
+  /**
+   * Regret history moves the 1–8 score only when this is true.
+   * Omitted follows BACKBOARD_API_KEY. Unset leaves the bag score unchanged.
+   */
+  backboardEnabled?: boolean;
   /** When set, a valid JWT cookie or bearer token fills req.user and does not block anonymous demo calls. */
   readSession?: (req: Request) => Promise<{ id: string; email: string } | null>;
   /**
@@ -86,6 +92,7 @@ export type RunningApp = {
 export function createApp(deps: AppDeps): RunningApp {
   const now = deps.now ?? (() => new Date());
   const env = deps.env ?? process.env;
+  const backboardEnabled = deps.backboardEnabled ?? readAccountConfig(env).backboardEnabled;
   const assignedPersonas = new Map<string, PersonaId>();
   let bagReadError: string | null = null;
   const extractOptions = {
@@ -645,7 +652,7 @@ export function createApp(deps: AppDeps): RunningApp {
 
   async function attachImpulse(cart: Cart, authUserId: string | undefined, mode: "create" | "refresh"): Promise<void> {
     const wasVault = cart.status === "vault";
-    const reading = await readingForCart(authUserId ?? cart.userId, cart);
+    const reading = await readingForCart(authUserId ?? cart.userId, cart, { backboardEnabled });
     applyImpulseReading(cart, reading, now(), deps.demoReminderMs, mode);
     if (!wasVault && cart.status === "vault") {
       scheduler.arm(cart);

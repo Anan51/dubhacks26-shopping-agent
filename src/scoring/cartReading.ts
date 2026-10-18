@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 import { sleepCart, VAULT_MS } from "../carts.js";
 import { categoryForItem, getBudgetProfile, type BudgetProfile } from "../purchases/service.js";
 import { type Cart, type Decision, type ScoreBucket } from "../types.js";
-import { computeImpulseScore } from "./backboardScore.js";
+import { computeImpulseScore, type ImpulseScoreOptions } from "./backboardScore.js";
 import { hoursOfWork, hoursOfWorkText, type HoursOfWork } from "./hoursOfWork.js";
 import { impulseBand, legacyImpulseBase } from "./lockBand.js";
 
@@ -43,6 +43,7 @@ export function annotateDecision<T extends Decision>(decision: T, reading: CartR
 export async function readImpulse(
   userId: string | null,
   input: { item: string; category: string; price: number; necessary: boolean },
+  options?: ImpulseScoreOptions,
 ): Promise<CartReading> {
   const profile = await budgetFor(userId);
   const hourlyRate = profile?.hourlyRate ?? null;
@@ -58,6 +59,7 @@ export async function readImpulse(
       hours: rawHours,
     },
     profile ?? undefined,
+    options,
   );
   const band = impulseBand(scored.score);
   return {
@@ -68,14 +70,22 @@ export async function readImpulse(
   };
 }
 
-export function readingForCart(userId: string | null, cart: Cart): Promise<CartReading> {
+export function readingForCart(
+  userId: string | null,
+  cart: Cart,
+  options?: ImpulseScoreOptions,
+): Promise<CartReading> {
   const item = cart.items[0]?.name ?? "Apple bag";
-  return readImpulse(userId, {
-    item,
-    category: categoryForItem(item),
-    price: cart.totalCents / 100,
-    necessary: cart.necessity === "necessary",
-  });
+  return readImpulse(
+    userId,
+    {
+      item,
+      category: categoryForItem(item),
+      price: cart.totalCents / 100,
+      necessary: cart.necessity === "necessary",
+    },
+    options,
+  );
 }
 
 export type ImpulseApply = "create" | "refresh";

@@ -36,32 +36,36 @@ describe("impulse signals", () => {
     assert.equal(scored.why, null);
   });
 
-  it("pushes up for a regret in this category", () => {
-    const scored = scoreFromSignals(phone, signals({ categoryRegrets: 1 }));
-    assert.equal(scored.score, 5.2);
-    assert.equal(scored.why, "You regretted a similar purchase before.");
+  it("scores regret history stricter than a clean slate on the same unnecessary bag", () => {
+    const clean = scoreFromSignals(phone, signals());
+    const regretted = scoreFromSignals(phone, signals({ categoryRegrets: 1 }));
+    assert.equal(clean.score, 4.5);
+    assert.equal(clean.why, null);
+    assert.equal(regretted.score, 5.2);
+    assert.ok(regretted.score > clean.score);
+    assert.equal(regretted.why, "You regretted a similar purchase before.");
   });
 
-  it("pushes down a little for kept purchases", () => {
-    const scored = scoreFromSignals(phone, signals({ categoryKept: 2 }));
-    assert.equal(scored.score, 4);
-    assert.equal(scored.why, "You've kept a similar purchase.");
+  it("does not free the score for kept purchases", () => {
+    const kept = scoreFromSignals(phone, signals({ categoryKept: 2 }));
+    assert.equal(kept.score, 4.5);
+    assert.equal(kept.why, null);
+    const many = scoreFromSignals(phone, signals({ categoryKept: 5, regretCount: 0, ratedCount: 5 }));
+    assert.equal(many.score, 4.5);
+    assert.equal(impulseBand(many.score), "soft");
   });
 
-  it("lands on 3, free, after five kept purchases and no regrets", () => {
-    const scored = scoreFromSignals(phone, signals({ categoryKept: 5, regretCount: 0, ratedCount: 5 }));
-    assert.equal(scored.score, 3);
-    assert.equal(impulseBand(scored.score), "free");
-  });
-
-  it("nudges with the overall regret ratio", () => {
+  it("nudges up with the overall regret ratio and does not nudge down", () => {
     const high = scoreFromSignals(phone, signals({ regretCount: 4, ratedCount: 4 }));
     assert.equal(high.score, 4.9);
     assert.equal(high.why, "More of your past buys were regrets.");
 
     const low = scoreFromSignals(phone, signals({ regretCount: 0, ratedCount: 4 }));
-    assert.equal(low.score, 4.1);
-    assert.equal(low.why, "You've kept more purchases than you've regretted.");
+    assert.equal(low.score, 4.5);
+    assert.equal(low.why, null);
+    const minority = scoreFromSignals(phone, signals({ regretCount: 1, ratedCount: 4 }));
+    assert.equal(minority.score, 4.5);
+    assert.equal(minority.why, null);
   });
 
   it("nudges up softly when the price is over the weekly budget", () => {
@@ -86,17 +90,24 @@ describe("impulse signals", () => {
     assert.equal(absent.score, 4.5);
   });
 
-  it("does not penalize an empty goal list, and notices a goal the price competes with", () => {
+  it("does not penalize an empty goal list, and does not free a buy that lines up with a goal", () => {
     const none = scoreFromSignals(phone, signals({ goals: [] }));
     assert.equal(none.score, 4.5);
     const untitled = scoreFromSignals(phone, signals({ goals: [{ text: "Save more", targetAmount: null, createdAt: "" }] }));
     assert.equal(untitled.score, 4.5);
     assert.equal(untitled.why, null);
+    const aligned = scoreFromSignals(
+      phone,
+      signals({ goals: [{ text: "Example phone", targetAmount: 1_000, createdAt: "" }] }),
+    );
+    assert.equal(aligned.score, none.score);
+    assert.equal(aligned.why, null);
     const competing = scoreFromSignals(
       { ...phone, price: 80 },
       signals({ goals: [{ text: "Trip", targetAmount: 100, createdAt: "" }] }),
     );
     assert.equal(competing.score, 4.8);
+    assert.ok(competing.score > none.score);
     assert.equal(competing.why, "This takes a bite out of a goal you saved.");
   });
 

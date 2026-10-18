@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 
+import { readAccountConfig } from "../auth/config.js";
 import {
   countRegrets,
   getBudgetProfile,
@@ -50,18 +51,13 @@ export const EMPTY_IMPULSE_SIGNALS: ImpulseSignals = {
 const MIDPOINT = 4.5;
 const CATEGORY_REGRET_STEP = 0.7;
 const CATEGORY_REGRET_CAP = 2.1;
-const CATEGORY_KEPT_STEP = 0.25;
-/** Five kept buys in this category, and no regrets in the recent window, land on 3. */
-const CATEGORY_KEPT_CAP = 1.1;
 const RATIO_SPAN = 0.8;
 const OVER_BUDGET_NUDGE = 0.5;
 const LONG_HOURS_NUDGE = 0.4;
 const GOAL_NUDGE = 0.3;
 
 const WHY_REGRET = "You regretted a similar purchase before.";
-const WHY_KEPT = "You've kept a similar purchase.";
 const WHY_RATIO_UP = "More of your past buys were regrets.";
-const WHY_RATIO_DOWN = "You've kept more purchases than you've regretted.";
 const WHY_BUDGET = "This costs more than your weekly budget.";
 const WHY_HOURS = "This is more than a day's work.";
 const WHY_GOAL = "This takes a bite out of a goal you saved.";
@@ -69,8 +65,10 @@ const WHY_GOAL = "This takes a bite out of a goal you saved.";
 type Note = { weight: number; why: string };
 
 /**
- * History only moves an unnecessary buy. A necessary item stays at 4.5.
- * Empty goals are not a penalty. Example rows must already be removed by the caller.
+ * An unnecessary buy starts at exactly 4.5. Regret history can only raise that.
+ * Kept purchases never lower it. A saved goal never makes it freer.
+ * A necessary item stays at 4.5 no matter what is on file.
+ * Example rows must already be removed by the caller.
  */
 export function scoreFromSignals(input: ImpulseItem, signals: ImpulseSignals): ImpulseScore {
   if (input.necessary) {
@@ -86,26 +84,13 @@ export function scoreFromSignals(input: ImpulseItem, signals: ImpulseSignals): I
     notes.push({ weight: bump, why: WHY_REGRET });
   }
 
-  if (signals.categoryKept > 0) {
-    const drop = Math.min(CATEGORY_KEPT_CAP, signals.categoryKept * CATEGORY_KEPT_STEP);
-    score -= drop;
-    notes.push({ weight: drop, why: WHY_KEPT });
-  }
-
   if (signals.ratedCount > 0 && signals.regretCount > 0) {
     const ratio = Math.min(1, signals.regretCount / signals.ratedCount);
     const nudge = (ratio - 0.5) * RATIO_SPAN;
     if (nudge > 0.05) {
       score += nudge;
       notes.push({ weight: nudge, why: WHY_RATIO_UP });
-    } else if (nudge < -0.05) {
-      score += nudge;
-      notes.push({ weight: -nudge, why: WHY_RATIO_DOWN });
     }
-  } else if (signals.ratedCount > 0 && signals.regretCount === 0) {
-    const nudge = (0 - 0.5) * RATIO_SPAN;
-    score += nudge;
-    notes.push({ weight: -nudge, why: WHY_RATIO_DOWN });
   }
 
   if (signals.weeklyBudget != null && signals.weeklyBudget > 0 && input.price > signals.weeklyBudget) {
@@ -132,22 +117,38 @@ export function scoreFromSignals(input: ImpulseItem, signals: ImpulseSignals): I
 
 const HISTORY_WINDOW = 50;
 
+export type ImpulseScoreOptions = {
+  /**
+   * Regret history is read only when this is true.
+   * Omitted follows `BACKBOARD_API_KEY`. Unset leaves price, hours, and necessity alone.
+   */
+  backboardEnabled?: boolean;
+};
+
 /**
- * Reads budget, regrets, history, and goals. Does not write. Necessary items skip the reads.
- * Category regrets use `countRegrets`. Kept purchases and the regret ratio use the same newest-50 window.
+ * Reads budget, and, when Backboard is configured, regrets, history, and goals. Does not write.
+ * Necessary items skip the reads and stay at 4.5. Category regrets use `countRegrets`.
+ * The regret ratio uses the same newest-50 window. Kept rows in that window do not lower the score.
  * Pass `budget` when the caller already loaded the profile so it is not read twice.
  */
 export async function computeImpulseScore(
   userId: string,
   input: ImpulseItem,
   budget?: Pick<BudgetProfile, "weeklyBudget">,
+  options?: ImpulseScoreOptions,
 ): Promise<ImpulseScore> {
   if (input.necessary || !shopperReadable(userId)) {
     return scoreFromSignals(input, EMPTY_IMPULSE_SIGNALS);
   }
   const category = input.category.trim().toLowerCase();
-  const [profile, history, categoryRegrets, goals] = await Promise.all([
-    budget ? Promise.resolve(budget) : getBudgetProfile(userId),
+  const profile = budget ?? (await getBudgetProfile(userId));
+  if (!memoryOn(options)) {
+    return scoreFromSignals(
+      { ...input, category },
+      { ...EMPTY_IMPULSE_SIGNALS, weeklyBudget: profile.weeklyBudget },
+    );
+  }
+  const [history, categoryRegrets, goals] = await Promise.all([
     getPurchaseHistory(userId, HISTORY_WINDOW),
     countRegrets(userId, category),
     getSavedGoals(userId),
@@ -164,6 +165,10 @@ export async function computeImpulseScore(
       goals,
     },
   );
+}
+
+function memoryOn(options: ImpulseScoreOptions | undefined): boolean {
+  return options?.backboardEnabled ?? readAccountConfig().backboardEnabled;
 }
 
 function competesWithGoal(price: number, goals: readonly SavedGoal[]): boolean {
