@@ -138,8 +138,10 @@ export const REGRET_SEARCH_LIMIT = 5;
 export const REGRET_SEARCH_TIMEOUT_MS = 3_500;
 /**
  * Backboard's search score is a distance: 0 is an identical memory.
- * A same-item phone query scored about 0.44 and a Pixel scored 0.578.
- * 0.7 keeps matches from about 0.44 through 0.62 and drops distances around 0.88 and higher.
+ * After the category gate, a numeric score counts at or under 0.7,
+ * and a distance around 0.88 or higher does not.
+ * The 0.578 Pixel query is under 0.7, but `Pixel 9` is `other` and
+ * the iPhone regret is `phone`, so the category gate drops it first.
  */
 export const DEFAULT_REGRET_SEARCH_MAX_DISTANCE = 0.7;
 
