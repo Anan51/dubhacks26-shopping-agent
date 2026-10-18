@@ -272,24 +272,18 @@ export function mountPopupAuth(
 }
 
 function mountAuthServerHint(parent: HTMLElement): void {
-  const style = document.createElement("style");
-  style.textContent = [
-    "#simmer-auth-hint { padding: 0.7rem 0.9rem 0; }",
-    "#simmer-auth-hint p { color: #7a5b45; font-size: 0.78rem; margin: 0 0 0.45rem; }",
-    "#simmer-auth-hint button { font: inherit; background: #8a4b24; color: white; border: 0; border-radius: 999px; padding: 0.35rem 0.7rem; cursor: pointer; }",
-  ].join("");
-
   const section = document.createElement("section");
   section.id = "simmer-auth-hint";
+  section.className = "panel";
   const message = document.createElement("p");
   message.className = "fine";
   message.textContent = AUTH_HINT;
-  const options = actionButton("Options");
+  const options = actionButton("Options", "primary");
   options.addEventListener("click", () => {
     openOptionsPage();
   });
   section.append(message, options);
-  parent.prepend(style, section);
+  parent.prepend(section);
 }
 
 function openOptionsPage(): void {
