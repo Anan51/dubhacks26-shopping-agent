@@ -1,0 +1,9 @@
+# Generated reports stay on the machine that ran the script.
+# They are masked, and they are still not committed.
+latest.md
+atlas-evidence-*.md
+
+# Ignore any other dump in this directory (JSON, logs, env files).
+*
+!README.md
+!.gitignore

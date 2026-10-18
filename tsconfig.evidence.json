@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["scripts/evidence-atlas.ts", "scripts/evidence-atlas.test.ts"]
+}
