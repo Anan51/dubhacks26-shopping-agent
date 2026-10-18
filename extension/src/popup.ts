@@ -1,5 +1,6 @@
 import { lockGlance, oneLineVerdict, type GlanceItem } from "../../src/glance.js";
 import { pauseSentence, priceLine } from "../../src/overlay-copy.js";
+import { mountPopupAuth } from "./popup-auth.js";
 
 type CartPayload = {
   code: string;
@@ -28,10 +29,13 @@ const list = document.getElementById("list");
 const empty = document.getElementById("empty");
 let openCode: string | null = null;
 
-chrome.storage.local.get(["simmerOrigin", "simmerUserId"], (stored) => {
+chrome.storage.local.get(["simmerOrigin", "simmerUserId", "simmerAuthOrigin"], (stored) => {
   const origin = allowedOrigin(stored.simmerOrigin) ?? "http://127.0.0.1:4321";
   const userId = typeof stored.simmerUserId === "string" ? stored.simmerUserId : "";
   void load(origin, userId);
+  if (typeof stored.simmerAuthOrigin === "string" && stored.simmerAuthOrigin.trim().length > 0) {
+    mountPopupAuth(document.body, stored.simmerAuthOrigin);
+  }
 });
 
 async function load(origin: string, userId: string): Promise<void> {

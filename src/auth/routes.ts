@@ -5,7 +5,7 @@ import { type MemoryRuntime, type RememberInput } from "../memory/runtime.js";
 import { assistantForUser, authenticatedUserId, refuseClientScope, ScopeError } from "../memory/service.js";
 import { AccountError, logIn, publicUser, signUp, type AccountDirectory, type AccountUser } from "./accounts.js";
 import { mongoState, mongoUnavailableMessage } from "./db.js";
-import { requireUser, setSessionCookie, signSession, tokenFromRequest, readSession } from "./session.js";
+import { clearSessionCookie, readSession, requireUser, setSessionCookie, signSession, tokenFromRequest } from "./session.js";
 
 export type AuthRouteDeps = {
   jwtSecret: string | null;
@@ -105,6 +105,11 @@ export function createAuthRouter(deps: AuthRouteDeps): Router {
     } catch (error: unknown) {
       sendAccountError(res, error);
     }
+  });
+
+  router.post("/logout", (_req, res) => {
+    clearSessionCookie(res);
+    res.json({ ok: true });
   });
 
   if (deps.jwtSecret) {

@@ -107,13 +107,27 @@ export function requireUser(secret: string) {
 }
 
 export function setSessionCookie(res: Response, token: string): void {
-  res.cookie(SESSION_COOKIE, token, {
+  res.cookie(SESSION_COOKIE, token, sessionCookieOptions(7 * 24 * 60 * 60 * 1000));
+}
+
+export function clearSessionCookie(res: Response): void {
+  res.clearCookie(SESSION_COOKIE, sessionCookieOptions());
+}
+
+function sessionCookieOptions(maxAge?: number): {
+  httpOnly: true;
+  sameSite: "lax";
+  secure: boolean;
+  path: string;
+  maxAge?: number;
+} {
+  return {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  });
+    ...(maxAge !== undefined ? { maxAge } : {}),
+  };
 }
 
 function key(secret: string): Uint8Array {
