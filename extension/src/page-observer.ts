@@ -1,3 +1,4 @@
+import { isApplePayControl, isCheckOutControl } from "../../src/apple-bag.js";
 import { BLOCKED_STYLE_ID, PAY_CONTROLS } from "./gate.js";
 
 export type PageWatch = {
@@ -113,9 +114,21 @@ export function watchPage(doc: Document, onForeign: () => void): PageWatch {
       try {
         write();
       } finally {
-        // Callbacks run after mute() returns. Drop the records this write queued.
-        observer?.takeRecords();
+        // Pull the queued records so our own childList edits cannot schedule another pass.
+        // A pay control the page adds in this same turn is gated here, not on the next refresh.
+        const pending = observer?.takeRecords() ?? [];
         muted -= 1;
+        if (!alive) {
+          return;
+        }
+        const foreign = pending.filter((record) => !mutationIsOurs(record));
+        if (foreign.some(recordAddsPayControl)) {
+          onForeign();
+          return;
+        }
+        if (recordsNeedGate(foreign)) {
+          schedule();
+        }
       }
     },
   };
@@ -126,6 +139,46 @@ function recordsNeedGate(records: MutationRecord[]): boolean {
     return false;
   }
   return records.some(recordTouchesPay);
+}
+
+function recordAddsPayControl(record: MutationRecord): boolean {
+  if (record.type !== "childList") {
+    return false;
+  }
+  return [...record.addedNodes].some(nodeContainsPayControl);
+}
+
+function nodeContainsPayControl(node: Node): boolean {
+  if (!isElementNode(node)) {
+    return false;
+  }
+  if (node.matches(PAY_CONTROLS) && elementIsPayControl(node)) {
+    return true;
+  }
+  return [...node.querySelectorAll(PAY_CONTROLS)].some(elementIsPayControl);
+}
+
+function elementIsPayControl(node: Element): boolean {
+  const text = collapsedLabel(node.textContent ?? "").slice(0, 80);
+  const aria = collapsedLabel(node.getAttribute("aria-label") ?? "");
+  const value = collapsedLabel(node.getAttribute("value") ?? "");
+  const control = {
+    tag: node.tagName.toLowerCase(),
+    text: text || value,
+    ariaLabel: aria,
+  };
+  if (isCheckOutControl(control) || isApplePayControl(control)) {
+    return true;
+  }
+  return [text, aria, value].some(isProceedOrBuyNowLabel);
+}
+
+function collapsedLabel(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function isProceedOrBuyNowLabel(value: string): boolean {
+  return value === "proceed" || value === "proceed to checkout" || value === "buy now";
 }
 
 function recordTouchesPay(record: MutationRecord): boolean {
