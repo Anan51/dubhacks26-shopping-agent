@@ -105,6 +105,7 @@ export function startLockedCart(input: {
     agentSenderId: null,
     lastInboundMessageId: null,
     isUnlocked: false,
+    unlockReason: null,
     replied: false,
     advice: null,
     lockStartedAt: createdAt,
@@ -149,6 +150,8 @@ export function holdForUnlock(cart: Cart): Cart {
   cart.status = "locked";
   cart.vaultUntil = null;
   cart.vaultMode = null;
+  cart.reminderAt = null;
+  cart.reminderFireAt = null;
   return cart;
 }
 
@@ -181,7 +184,52 @@ export function skipVault(cart: Cart, now: Date): Cart {
   if (cart.status === "vault") {
     cart.status = "locked";
   }
+  cart.reminderAt = null;
+  cart.reminderFireAt = null;
   return cart;
+}
+
+/**
+ * Arms the shopper-facing countdown.
+ * Demo mode uses the shorter reminder so a live run reaches 0:00 with the server.
+ * A reply or an existing vault keeps its own deadline.
+ */
+export function scheduleCountdown(cart: Cart, demoReminderMs: number, demoTimers: boolean): void {
+  if (cart.status === "unlocked" || cart.necessity === "necessary") {
+    return;
+  }
+  if (cart.replied && cart.status !== "vault") {
+    cart.reminderAt = null;
+    cart.reminderFireAt = null;
+    return;
+  }
+  if (cart.reminderFireAt || cart.reminderSentAt) {
+    return;
+  }
+  const lockAt = Date.parse(cart.lockEndsAt);
+  const demoAt = demoTimers && cart.demo ? Date.parse(cart.createdAt) + demoReminderMs : lockAt;
+  const fireMs = Math.min(lockAt, Number.isFinite(demoAt) ? demoAt : lockAt);
+  if (!Number.isFinite(fireMs)) {
+    return;
+  }
+  const fireAt = new Date(fireMs).toISOString();
+  cart.reminderAt = fireAt;
+  cart.reminderFireAt = fireAt;
+  if (fireMs < lockAt) {
+    cart.lockEndsAt = fireAt;
+  }
+}
+
+/** Opens an unnecessary bag when its countdown or vault timer is up. A low score does not. */
+export function releaseExpiredLock(cart: Cart): void {
+  if (cart.status === "unlocked" || cart.necessity === "necessary") {
+    return;
+  }
+  if (cart.status !== "vault" && (cart.purchaseScore != null || cart.replied)) {
+    return;
+  }
+  liftCart(cart);
+  cart.unlockReason = "timer";
 }
 
 export function isVaultActive(cart: Cart, now: Date): boolean {

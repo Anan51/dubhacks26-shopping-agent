@@ -1,3 +1,4 @@
+import { releaseExpiredLock } from "./carts.js";
 import type { OutboundMessage } from "./channel.js";
 import { formatLongDate } from "./format.js";
 import type { Store } from "./store.js";
@@ -13,6 +14,7 @@ export function reminderCopy(cart: Cart, origin: string): string {
 
 export class ReminderScheduler {
   private timers = new Map<string, NodeJS.Timeout>();
+  private inflight = new Set<string>();
 
   constructor(
     private readonly deps: {
@@ -25,7 +27,7 @@ export class ReminderScheduler {
 
   arm(cart: Cart): void {
     this.disarm(cart.code);
-    if (!cart.reminderFireAt || cart.reminderSentAt || cart.status === "unlocked" || !cart.conversationId) {
+    if (!cart.reminderFireAt || cart.reminderSentAt || cart.status === "unlocked") {
       return;
     }
     const delay = new Date(cart.reminderFireAt).getTime() - this.deps.now().getTime();
@@ -34,10 +36,10 @@ export class ReminderScheduler {
       return;
     }
     const wait = Math.min(delay, MAX_TIMEOUT_MS);
-    const timer = setTimeout(() => {
+    const timer = later(() => {
       this.timers.delete(cart.code);
       const fresh = this.deps.store.getCart(cart.code);
-      if (!fresh?.reminderFireAt || fresh.reminderSentAt) {
+      if (!fresh?.reminderFireAt || fresh.reminderSentAt || fresh.status === "unlocked") {
         return;
       }
       const remaining = new Date(fresh.reminderFireAt).getTime() - this.deps.now().getTime();
@@ -73,36 +75,62 @@ export class ReminderScheduler {
   }
 
   private async fire(code: string): Promise<void> {
-    const cart = this.deps.store.getCart(code);
-    if (!cart?.reminderFireAt || cart.reminderSentAt || !cart.conversationId || cart.status === "unlocked") {
+    if (this.inflight.has(code)) {
       return;
     }
-    const text = reminderCopy(cart, this.deps.origin);
+    this.inflight.add(code);
     try {
-      await this.deps.send({
-        conversationId: cart.conversationId,
-        text,
-        agentSenderId: cart.agentSenderId ?? undefined,
-        parentMessageId: cart.lastInboundMessageId ?? undefined,
-        idempotencyKey: `simmer:reminder:${cart.code}:${cart.reminderFireAt}`,
-      });
-    } catch (error) {
-      console.error(error instanceof Error ? error.message : "Reminder failed.");
-      const retry = setTimeout(() => {
-        this.timers.delete(code);
-        void this.fire(code);
-      }, 5_000);
-      this.timers.set(code, retry);
-      return;
-    }
-
-    const sentAt = this.deps.now().toISOString();
-    this.deps.store.saveCart({ ...cart, reminderSentAt: sentAt });
-    const session = this.deps.store.getSession(cart.conversationId);
-    if (session) {
-      session.turns.push({ role: "agent", text });
-      session.updatedAt = sentAt;
-      this.deps.store.saveSession(session);
+      const cart = this.deps.store.getCart(code);
+      if (!cart?.reminderFireAt || cart.reminderSentAt || cart.status === "unlocked") {
+        return;
+      }
+      if (cart.necessity === "necessary") {
+        cart.reminderSentAt = this.deps.now().toISOString();
+        this.deps.store.saveCart(cart);
+        return;
+      }
+      const text = reminderCopy(cart, this.deps.origin);
+      if (cart.conversationId) {
+        try {
+          await this.deps.send({
+            conversationId: cart.conversationId,
+            text,
+            agentSenderId: cart.agentSenderId ?? undefined,
+            parentMessageId: cart.lastInboundMessageId ?? undefined,
+            idempotencyKey: `simmer:reminder:${cart.code}:${cart.reminderFireAt}`,
+          });
+        } catch (error) {
+          console.error(error instanceof Error ? error.message : "Reminder failed.");
+          const retry = later(() => {
+            this.timers.delete(code);
+            void this.fire(code);
+          }, 5_000);
+          this.timers.set(code, retry);
+          return;
+        }
+        const sentAt = this.deps.now().toISOString();
+        const session = this.deps.store.getSession(cart.conversationId);
+        if (session) {
+          session.turns.push({ role: "agent", text });
+          session.updatedAt = sentAt;
+          this.deps.store.saveSession(session);
+        }
+      }
+      const fresh = this.deps.store.getCart(code) ?? cart;
+      if (fresh.reminderSentAt || fresh.status === "unlocked" || fresh.reminderFireAt !== cart.reminderFireAt) {
+        return;
+      }
+      fresh.reminderSentAt = this.deps.now().toISOString();
+      releaseExpiredLock(fresh);
+      this.deps.store.saveCart(fresh);
+    } finally {
+      this.inflight.delete(code);
     }
   }
+}
+
+function later(run: () => void, ms: number): NodeJS.Timeout {
+  const timer = setTimeout(run, ms);
+  timer.unref?.();
+  return timer;
 }

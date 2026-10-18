@@ -14,6 +14,7 @@ import {
   isEnforcedVault,
   itemsForBag,
   lockState,
+  scheduleCountdown,
   skipVault,
   sleepCart,
   startLockedCart,
@@ -649,6 +650,19 @@ export function createApp(deps: AppDeps): RunningApp {
     applyImpulseReading(cart, reading, now(), deps.demoReminderMs, mode);
     if (!wasVault && cart.status === "vault") {
       scheduler.arm(cart);
+    }
+    armCountdown(cart);
+  }
+
+  function armCountdown(cart: Cart): void {
+    const hadReminder = Boolean(cart.reminderFireAt);
+    scheduleCountdown(cart, deps.demoReminderMs, deps.demoDefault);
+    if (cart.status !== "unlocked" && cart.necessity !== "necessary" && cart.reminderFireAt && !cart.reminderSentAt) {
+      scheduler.arm(cart);
+      return;
+    }
+    if (hadReminder && !cart.reminderFireAt) {
+      scheduler.disarm(cart.code);
     }
   }
 
