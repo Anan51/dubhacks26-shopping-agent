@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
 
+import { MongoMemoryServer } from "mongodb-memory-server";
+import mongoose from "mongoose";
+
+import { connectMongo } from "./auth/db.js";
 import { createApp } from "./app.js";
+import { PurchaseRecord } from "./purchases/model.js";
 import { isEnforcedVault, itemsForBag, liftCart, sleepCart, startLockedCart, unlockCart, withCartFacts } from "./carts.js";
 import { createMemoryStore } from "./store.js";
 import { decide } from "./heuristic.js";
@@ -316,14 +321,17 @@ describe("impulse flow on the server", () => {
   });
 });
 
-describe("checkout ping and a low score", () => {
-  it("pings an unnecessary bag once, keeps a score of 3 locked, and ignores a repeat post", async () => {
-    const store = createMemoryStore();
-    store.savePhoneLink({
-      userId: "user-low",
-      conversationId: "desk:low-bag-ping",
-      linkedAt: "2026-10-18T00:00:00.000Z",
-    });
+describe("checkout ping and a repeat post", () => {
+  let mongod: MongoMemoryServer;
+  let base = "";
+  let close: () => Promise<void>;
+  let stop: () => void;
+  let store: ReturnType<typeof createMemoryStore>;
+
+  before(async () => {
+    mongod = await MongoMemoryServer.create({ binary: { version: "7.0.14" } });
+    await connectMongo(mongod.getUri());
+    store = createMemoryStore();
     const running = createApp({
       store,
       origin: "http://127.0.0.1",
@@ -336,69 +344,66 @@ describe("checkout ping and a low score", () => {
       xaiTimeoutMs: 8_000,
       polish: async (template) => template,
     });
+    stop = () => running.scheduler.stop();
     const server = createServer(running.app);
     await new Promise<void>((resolve) => {
       server.listen(0, "127.0.0.1", () => resolve());
     });
     const address = server.address() as AddressInfo;
-    const base = `http://127.0.0.1:${address.port}`;
-    const phone = {
-      userId: "user-low",
-      itemNames: ["Example phone"],
-      totalCents: 120_000,
+    base = `http://127.0.0.1:${address.port}`;
+    close = () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+  });
+
+  after(async () => {
+    stop();
+    await close();
+    await mongoose.disconnect();
+    await mongod.stop();
+  });
+
+  it("unlocks a necessary bag without a ping and keeps a repeat from moving the lock", async () => {
+    const cable = await post(base, "/api/carts", {
+      userId: "user-cable-ping",
+      itemNames: ["USB-C charge cable"],
+      totalCents: 1_900,
       parsed: true,
       demo: true,
-    };
-    try {
-      const created = await post(base, "/api/carts", phone);
-      const locked = created.body as CartSnap;
-      assert.equal(created.status, 201);
-      assert.equal(locked.necessity, "unnecessary");
-      assert.equal(locked.isUnlocked, false);
-      assert.equal(locked.status, "locked");
-      assert.equal(locked.lastPing && typeof locked.lastPing === "object" ? (locked.lastPing as { delivered: boolean }).delivered : null, true);
+    });
+    const open = cable.body as CartSnap;
+    assert.equal(open.necessity, "necessary");
+    assert.equal(open.isUnlocked, true);
+    assert.equal(open.status, "unlocked");
+    assert.equal(open.lastPing, null);
+  });
 
-      const stored = store.getCart(locked.code);
-      assert.ok(stored);
-      stored.impulse = { score1to8: 3, band: "free", why: null };
-      stored.userImpulseScore = 4;
-      store.saveCart(stored);
-      const low = (await get(base, `/api/carts/${locked.code}`)) as CartSnap;
-      assert.equal(low.impulse?.score1to8, 3);
-      assert.equal(low.isUnlocked, false);
-      assert.equal(low.status, "locked");
+  it("keeps a re-posted free score of 3 from changing the lock, vault, reminders, or ping", async () => {
+    const userId = new mongoose.Types.ObjectId().toString();
+    const seen = await postedBag(base, store, userId, "desk:free-score-3");
+    assert.equal(seen.first.impulse?.score1to8, 4.5);
+    assert.equal(seen.first.impulse?.band, "soft");
+    await PurchaseRecord.insertMany(keptPhones(userId, 5));
+    const again = await post(base, "/api/carts", bagBody(userId));
+    const replay = again.body as CartSnap;
+    assert.equal(again.status, 200);
+    assert.equal(replay.impulse?.score1to8, 3);
+    assert.equal(replay.impulse?.band, "free");
+    assert.deepEqual(lockSnapshot(replay), lockSnapshot(seen.first));
+    assert.equal(await pingCount(base, "desk:free-score-3"), 1);
+  });
 
-      const again = await post(base, "/api/carts", phone);
-      const replay = again.body as CartSnap;
-      assert.equal(again.status, 200);
-      assert.equal(replay.code, locked.code);
-      assert.equal(replay.isUnlocked, false);
-      assert.equal(replay.status, "locked");
-
-      const thread = (await get(base, "/api/dev/messages?conversationId=desk:low-bag-ping")) as {
-        turns: { role: string; text: string }[];
-      };
-      const pings = thread.turns.filter((turn) => turn.role === "agent" && turn.text.includes("paused your"));
-      assert.equal(pings.length, 1);
-
-      const cable = await post(base, "/api/carts", {
-        userId: "user-cable-ping",
-        itemNames: ["USB-C charge cable"],
-        totalCents: 1_900,
-        parsed: true,
-        demo: true,
-      });
-      const open = cable.body as CartSnap;
-      assert.equal(open.necessity, "necessary");
-      assert.equal(open.isUnlocked, true);
-      assert.equal(open.status, "unlocked");
-      assert.equal(open.lastPing, null);
-    } finally {
-      running.scheduler.stop();
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      });
-    }
+  it("keeps a re-posted score of 6–8 from vaulting, reminding, or pinging again", async () => {
+    const userId = new mongoose.Types.ObjectId().toString();
+    const seen = await postedBag(base, store, userId, "desk:strict-score-7");
+    await PurchaseRecord.insertMany(regrettedPhones(userId, 3));
+    const again = await post(base, "/api/carts", bagBody(userId));
+    const replay = again.body as CartSnap;
+    assert.equal(again.status, 200);
+    assert.equal(replay.impulse?.score1to8, 7);
+    assert.equal(replay.impulse?.band, "strict");
+    assert.equal(replay.status, "locked");
+    assert.equal(replay.vaultUntil, null);
+    assert.deepEqual(lockSnapshot(replay), lockSnapshot(seen.first));
+    assert.equal(await pingCount(base, "desk:strict-score-7"), 1);
   });
 });
 
@@ -510,7 +515,90 @@ type CartSnap = {
   gradeSource: string | null;
   lastPing: unknown;
   explanation: string | null;
+  vaultUntil?: string | null;
+  vaultMode?: string | null;
+  reminderAt?: string | null;
+  reminderFireAt?: string | null;
+  reminderSentAt?: string | null;
+  lockEndsAt?: string | null;
 };
+
+function bagBody(userId: string): { userId: string; itemNames: string[]; totalCents: number; parsed: boolean; demo: boolean } {
+  return { userId, itemNames: ["Example phone"], totalCents: 120_000, parsed: true, demo: true };
+}
+
+function keptPhones(userId: string, count: number): Record<string, unknown>[] {
+  return Array.from({ length: count }, () => ({
+    userId,
+    item: "Old phone",
+    category: "phone",
+    price: 80,
+    feedback: "kept",
+    isExample: false,
+    source: "checkout",
+  }));
+}
+
+function regrettedPhones(userId: string, count: number): Record<string, unknown>[] {
+  return Array.from({ length: count }, () => ({
+    userId,
+    item: "Old phone",
+    category: "phone",
+    price: 80,
+    feedback: "regretted",
+    isExample: false,
+    source: "checkout",
+  }));
+}
+
+async function postedBag(
+  base: string,
+  store: ReturnType<typeof createMemoryStore>,
+  userId: string,
+  conversationId: string,
+): Promise<{ first: CartSnap }> {
+  store.savePhoneLink({ userId, conversationId, linkedAt: "2026-10-18T00:00:00.000Z" });
+  const created = await post(base, "/api/carts", bagBody(userId));
+  const first = created.body as CartSnap;
+  assert.equal(created.status, 201);
+  assert.equal(first.status, "locked");
+  assert.equal(first.isUnlocked, false);
+  assert.equal(first.vaultUntil ?? null, null);
+  return { first };
+}
+
+function lockSnapshot(cart: CartSnap): {
+  status: string;
+  isUnlocked: boolean;
+  vaultUntil: string | null;
+  vaultMode: string | null;
+  reminderAt: string | null;
+  reminderFireAt: string | null;
+  reminderSentAt: string | null;
+  lockEndsAt: string | null;
+  userImpulseScore: number | null;
+  lastPing: unknown;
+} {
+  return {
+    status: cart.status,
+    isUnlocked: cart.isUnlocked,
+    vaultUntil: cart.vaultUntil ?? null,
+    vaultMode: cart.vaultMode ?? null,
+    reminderAt: cart.reminderAt ?? null,
+    reminderFireAt: cart.reminderFireAt ?? null,
+    reminderSentAt: cart.reminderSentAt ?? null,
+    lockEndsAt: cart.lockEndsAt ?? null,
+    userImpulseScore: cart.userImpulseScore,
+    lastPing: cart.lastPing,
+  };
+}
+
+async function pingCount(base: string, conversationId: string): Promise<number> {
+  const thread = (await get(base, `/api/dev/messages?conversationId=${conversationId}`)) as {
+    turns: { role: string; text: string }[];
+  };
+  return thread.turns.filter((turn) => turn.role === "agent" && turn.text.includes("paused your")).length;
+}
 
 async function get(base: string, path: string): Promise<unknown> {
   const response = await fetch(`${base}${path}`);

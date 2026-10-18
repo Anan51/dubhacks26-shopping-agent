@@ -83,7 +83,7 @@ export type ImpulseApply = "create" | "refresh";
 /**
  * Stores the 1–8 reading on the cart.
  * An unnecessary bag is never unlocked from the score. Only a necessary buy opens without a reply.
- * `create` may vault a strict bag once. `refresh` updates the copy, and tightens to a vault only when the band newly becomes strict.
+ * `create` may vault a strict bag once. `refresh` rewrites `impulse` and `hoursOfWork` only.
  */
 export function applyImpulseReading(
   cart: Cart,
@@ -92,19 +92,14 @@ export function applyImpulseReading(
   demoReminderMs: number,
   mode: ImpulseApply = "create",
 ): void {
-  const previousBand = cart.impulse?.band ?? null;
   cart.impulse = reading.impulse;
   cart.hoursOfWork = reading.hoursOfWork;
   cart.hoursOfWorkText = reading.hoursOfWorkText;
-  if (cart.purchaseScore != null || cart.necessity === "necessary") {
-    return;
-  }
-  const band = reading.impulse.band;
-  if (mode === "refresh" && (previousBand == null || previousBand === band)) {
+  if (mode === "refresh" || cart.purchaseScore != null || cart.necessity === "necessary") {
     return;
   }
   cart.userImpulseScore = reading.legacyImpulse;
-  if (band !== "strict" || cartIsEnforcedVault(cart)) {
+  if (reading.impulse.band !== "strict" || cartIsEnforcedVault(cart)) {
     return;
   }
   sleepCart(cart, now, VAULT_MS, demoReminderMs, "enforced");

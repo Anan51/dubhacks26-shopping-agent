@@ -407,7 +407,10 @@ describe("check-ins", { concurrency: false }, () => {
     const yesThread = (await (await fetch(`${base}/api/dev/messages?conversationId=desk:cart-${yesCode}`)).json()) as {
       turns: { role: string; text: string }[];
     };
-    assert.equal(yesThread.turns.some((turn) => turn.role === "agent" && turn.text.length > 0), true);
+    const yesReply = yesThread.turns.at(-1);
+    assert.equal(yesReply?.role, "agent");
+    assert.match(yesReply?.text ?? "", /^(Buy|Wait|Skip)\./);
+    assert.equal((yesReply?.text ?? "").includes("paused your"), false);
     const yesCart = (await (await fetch(`${base}/api/carts/${yesCode}`)).json()) as {
       status: string;
       scoreBucket: string | null;

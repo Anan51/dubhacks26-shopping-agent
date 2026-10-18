@@ -48,6 +48,12 @@ describe("impulse signals", () => {
     assert.equal(scored.why, "You've kept a similar purchase.");
   });
 
+  it("lands on 3, free, after five kept purchases and no regrets", () => {
+    const scored = scoreFromSignals(phone, signals({ categoryKept: 5, regretCount: 0, ratedCount: 5 }));
+    assert.equal(scored.score, 3);
+    assert.equal(impulseBand(scored.score), "free");
+  });
+
   it("nudges with the overall regret ratio", () => {
     const high = scoreFromSignals(phone, signals({ regretCount: 4, ratedCount: 4 }));
     assert.equal(high.score, 4.9);

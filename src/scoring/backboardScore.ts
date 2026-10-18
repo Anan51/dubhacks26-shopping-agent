@@ -51,7 +51,8 @@ const MIDPOINT = 4.5;
 const CATEGORY_REGRET_STEP = 0.7;
 const CATEGORY_REGRET_CAP = 2.1;
 const CATEGORY_KEPT_STEP = 0.25;
-const CATEGORY_KEPT_CAP = 1;
+/** Five kept buys in this category, and no regrets in the recent window, land on 3. */
+const CATEGORY_KEPT_CAP = 1.1;
 const RATIO_SPAN = 0.8;
 const OVER_BUDGET_NUDGE = 0.5;
 const LONG_HOURS_NUDGE = 0.4;

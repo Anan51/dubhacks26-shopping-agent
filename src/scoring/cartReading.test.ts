@@ -47,23 +47,40 @@ describe("impulse lock", () => {
     assert.equal(cart.vaultUntil, null);
   });
 
-  it("does not re-sleep a strict bag or unlock a free one when the same bag is posted again", () => {
+  it("does not vault, relock, or touch reminders when a refresh score is 6–8", () => {
     const cart = bag();
-    applyImpulseReading(cart, reading(7, "strict"), NOW, 60_000, "create");
-    const until = cart.vaultUntil;
-    cart.reminderSentAt = "2026-10-18T00:01:00.000Z";
-    assert.equal(cart.status, "vault");
+    applyImpulseReading(cart, reading(4.5, "soft"), NOW, 60_000, "create");
+    assert.equal(cart.status, "locked");
+    assert.equal(cart.vaultUntil, null);
+    const before = {
+      status: cart.status,
+      isUnlocked: cart.isUnlocked,
+      vaultUntil: cart.vaultUntil,
+      vaultMode: cart.vaultMode,
+      reminderAt: cart.reminderAt,
+      reminderFireAt: cart.reminderFireAt,
+      reminderSentAt: cart.reminderSentAt,
+      lockEndsAt: cart.lockEndsAt,
+      userImpulseScore: cart.userImpulseScore,
+    };
 
-    applyImpulseReading(cart, reading(7.4, "strict"), LATER, 60_000, "refresh");
-    assert.equal(cart.vaultUntil, until);
-    assert.equal(cart.reminderSentAt, "2026-10-18T00:01:00.000Z");
-    assert.equal(cart.impulse?.score1to8, 7.4);
-    assert.equal(cart.status, "vault");
-
-    applyImpulseReading(cart, reading(2, "free"), LATER, 60_000, "refresh");
-    assert.equal(cart.isUnlocked, false);
-    assert.equal(cart.status, "vault");
-    assert.equal(cart.vaultUntil, until);
-    assert.equal(cart.impulse?.band, "free");
+    applyImpulseReading(cart, reading(7, "strict"), LATER, 60_000, "refresh");
+    assert.equal(cart.impulse?.score1to8, 7);
+    assert.equal(cart.impulse?.band, "strict");
+    assert.equal(cart.hoursOfWork?.hours, 10);
+    assert.deepEqual(
+      {
+        status: cart.status,
+        isUnlocked: cart.isUnlocked,
+        vaultUntil: cart.vaultUntil,
+        vaultMode: cart.vaultMode,
+        reminderAt: cart.reminderAt,
+        reminderFireAt: cart.reminderFireAt,
+        reminderSentAt: cart.reminderSentAt,
+        lockEndsAt: cart.lockEndsAt,
+        userImpulseScore: cart.userImpulseScore,
+      },
+      before,
+    );
   });
 });
