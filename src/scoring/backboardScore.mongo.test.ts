@@ -30,12 +30,17 @@ describe("computeImpulseScore reads shopper services", { concurrency: false }, (
       weeklyBudget: 200,
       goals: [],
     });
-    const blank = await computeImpulseScore(quiet.id, {
-      item: "Example phone",
-      category: "phone",
-      price: 40,
-      necessary: false,
-    });
+    const blank = await computeImpulseScore(
+      quiet.id,
+      {
+        item: "Example phone",
+        category: "phone",
+        price: 40,
+        necessary: false,
+      },
+      undefined,
+      { backboardEnabled: true },
+    );
     assert.equal(blank.score, 4.5);
     assert.equal(blank.why, null);
 
@@ -55,12 +60,17 @@ describe("computeImpulseScore reads shopper services", { concurrency: false }, (
       isExample: true,
       source: "checkout",
     });
-    const ignored = await computeImpulseScore(ada.id, {
-      item: "Example phone",
-      category: "phone",
-      price: 40,
-      necessary: false,
-    });
+    const ignored = await computeImpulseScore(
+      ada.id,
+      {
+        item: "Example phone",
+        category: "phone",
+        price: 40,
+        necessary: false,
+      },
+      undefined,
+      { backboardEnabled: true },
+    );
     assert.equal(ignored.score, 4.5);
     assert.equal(ignored.why, null);
 
@@ -73,12 +83,17 @@ describe("computeImpulseScore reads shopper services", { concurrency: false }, (
       isExample: true,
       source: "survey",
     });
-    const flagged = await computeImpulseScore(ada.id, {
-      item: "Example phone",
-      category: "phone",
-      price: 40,
-      necessary: false,
-    });
+    const flagged = await computeImpulseScore(
+      ada.id,
+      {
+        item: "Example phone",
+        category: "phone",
+        price: 40,
+        necessary: false,
+      },
+      undefined,
+      { backboardEnabled: true },
+    );
     assert.equal(flagged.score, 4.5);
     assert.equal(flagged.why, null);
 
@@ -91,22 +106,33 @@ describe("computeImpulseScore reads shopper services", { concurrency: false }, (
       isExample: false,
       source: "survey",
     });
-    const surveyed = await computeImpulseScore(ada.id, {
+    const phone = {
       item: "Example phone",
       category: "phone",
       price: 40,
       necessary: false,
-    });
-    assert.equal(surveyed.why, "You regretted a similar purchase before.");
-    assert.ok(surveyed.score > 4.5);
+    };
+    const held = await computeImpulseScore(ada.id, phone, undefined, { backboardEnabled: false });
+    assert.equal(held.score, 4.5);
+    assert.equal(held.why, null);
 
-    const necessary = await computeImpulseScore(ada.id, {
-      item: "USB-C charge cable",
-      category: "cable",
-      price: 19,
-      necessary: true,
-      hours: 12,
-    });
+    const surveyed = await computeImpulseScore(ada.id, phone, undefined, { backboardEnabled: true });
+    assert.equal(surveyed.why, "You regretted a similar purchase before.");
+    assert.ok(surveyed.score > blank.score);
+    assert.equal(blank.score, 4.5);
+
+    const necessary = await computeImpulseScore(
+      ada.id,
+      {
+        item: "USB-C charge cable",
+        category: "cable",
+        price: 19,
+        necessary: true,
+        hours: 12,
+      },
+      undefined,
+      { backboardEnabled: true },
+    );
     assert.equal(necessary.score, 4.5);
     assert.equal(necessary.why, null);
   });

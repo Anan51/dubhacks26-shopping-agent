@@ -325,39 +325,34 @@ describe("impulse flow on the server", () => {
 describe("checkout ping and a repeat post", () => {
   let mongod: MongoMemoryServer;
   let base = "";
-  let close: () => Promise<void>;
-  let stop: () => void;
+  let memoryBase = "";
+  let close: () => Promise<void> = async () => undefined;
+  let closeMemory: () => Promise<void> = async () => undefined;
+  let stop: () => void = () => undefined;
+  let stopMemory: () => void = () => undefined;
   let store: ReturnType<typeof createMemoryStore>;
+  let memoryStore: ReturnType<typeof createMemoryStore>;
 
   before(async () => {
     mongod = await MongoMemoryServer.create({ binary: { version: "7.0.14" } });
     await connectMongo(mongod.getUri());
     store = createMemoryStore();
-    const running = createApp({
-      store,
-      origin: "http://127.0.0.1",
-      lockMs: 600_000,
-      demoReminderMs: 60_000,
-      demoDefault: true,
-      agentHandle: null,
-      photon: null,
-      xaiModel: "grok-4.20-0309-non-reasoning",
-      xaiTimeoutMs: 8_000,
-      polish: async (template) => template,
-    });
-    stop = () => running.scheduler.stop();
-    const server = createServer(running.app);
-    await new Promise<void>((resolve) => {
-      server.listen(0, "127.0.0.1", () => resolve());
-    });
-    const address = server.address() as AddressInfo;
-    base = `http://127.0.0.1:${address.port}`;
-    close = () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    memoryStore = createMemoryStore();
+    const unset = await listenApp(store, false);
+    base = unset.base;
+    close = unset.close;
+    stop = unset.stop;
+    const memory = await listenApp(memoryStore, true);
+    memoryBase = memory.base;
+    closeMemory = memory.close;
+    stopMemory = memory.stop;
   });
 
   after(async () => {
     stop();
+    stopMemory();
     await close();
+    await closeMemory();
     await mongoose.disconnect();
     await mongod.stop();
   });
@@ -377,34 +372,66 @@ describe("checkout ping and a repeat post", () => {
     assert.equal(open.lastPing, null);
   });
 
-  it("keeps a re-posted free score of 3 from changing the lock, vault, reminders, or ping", async () => {
+  it("does not free a re-posted bag when kept purchases are on file and Backboard is unset", async () => {
     const userId = new mongoose.Types.ObjectId().toString();
-    const seen = await postedBag(base, store, userId, "desk:free-score-3");
+    const seen = await postedBag(base, store, userId, "desk:kept-unset");
     assert.equal(seen.first.impulse?.score1to8, 4.5);
     assert.equal(seen.first.impulse?.band, "soft");
     await PurchaseRecord.insertMany(keptPhones(userId, 5));
     const again = await post(base, "/api/carts", bagBody(userId));
     const replay = again.body as CartSnap;
     assert.equal(again.status, 200);
-    assert.equal(replay.impulse?.score1to8, 3);
-    assert.equal(replay.impulse?.band, "free");
+    assert.equal(replay.impulse?.score1to8, 4.5);
+    assert.equal(replay.impulse?.band, "soft");
     assert.deepEqual(lockSnapshot(replay), lockSnapshot(seen.first));
-    assert.equal(await pingCount(base, "desk:free-score-3"), 1);
+    assert.equal(await pingCount(base, "desk:kept-unset"), 1);
   });
 
-  it("keeps a re-posted score of 6–8 from vaulting, reminding, or pinging again", async () => {
+  it("leaves a re-posted unnecessary bag at 4.5 when regrets exist and Backboard is unset", async () => {
     const userId = new mongoose.Types.ObjectId().toString();
-    const seen = await postedBag(base, store, userId, "desk:strict-score-7");
+    const seen = await postedBag(base, store, userId, "desk:regret-unset");
     await PurchaseRecord.insertMany(regrettedPhones(userId, 3));
     const again = await post(base, "/api/carts", bagBody(userId));
     const replay = again.body as CartSnap;
     assert.equal(again.status, 200);
+    assert.equal(replay.impulse?.score1to8, 4.5);
+    assert.equal(replay.impulse?.band, "soft");
+    assert.equal(replay.impulse?.why ?? null, null);
+    assert.equal(replay.status, "locked");
+    assert.equal(replay.vaultUntil, null);
+    assert.deepEqual(lockSnapshot(replay), lockSnapshot(seen.first));
+    assert.equal(await pingCount(base, "desk:regret-unset"), 1);
+  });
+
+  it("scores regret history stricter than 4.5 on an unnecessary bag and leaves a necessary bag alone", async () => {
+    const userId = new mongoose.Types.ObjectId().toString();
+    const seen = await postedBag(memoryBase, memoryStore, userId, "desk:strict-score-7");
+    assert.equal(seen.first.impulse?.score1to8, 4.5);
+    await PurchaseRecord.insertMany(regrettedPhones(userId, 3));
+    const again = await post(memoryBase, "/api/carts", bagBody(userId));
+    const replay = again.body as CartSnap;
+    assert.equal(again.status, 200);
     assert.equal(replay.impulse?.score1to8, 7);
+    assert.ok((replay.impulse?.score1to8 ?? 0) > 4.5);
     assert.equal(replay.impulse?.band, "strict");
     assert.equal(replay.status, "locked");
     assert.equal(replay.vaultUntil, null);
     assert.deepEqual(lockSnapshot(replay), lockSnapshot(seen.first));
-    assert.equal(await pingCount(base, "desk:strict-score-7"), 1);
+    assert.equal(await pingCount(memoryBase, "desk:strict-score-7"), 1);
+
+    const cable = await post(memoryBase, "/api/carts", {
+      userId,
+      itemNames: ["USB-C charge cable"],
+      totalCents: 1_900,
+      parsed: true,
+      demo: true,
+    });
+    const open = cable.body as CartSnap;
+    assert.equal(cable.status, 201);
+    assert.equal(open.necessity, "necessary");
+    assert.equal(open.impulse?.score1to8, 4.5);
+    assert.equal(open.impulse?.why ?? null, null);
+    assert.equal(open.isUnlocked, true);
   });
 });
 
@@ -523,6 +550,35 @@ type CartSnap = {
   reminderSentAt?: string | null;
   lockEndsAt?: string | null;
 };
+
+async function listenApp(
+  appStore: ReturnType<typeof createMemoryStore>,
+  backboardEnabled: boolean,
+): Promise<{ base: string; close: () => Promise<void>; stop: () => void }> {
+  const running = createApp({
+    store: appStore,
+    origin: "http://127.0.0.1",
+    lockMs: 600_000,
+    demoReminderMs: 60_000,
+    demoDefault: true,
+    agentHandle: null,
+    photon: null,
+    xaiModel: "grok-4.20-0309-non-reasoning",
+    xaiTimeoutMs: 8_000,
+    polish: async (template) => template,
+    backboardEnabled,
+  });
+  const server = createServer(running.app);
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = server.address() as AddressInfo;
+  return {
+    base: `http://127.0.0.1:${address.port}`,
+    stop: () => running.scheduler.stop(),
+    close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+  };
+}
 
 function bagBody(userId: string): { userId: string; itemNames: string[]; totalCents: number; parsed: boolean; demo: boolean } {
   return { userId, itemNames: ["Example phone"], totalCents: 120_000, parsed: true, demo: true };
