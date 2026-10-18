@@ -139,12 +139,12 @@ export const REGRET_SEARCH_TIMEOUT_MS = 3_500;
 /**
  * Backboard's search score is a distance: 0 is an identical memory.
  * A same-item phone query scored about 0.44 and a Pixel scored 0.578.
- * 0.6 keeps those and drops distances around 0.88 and higher.
+ * 0.7 keeps matches from about 0.44 through 0.62 and drops distances around 0.88 and higher.
  */
-export const DEFAULT_REGRET_SEARCH_MAX_DISTANCE = 0.6;
+export const DEFAULT_REGRET_SEARCH_MAX_DISTANCE = 0.7;
 
 /**
- * Maximum distance for a Backboard search hit. Unset or outside [0, 1] uses 0.6.
+ * Maximum distance for a Backboard search hit. Unset or outside [0, 1] uses 0.7.
  * A hit with no numeric score is not rejected here.
  */
 export function regretSearchMaxDistance(env: NodeJS.ProcessEnv = process.env): number {

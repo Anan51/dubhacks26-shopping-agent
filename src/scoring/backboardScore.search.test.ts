@@ -263,7 +263,7 @@ describe("regret search scoring", { concurrency: false }, () => {
       assert.equal(ignored.score, 4.5);
       assert.equal(ignored.why, null);
 
-      const onMax = scriptedClient(async () => [hit("regretted purchase: AirPods (audio, $179)", 0.6)]);
+      const onMax = scriptedClient(async () => [hit("regretted purchase: AirPods (audio, $179)", 0.7)]);
       const counted = await computeImpulseScore(ada.id, buds, undefined, { backboardEnabled: true, client: onMax });
       assert.ok(counted.score > 4.5);
 

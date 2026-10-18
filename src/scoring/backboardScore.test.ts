@@ -130,15 +130,15 @@ describe("impulse signals", () => {
 });
 
 describe("regret search distance", () => {
-  it("defaults to 0.6 and rejects values outside 0..1", () => {
-    assert.equal(regretSearchMaxDistance({}), 0.6);
-    assert.equal(regretSearchMaxDistance({ REGRET_SEARCH_MAX_DISTANCE: "" }), 0.6);
+  it("defaults to 0.7 and rejects values outside 0..1", () => {
+    assert.equal(regretSearchMaxDistance({}), 0.7);
+    assert.equal(regretSearchMaxDistance({ REGRET_SEARCH_MAX_DISTANCE: "" }), 0.7);
     assert.equal(regretSearchMaxDistance({ REGRET_SEARCH_MAX_DISTANCE: "0.578" }), 0.578);
     assert.equal(regretSearchMaxDistance({ REGRET_SEARCH_MAX_DISTANCE: "0" }), 0);
     assert.equal(regretSearchMaxDistance({ REGRET_SEARCH_MAX_DISTANCE: "1" }), 1);
-    assert.equal(regretSearchMaxDistance({ REGRET_SEARCH_MAX_DISTANCE: "1.2" }), 0.6);
-    assert.equal(regretSearchMaxDistance({ REGRET_SEARCH_MAX_DISTANCE: "-0.1" }), 0.6);
-    assert.equal(regretSearchMaxDistance({ REGRET_SEARCH_MAX_DISTANCE: "nope" }), 0.6);
+    assert.equal(regretSearchMaxDistance({ REGRET_SEARCH_MAX_DISTANCE: "1.2" }), 0.7);
+    assert.equal(regretSearchMaxDistance({ REGRET_SEARCH_MAX_DISTANCE: "-0.1" }), 0.7);
+    assert.equal(regretSearchMaxDistance({ REGRET_SEARCH_MAX_DISTANCE: "nope" }), 0.7);
   });
 });
 
