@@ -19,6 +19,12 @@ export type LineItem = {
   cadence: "once" | "monthly";
 };
 
+export type GuardSettings = {
+  enabled: boolean;
+  thresholdCents: number;
+  coolingMs: number;
+};
+
 export type Decision = {
   action: "buy" | "wait";
   alternativeId: string | null;
@@ -39,7 +45,9 @@ export type CartResponse = {
   createdAt: string;
   coolingOffEndsAt: string;
   coolingMs: number;
-  lockThresholdCents: number | null;
+  lockThresholdCents: number;
+  guardEnabled: boolean;
+  buyAnywayAt: string | null;
   demo: boolean;
   decision: Decision | null;
   explanation: string | null;
@@ -57,6 +65,8 @@ export type PublicConfig = {
   agentHandle: string | null;
   coolingMs: number;
   lockThresholdCents: number | null;
+  guardDefaults: GuardSettings;
+  cooldownChoicesMs: number[];
   demoReminderMs: number;
   demoDefault: boolean;
 };
@@ -75,11 +85,32 @@ export async function getConfig(): Promise<PublicConfig> {
   return request<PublicConfig>("/api/config");
 }
 
-export async function createCart(itemIds: string[], demo: boolean): Promise<CartResponse> {
+export async function createCart(
+  itemIds: string[],
+  demo: boolean,
+  sessionId: string,
+  guard: GuardSettings,
+): Promise<CartResponse> {
   return request<CartResponse>("/api/carts", {
     method: "POST",
-    body: JSON.stringify({ itemIds, demo }),
+    body: JSON.stringify({ itemIds, demo, sessionId, guard }),
   });
+}
+
+export async function getGuard(sessionId: string): Promise<{ settings: GuardSettings; cooldownChoicesMs: number[] }> {
+  return request(`/api/guard?sessionId=${encodeURIComponent(sessionId)}`);
+}
+
+export async function saveGuard(sessionId: string, settings: GuardSettings): Promise<GuardSettings> {
+  const body = await request<{ settings: GuardSettings }>("/api/guard", {
+    method: "PUT",
+    body: JSON.stringify({ sessionId, settings }),
+  });
+  return body.settings;
+}
+
+export async function buyAnyway(code: string): Promise<CartResponse> {
+  return request<CartResponse>(`/api/carts/${code}/buy-anyway`, { method: "POST" });
 }
 
 export async function getCart(code: string): Promise<CartResponse> {

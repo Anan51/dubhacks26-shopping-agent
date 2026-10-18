@@ -1,4 +1,4 @@
-import { withCartFacts } from "./carts.js";
+import { completeOrder, withCartFacts } from "./carts.js";
 import { extractCartCode, extractSignals, pickShopperSignals } from "./extract-signals.js";
 import { addMonths, formatLongDate } from "./format.js";
 import { decide } from "./heuristic.js";
@@ -201,10 +201,7 @@ function saveWait(session: Session, cart: Cart, input: ApplyInput): ApplyResult 
 }
 
 function completeCart(session: Session, cart: Cart, now: Date): ApplyResult {
-  cart.status = "completed";
-  cart.orderId = `WM-${cart.code.slice(0, 4)}`;
-  cart.completedAt = now.toISOString();
-  cart.reminderFireAt = null;
+  completeOrder(cart, now, "chat");
   return say(
     session,
     `Checkout is unlocked. Order ${cart.orderId} is in for cart ${cart.code}. It's a mock receipt — no card was charged. The checkout page will update on its own.`,

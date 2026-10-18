@@ -1,19 +1,28 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
+import type { GuardSettings } from "./guard.js";
 import type { Cart, Session } from "./types.js";
 
+/**
+ * Carts, chat sessions, and WaitMate guard settings.
+ * Memory is the default. A JSON file store exists for restarts.
+ * A MongoDB store can implement these methods later without changing callers.
+ */
 export type Store = {
   getCart(code: string): Cart | undefined;
   saveCart(cart: Cart): void;
   listCarts(): Cart[];
   getSession(conversationId: string): Session | undefined;
   saveSession(session: Session): void;
+  getGuard(sessionId: string): GuardSettings | undefined;
+  saveGuard(sessionId: string, settings: GuardSettings): void;
 };
 
 type Snapshot = {
   carts: Record<string, Cart>;
   sessions: Record<string, Session>;
+  guards: Record<string, GuardSettings>;
 };
 
 export function createMemoryStore(): Store {
@@ -24,9 +33,14 @@ export function createFileStore(filePath: string): Store {
   return new FileStore(filePath);
 }
 
+export function createDefaultStore(filePath: string | null): Store {
+  return filePath ? createFileStore(filePath) : createMemoryStore();
+}
+
 class MemoryStore implements Store {
   private carts = new Map<string, Cart>();
   private sessions = new Map<string, Session>();
+  private guards = new Map<string, GuardSettings>();
 
   getCart(code: string): Cart | undefined {
     const cart = this.carts.get(code.toUpperCase());
@@ -49,10 +63,19 @@ class MemoryStore implements Store {
   saveSession(session: Session): void {
     this.sessions.set(session.conversationId, clone(session));
   }
+
+  getGuard(sessionId: string): GuardSettings | undefined {
+    const settings = this.guards.get(sessionId);
+    return settings ? clone(settings) : undefined;
+  }
+
+  saveGuard(sessionId: string, settings: GuardSettings): void {
+    this.guards.set(sessionId, clone(settings));
+  }
 }
 
 class FileStore implements Store {
-  private snapshot: Snapshot = { carts: {}, sessions: {} };
+  private snapshot: Snapshot = { carts: {}, sessions: {}, guards: {} };
 
   constructor(private readonly filePath: string) {
     mkdirSync(path.dirname(filePath), { recursive: true });
@@ -61,9 +84,10 @@ class FileStore implements Store {
       this.snapshot = {
         carts: parsed.carts ?? {},
         sessions: parsed.sessions ?? {},
+        guards: parsed.guards ?? {},
       };
     } catch {
-      this.snapshot = { carts: {}, sessions: {} };
+      this.snapshot = { carts: {}, sessions: {}, guards: {} };
     }
   }
 
@@ -88,6 +112,16 @@ class FileStore implements Store {
 
   saveSession(session: Session): void {
     this.snapshot.sessions[session.conversationId] = clone(session);
+    this.persist();
+  }
+
+  getGuard(sessionId: string): GuardSettings | undefined {
+    const settings = this.snapshot.guards[sessionId];
+    return settings ? clone(settings) : undefined;
+  }
+
+  saveGuard(sessionId: string, settings: GuardSettings): void {
+    this.snapshot.guards[sessionId] = clone(settings);
     this.persist();
   }
 

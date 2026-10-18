@@ -9,7 +9,7 @@ import { createServer as createViteServer } from "vite";
 import { createApp } from "./app.js";
 import { PhotonChannel } from "./channels/photon.js";
 import { photonConfigured, readAppConfig, readConfig } from "./config.js";
-import { createFileStore } from "./store.js";
+import { createDefaultStore } from "./store.js";
 
 const webRoot = path.join(process.cwd(), "web");
 
@@ -53,7 +53,7 @@ export async function startServer(): Promise<void> {
 
   const photon = wantPhoton ? new PhotonChannel(readConfig()) : null;
   const running = createApp({
-    store: createFileStore(path.resolve(appConfig.storePath)),
+    store: createDefaultStore(appConfig.storePath ? path.resolve(appConfig.storePath) : null),
     origin: appConfig.origin,
     coolingMs: appConfig.coolingMs,
     lockThresholdCents: appConfig.lockThresholdCents,

@@ -3,7 +3,7 @@ import { polishPhrase } from "./phrase.js";
 import { sendPhotonMessage } from "./photon-send.js";
 import { ReminderScheduler } from "./reminders.js";
 import { createRuntime, type Runtime } from "./runtime.js";
-import { createFileStore } from "./store.js";
+import { createDefaultStore } from "./store.js";
 
 let cached: Runtime | undefined;
 
@@ -14,7 +14,7 @@ export function getWebhookRuntime(): Runtime {
   }
   const appConfig = readAppConfig();
   const photonConfig = readConfig();
-  const store = createFileStore(appConfig.storePath);
+  const store = createDefaultStore(appConfig.storePath);
   const now = () => new Date();
   const scheduler = new ReminderScheduler({
     store,

@@ -2,17 +2,22 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { navigate } from "./path.js";
 import {
+  buyAnyway,
   createCart,
   getCart,
   getCatalog,
   getConfig,
+  getGuard,
+  saveGuard,
   type CartResponse,
   type Decision,
+  type GuardSettings,
   type Kind,
   type Product,
   type PublicConfig,
 } from "./api.js";
 import { formatClock, formatCooling, formatLongDate, formatUsd } from "./format.js";
+import { guardSessionId } from "./session.js";
 
 const DEFAULT_IDS = ["phone-n1-128", "plan-unlimited", "acc-case"];
 
@@ -21,9 +26,13 @@ export function Checkout({ code }: { code: string | null }) {
   const [config, setConfig] = useState<PublicConfig | null>(null);
   const [selected, setSelected] = useState<string[]>(DEFAULT_IDS);
   const [demo, setDemo] = useState(true);
+  const [sessionId] = useState(guardSessionId);
+  const [guard, setGuard] = useState<GuardSettings | null>(null);
+  const [thresholdDollars, setThresholdDollars] = useState("100");
   const [cart, setCart] = useState<CartResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [buying, setBuying] = useState(false);
+  const [bypassing, setBypassing] = useState(false);
 
   useEffect(() => {
     let cancel = false;
@@ -45,6 +54,26 @@ export function Checkout({ code }: { code: string | null }) {
       cancel = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancel = false;
+    getGuard(sessionId)
+      .then((loaded) => {
+        if (cancel) {
+          return;
+        }
+        setGuard(loaded.settings);
+        setThresholdDollars(String(loaded.settings.thresholdCents / 100));
+      })
+      .catch((cause: unknown) => {
+        if (!cancel) {
+          setError(cause instanceof Error ? cause.message : "Could not load the guard.");
+        }
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [sessionId]);
 
   useEffect(() => {
     if (!code) {
@@ -88,7 +117,15 @@ export function Checkout({ code }: { code: string | null }) {
   }
 
   if (code && cart) {
-    return <LockedCheckout cart={cart} channel={config.channel} />;
+    return (
+        <LockedCheckout
+        cart={cart}
+        channel={config.channel}
+        bypassing={bypassing}
+        error={error}
+        onBuyAnyway={() => void skipLock(cart.code)}
+      />
+    );
   }
 
   if (code && error) {
@@ -112,10 +149,7 @@ export function Checkout({ code }: { code: string | null }) {
     <div className="layout">
       <section>
         <h1>Take a minute before this upgrade.</h1>
-        <p className="lede">
-          Buy starts a {formatCooling(config.coolingMs)} cooling-off lock. WaitMate asks about the phone you already
-          have, then says buy or wait in plain language.
-        </p>
+        <p className="lede">{guardSummary(guard, dueToday)}</p>
         {(["phone", "plan", "accessory"] as const).map((kind) => (
           <div key={kind} className="group">
             <h2>{kindLabel(kind)}</h2>
@@ -173,35 +207,82 @@ export function Checkout({ code }: { code: string | null }) {
           Then {formatUsd(monthly)} / month
         </p>
         <p className="pay-row">Synthetic card ···· 4242</p>
+        <GuardControl
+          guard={guard}
+          choices={config.cooldownChoicesMs}
+          thresholdDollars={thresholdDollars}
+          onThresholdDollars={setThresholdDollars}
+          onChange={(next) => void updateGuard(next)}
+        />
         <label className="demo-toggle">
           <input type="checkbox" checked={demo} onChange={(event) => setDemo(event.target.checked)} />
           Demo reminder: text me in about 1 minute instead of the real date
         </label>
         {error ? <p className="form-error">{error}</p> : null}
-        <button type="button" className="button" disabled={!hasPhone || buying} onClick={() => void placeOrder()}>
-          {buying ? "Starting the lock…" : "Buy"}
+        <button type="button" className="button" disabled={!hasPhone || buying || !guard} onClick={() => void placeOrder()}>
+          {buying ? "Placing the order…" : "Buy"}
         </button>
-        <p className="fine">Buy does not charge the card. It starts the cooling-off lock.</p>
+        <p className="fine">
+          {guard && willLock(guard, dueToday)
+            ? `Buy starts a ${formatCooling(guard.coolingMs)} cooling-off lock. No card is charged.`
+            : "Buy completes this synthetic order. No card is charged."}
+        </p>
       </aside>
     </div>
   );
 
+  async function updateGuard(next: GuardSettings): Promise<void> {
+    setGuard(next);
+    try {
+      setGuard(await saveGuard(sessionId, next));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save the guard.");
+    }
+  }
+
   async function placeOrder(): Promise<void> {
+    if (!guard) {
+      return;
+    }
     setBuying(true);
     setError(null);
     try {
-      const next = await createCart(selected, demo);
+      const next = await createCart(selected, demo, sessionId, guard);
       setCart(next);
       navigate(`/c/${next.code}`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not start the lock.");
+      setError(cause instanceof Error ? cause.message : "Could not start checkout.");
     } finally {
       setBuying(false);
     }
   }
+
+  async function skipLock(cartCode: string): Promise<void> {
+    setBypassing(true);
+    setError(null);
+    try {
+      setCart(await buyAnyway(cartCode));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not complete the order.");
+    } finally {
+      setBypassing(false);
+    }
+  }
 }
 
-function LockedCheckout({ cart, channel }: { cart: CartResponse; channel: PublicConfig["channel"] }) {
+function LockedCheckout({
+  cart,
+  channel,
+  bypassing,
+  error,
+  onBuyAnyway,
+}: {
+  cart: CartResponse;
+  channel: PublicConfig["channel"];
+  bypassing: boolean;
+  error: string | null;
+  onBuyAnyway: () => void;
+}) {
   const remaining = useRemaining(cart.coolingOffEndsAt);
   const duration = new Date(cart.coolingOffEndsAt).getTime() - new Date(cart.createdAt).getTime();
   const progress = duration > 0 ? remaining / duration : 0;
@@ -211,7 +292,7 @@ function LockedCheckout({ cart, channel }: { cart: CartResponse; channel: Public
     <div className="layout">
       <section>
         <h1>Cooling-off lock</h1>
-        <p className="lede">Cart {cart.code} is held. Checkout unlocks only after you confirm a buy with WaitMate.</p>
+        <p className="lede">Cart {cart.code} is held until WaitMate clears it, or you buy anyway.</p>
         <ul className="lines frozen">
           {cart.items.map((item) => (
             <li key={item.id}>
@@ -236,7 +317,8 @@ function LockedCheckout({ cart, channel }: { cart: CartResponse; channel: Public
       <aside className="summary lock">
         <Clock remaining={remaining} progress={progress} />
         {cart.decision ? <Why cart={cart} /> : <p>Text WaitMate the cart code. It will ask a few questions before it picks buy or wait.</p>}
-        <TextActions cart={cart} channel={channel} />
+        {error ? <p className="form-error">{error}</p> : null}
+        <TextActions cart={cart} channel={channel} bypassing={bypassing} onBuyAnyway={onBuyAnyway} />
       </aside>
     </div>
   );
@@ -308,7 +390,17 @@ function Why({ cart }: { cart: CartResponse }) {
   );
 }
 
-function TextActions({ cart, channel }: { cart: CartResponse; channel: PublicConfig["channel"] }) {
+function TextActions({
+  cart,
+  channel,
+  bypassing,
+  onBuyAnyway,
+}: {
+  cart: CartResponse;
+  channel: PublicConfig["channel"];
+  bypassing: boolean;
+  onBuyAnyway: () => void;
+}) {
   return (
     <div className="actions">
       {cart.smsLink ? (
@@ -331,11 +423,101 @@ function TextActions({ cart, channel }: { cart: CartResponse; channel: PublicCon
             : "Desk chat uses the same agent without iMessage."}
         </p>
       )}
+      <button type="button" className="button quiet" onClick={onBuyAnyway} disabled={bypassing}>
+        {bypassing ? "Completing the order…" : "Buy anyway"}
+      </button>
       <p className="code-line">
         Cart code <strong>{cart.code}</strong>
       </p>
     </div>
   );
+}
+
+function GuardControl({
+  guard,
+  choices,
+  thresholdDollars,
+  onThresholdDollars,
+  onChange,
+}: {
+  guard: GuardSettings | null;
+  choices: number[];
+  thresholdDollars: string;
+  onThresholdDollars: (value: string) => void;
+  onChange: (next: GuardSettings) => void;
+}) {
+  return (
+    <fieldset className="guard" disabled={!guard}>
+      <legend>WaitMate guard</legend>
+      <label className="demo-toggle">
+        <input
+          type="checkbox"
+          checked={guard?.enabled ?? true}
+          onChange={(event) => {
+            if (guard) {
+              onChange({ ...guard, enabled: event.target.checked });
+            }
+          }}
+        />
+        On
+      </label>
+      <label className="guard-row">
+        Threshold ($)
+        <input
+          type="number"
+          min={0}
+          step={1}
+          inputMode="decimal"
+          value={thresholdDollars}
+          onChange={(event) => {
+            onThresholdDollars(event.target.value);
+            if (!guard || event.target.value.trim() === "") {
+              return;
+            }
+            const dollars = Number(event.target.value);
+            if (!Number.isFinite(dollars) || dollars < 0) {
+              return;
+            }
+            onChange({ ...guard, thresholdCents: Math.round(dollars * 100) });
+          }}
+        />
+      </label>
+      <label className="guard-row">
+        Cooldown
+        <select
+          value={guard?.coolingMs ?? 600_000}
+          onChange={(event) => {
+            if (guard) {
+              onChange({ ...guard, coolingMs: Number(event.target.value) });
+            }
+          }}
+        >
+          {choices.map((ms) => (
+            <option key={ms} value={ms}>
+              {ms / 60_000} min
+            </option>
+          ))}
+        </select>
+      </label>
+    </fieldset>
+  );
+}
+
+function willLock(guard: GuardSettings | null, dueTodayCents: number): boolean {
+  return Boolean(guard?.enabled) && dueTodayCents >= (guard?.thresholdCents ?? 0);
+}
+
+function guardSummary(guard: GuardSettings | null, dueTodayCents: number): string {
+  if (!guard) {
+    return "Loading the WaitMate guard.";
+  }
+  if (!guard.enabled) {
+    return "The guard is off, so Buy completes this synthetic order.";
+  }
+  if (dueTodayCents < guard.thresholdCents) {
+    return "This cart is under the threshold, so Buy completes this synthetic order.";
+  }
+  return `The guard is on, so Buy starts a ${formatCooling(guard.coolingMs)} cooling-off lock.`;
 }
 
 function Receipt({ cart }: { cart: CartResponse }) {

@@ -72,13 +72,14 @@ export type Cart = {
   lastInboundMessageId: string | null;
   orderId: string | null;
   completedAt: string | null;
-  /** Length of this cart's cooling-off lock. */
+  /** Cooldown that was selected when this cart was created. */
   coolingMs: number;
-  /**
-   * Due-today price, in cents, at or above which a later checkout can cool off.
-   * Null means every cart locks. The current demo always locks.
-   */
-  lockThresholdCents: number | null;
+  /** Due-today threshold, in cents, that was selected when this cart was created. */
+  lockThresholdCents: number;
+  /** Whether the WaitMate guard was on when this cart was created. */
+  guardEnabled: boolean;
+  /** Set when the shopper uses Buy anyway. Chat unlock leaves this empty. */
+  buyAnywayAt: string | null;
 };
 
 export type ReasonCode =

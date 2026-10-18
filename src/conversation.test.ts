@@ -13,7 +13,16 @@ function sampleCart(code: string, demo = true): Cart {
   if (!items) {
     throw new Error("catalog missing");
   }
-  return createCart({ items, now: NOW, demo, coolingMs: 600_000, lockThresholdCents: null, code });
+  return createCart({
+    items,
+    now: NOW,
+    demo,
+    coolingMs: 600_000,
+    lockThresholdCents: 10_000,
+    guardEnabled: true,
+    lock: true,
+    code,
+  });
 }
 
 function run(cart: Cart, lines: string[]): { cart: Cart; results: ApplyResult[] } {

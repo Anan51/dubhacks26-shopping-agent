@@ -13,7 +13,9 @@ type CartBody = {
   demo: boolean;
   coolingOffEndsAt: string;
   coolingMs: number;
-  lockThresholdCents: number | null;
+  lockThresholdCents: number;
+  guardEnabled: boolean;
+  buyAnywayAt: string | null;
   createdAt: string;
   smsLink: string | null;
   deskPath: string;
@@ -84,7 +86,9 @@ describe("checkout demo", () => {
     assert.equal(cart.demo, true);
     assert.equal(new Date(cart.coolingOffEndsAt).getTime() - new Date(cart.createdAt).getTime(), 600_000);
     assert.equal(cart.coolingMs, 600_000);
-    assert.equal(cart.lockThresholdCents, null);
+    assert.equal(cart.lockThresholdCents, 10_000);
+    assert.equal(cart.guardEnabled, true);
+    assert.equal(cart.buyAnywayAt, null);
     assert.equal(cart.smsLink, `sms:+15550001111&body=${encodeURIComponent(cart.textMessage)}`);
     assert.equal(cart.deskPath, `/dev?cart=${cart.code}`);
 
@@ -134,12 +138,83 @@ describe("checkout demo", () => {
     const done = (await get(`/api/carts/${buyCart.code}`)) as CartBody;
     assert.equal(done.status, "completed");
     assert.equal(done.orderId, `WM-${buyCart.code.slice(0, 4)}`);
+    assert.equal(done.buyAnywayAt, null);
+  });
+
+  it("skips the lock under the threshold or with the guard off, and Buy anyway logs the unlock", async () => {
+    const sessionId = "guard:soft-lock-1";
+    const saved = await put("/api/guard", {
+      sessionId,
+      settings: { enabled: false, thresholdCents: 10_000, coolingMs: 600_000 },
+    });
+    assert.equal(saved.status, 200);
+
+    const open = await post("/api/carts", {
+      itemIds: ["phone-n1-128", "plan-unlimited", "acc-case"],
+      demo: false,
+      sessionId,
+    });
+    const skipped = open.body as CartBody;
+    assert.equal(open.status, 201);
+    assert.equal(skipped.status, "completed");
+    assert.equal(skipped.guardEnabled, false);
+    assert.equal(skipped.buyAnywayAt, null);
+    assert.ok(skipped.orderId);
+
+    const due = 82_800;
+    const held = await post("/api/carts", {
+      itemIds: ["phone-n1-128", "plan-unlimited", "acc-case"],
+      demo: false,
+      sessionId,
+      guard: { enabled: true, thresholdCents: due, coolingMs: 120_000 },
+    });
+    const locked = held.body as CartBody;
+    assert.equal(held.status, 201);
+    assert.equal(locked.status, "cooling");
+    assert.equal(locked.coolingMs, 120_000);
+    assert.equal(new Date(locked.coolingOffEndsAt).getTime() - new Date(locked.createdAt).getTime(), 120_000);
+
+    const under = await post("/api/carts", {
+      itemIds: ["phone-n1-128", "acc-case"],
+      demo: false,
+      guard: { enabled: true, thresholdCents: due + 1, coolingMs: 300_000 },
+    });
+    assert.equal((under.body as CartBody).status, "completed");
+
+    const bypass = await post(`/api/carts/${locked.code}/buy-anyway`, {});
+    const finished = bypass.body as CartBody;
+    assert.equal(bypass.status, 200);
+    assert.equal(finished.status, "completed");
+    assert.equal(finished.orderId, `WM-${locked.code.slice(0, 4)}`);
+    assert.ok(finished.buyAnywayAt);
+
+    const again = await post(`/api/carts/${locked.code}/buy-anyway`, {});
+    assert.equal((again.body as CartBody).buyAnywayAt, finished.buyAnywayAt);
+
+    const loaded = (await get(`/api/guard?sessionId=${sessionId}`)) as { settings: { enabled: boolean; coolingMs: number } };
+    assert.equal(loaded.settings.enabled, true);
+    assert.equal(loaded.settings.coolingMs, 120_000);
+
+    const rejected = await put("/api/guard", {
+      sessionId,
+      settings: { enabled: true, thresholdCents: 10_000, coolingMs: 45_000 },
+    });
+    assert.equal(rejected.status, 400);
   });
 
   async function get(pathname: string): Promise<unknown> {
     const response = await fetch(`${base}${pathname}`);
     assert.equal(response.ok, true);
     return response.json() as Promise<unknown>;
+  }
+
+  async function put(pathname: string, body: unknown): Promise<{ status: number; body: unknown }> {
+    const response = await fetch(`${base}${pathname}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return { status: response.status, body: (await response.json()) as unknown };
   }
 
   async function post(pathname: string, body: unknown): Promise<{ status: number; body: unknown }> {

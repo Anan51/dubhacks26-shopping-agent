@@ -3,12 +3,13 @@ import { randomUUID } from "node:crypto";
 import express, { type NextFunction, type Request, type Response } from "express";
 
 import { handleWebhook } from "../api/webhook.js";
-import { createCart } from "./carts.js";
+import { completeOrder, createCart, dueTodayCents } from "./carts.js";
 import { CATALOG, itemsForIds } from "./catalog.js";
 import type { OutboundMessage } from "./channel.js";
 import type { PhotonChannel } from "./channels/photon.js";
 import { readConfig } from "./config.js";
 import { handleIncomingEvent } from "./handle-message.js";
+import { COOLDOWN_CHOICES_MS, defaultGuardSettings, parseGuardSettings, shouldLock, type GuardSettings } from "./guard.js";
 import { deskChatUrl, prefilledText, textWaitMateLink } from "./links.js";
 import { polishPhrase } from "./phrase.js";
 import { ReminderScheduler } from "./reminders.js";
@@ -17,6 +18,7 @@ import type { Store } from "./store.js";
 import type { Cart, Decision } from "./types.js";
 
 const DESK_ID = /^desk:[A-Za-z0-9-]{8,80}$/;
+const GUARD_ID = /^guard:[A-Za-z0-9-]{8,80}$/;
 
 export type AppDeps = {
   store: Store;
@@ -40,6 +42,10 @@ export type RunningApp = {
 
 export function createApp(deps: AppDeps): RunningApp {
   const now = deps.now ?? (() => new Date());
+  const guardDefaults = defaultGuardSettings({
+    coolingMs: deps.coolingMs,
+    thresholdCents: deps.lockThresholdCents,
+  });
 
   async function routeSend(message: OutboundMessage): Promise<void> {
     if (message.conversationId.startsWith("desk:")) {
@@ -94,6 +100,8 @@ export function createApp(deps: AppDeps): RunningApp {
       agentHandle: deps.agentHandle,
       coolingMs: deps.coolingMs,
       lockThresholdCents: deps.lockThresholdCents,
+      guardDefaults,
+      cooldownChoicesMs: COOLDOWN_CHOICES_MS,
       demoReminderMs: deps.demoReminderMs,
       demoDefault: deps.demoDefault,
       deskChat: true,
@@ -117,13 +125,32 @@ export function createApp(deps: AppDeps): RunningApp {
       return;
     }
     const demo = body.demo === true || (body.demo === undefined && deps.demoDefault);
+    const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
+    if (sessionId && !GUARD_ID.test(sessionId)) {
+      res.status(400).json({ error: "sessionId must look like guard:<id>." });
+      return;
+    }
+    const posted = body.guard === undefined ? undefined : parseGuardSettings(body.guard);
+    if (posted && "error" in posted) {
+      res.status(400).json({ error: posted.error });
+      return;
+    }
+    const settings = resolveGuard(deps.store, sessionId, posted, guardDefaults);
+    const due = dueTodayCents(items);
+    const lock = shouldLock({
+      enabled: settings.enabled,
+      dueTodayCents: due,
+      thresholdCents: settings.thresholdCents,
+    });
     try {
       const cart = createCart({
         items,
         now: now(),
         demo,
-        coolingMs: deps.coolingMs,
-        lockThresholdCents: deps.lockThresholdCents,
+        coolingMs: settings.coolingMs,
+        lockThresholdCents: settings.thresholdCents,
+        guardEnabled: settings.enabled,
+        lock,
         taken: (code) => deps.store.getCart(code) !== undefined,
       });
       deps.store.saveCart(cart);
@@ -131,6 +158,53 @@ export function createApp(deps: AppDeps): RunningApp {
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : "Could not start checkout." });
     }
+  });
+
+  app.get("/api/guard", (req, res) => {
+    const sessionId = typeof req.query.sessionId === "string" ? req.query.sessionId : "";
+    if (!GUARD_ID.test(sessionId)) {
+      res.status(400).json({ error: "sessionId must look like guard:<id>." });
+      return;
+    }
+    res.json({
+      synthetic: true,
+      sessionId,
+      settings: deps.store.getGuard(sessionId) ?? guardDefaults,
+      cooldownChoicesMs: COOLDOWN_CHOICES_MS,
+    });
+  });
+
+  app.put("/api/guard", (req, res) => {
+    const body = isRecord(req.body) ? req.body : {};
+    const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
+    if (!GUARD_ID.test(sessionId)) {
+      res.status(400).json({ error: "sessionId must look like guard:<id>." });
+      return;
+    }
+    const parsed = parseGuardSettings(body.settings ?? body.guard);
+    if ("error" in parsed) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+    deps.store.saveGuard(sessionId, parsed);
+    res.json({ synthetic: true, sessionId, settings: parsed, cooldownChoicesMs: COOLDOWN_CHOICES_MS });
+  });
+
+  app.post("/api/carts/:code/buy-anyway", (req, res) => {
+    const code = req.params.code?.toUpperCase();
+    if (!code) {
+      res.status(404).json({ error: "Cart not found." });
+      return;
+    }
+    const cart = deps.store.getCart(code);
+    if (!cart) {
+      res.status(404).json({ error: "Cart not found." });
+      return;
+    }
+    completeOrder(cart, now(), "buy-anyway");
+    deps.store.saveCart(cart);
+    scheduler.disarm(cart.code);
+    res.json(publicCart(cart, deps.agentHandle));
   });
 
   app.get("/api/carts/:code", (req, res) => {
@@ -189,6 +263,24 @@ export function createApp(deps: AppDeps): RunningApp {
   });
 
   return { app, runtime, scheduler };
+}
+
+function resolveGuard(
+  store: Store,
+  sessionId: string,
+  posted: GuardSettings | undefined,
+  defaults: GuardSettings,
+): GuardSettings {
+  if (posted) {
+    if (sessionId) {
+      store.saveGuard(sessionId, posted);
+    }
+    return posted;
+  }
+  if (sessionId) {
+    return store.getGuard(sessionId) ?? defaults;
+  }
+  return defaults;
 }
 
 function publicCart(cart: Cart, agentHandle: string | null) {

@@ -36,7 +36,8 @@ export type AppConfig = {
   lockThresholdCents: number | null;
   demoReminderMs: number;
   demoDefault: boolean;
-  storePath: string;
+  /** Null uses the in-memory store. A path selects the JSON file store. */
+  storePath: string | null;
   channel: "auto" | "photon" | "stub";
   xaiApiKey?: string;
   agentHandle: string | null;
@@ -54,7 +55,7 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     lockThresholdCents: centsFrom(env.WAITMATE_LOCK_THRESHOLD_CENTS),
     demoReminderMs: numberFrom(env.WAITMATE_DEMO_REMINDER_MS, 60_000),
     demoDefault: env.WAITMATE_DEMO === "1",
-    storePath: env.WAITMATE_STORE_PATH?.trim() || "data/waitmate.json",
+    storePath: env.WAITMATE_STORE_PATH?.trim() || null,
     channel,
     ...(xaiApiKey ? { xaiApiKey } : {}),
     agentHandle: env.PHOTON_AGENT_HANDLE?.trim() || null,

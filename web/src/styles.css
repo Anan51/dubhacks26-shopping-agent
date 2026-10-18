@@ -270,6 +270,36 @@ h2 {
   line-height: 1.4;
 }
 
+.guard {
+  margin: 0.4rem 0 0.2rem;
+  padding: 0.75rem 0.8rem 0.2rem;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: var(--paper);
+}
+
+.guard legend {
+  padding: 0 0.3rem;
+  font-family: Georgia, serif;
+}
+
+.guard-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.45rem 0;
+}
+
+.guard input[type="number"],
+.guard select {
+  width: 7.5rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 0.55rem;
+  background: white;
+}
+
 .button {
   display: inline-flex;
   justify-content: center;

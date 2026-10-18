@@ -17,8 +17,8 @@ npm run dev
 
 Open http://localhost:4321.
 
-1. The shop is prefilled with a synthetic phone, plan, and case. Leave **Demo reminder** checked.
-2. Press **Buy**. The page locks for the cooling-off length (`WAITMATE_COOLING_MS`, default 10 minutes) and shows a countdown. `WAITMATE_LOCK_THRESHOLD_CENTS` is stored on the cart for a later price gate. Empty means every cart still locks, and there is no bypass.
+1. The shop is prefilled with a synthetic phone, plan, and case. The **WaitMate guard** starts on, at $100 due today, with a 10-minute cooldown. Leave **Demo reminder** checked. The prefilled cart is over $100, so it locks.
+2. Press **Buy**. Over the threshold, the page shows a countdown. Under the threshold, or with the guard off, Buy completes the synthetic order with no lock. **Buy anyway** on the lock screen completes it and records that on the cart.
 3. Press **Text WaitMate**. With no Photon number configured, that opens the desk chat and prefills `Hey WaitMate, cart ABCDEF`. Each cart has its own thread.
 4. Send that text, then answer the questions (or press **Run wait script** / **Run buy script**).
 5. **Wait** saves the cart and, in demo mode, texts a checkout link into the same desk chat about a minute later.
@@ -102,7 +102,7 @@ npm start
 | `web/` | React checkout and desk chat |
 | `api/webhook.ts` | Vercel `message.received` route |
 
-Carts and desk transcripts live in `data/waitmate.json` (gitignored). The judging demo is this one process. A Vercel webhook is a separate process, so it does not see carts created on the laptop.
+Carts, desk transcripts, and guard settings live in the process store. The default is in-memory. Set `WAITMATE_STORE_PATH` to use a JSON file instead. A Vercel webhook is a separate process, so it does not see carts created on the laptop.
 
 ## Photon, not verified here
 

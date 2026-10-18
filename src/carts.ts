@@ -52,7 +52,10 @@ export function createCart(input: {
   now: Date;
   demo: boolean;
   coolingMs: number;
-  lockThresholdCents: number | null;
+  lockThresholdCents: number;
+  guardEnabled: boolean;
+  /** False completes the synthetic order immediately. */
+  lock: boolean;
   code?: string;
   taken?: (code: string) => boolean;
 }): Cart {
@@ -60,14 +63,16 @@ export function createCart(input: {
     throw new Error("Choose a phone before buying.");
   }
   const code = input.code ?? uniqueCode(input.taken);
-  return {
+  const createdAt = input.now.toISOString();
+  const cart: Cart = {
     code,
     items: input.items,
-    createdAt: input.now.toISOString(),
+    createdAt,
     status: "cooling",
     coolingOffEndsAt: new Date(input.now.getTime() + input.coolingMs).toISOString(),
     coolingMs: input.coolingMs,
     lockThresholdCents: input.lockThresholdCents,
+    guardEnabled: input.guardEnabled,
     demo: input.demo,
     signals: {},
     decision: null,
@@ -80,7 +85,30 @@ export function createCart(input: {
     lastInboundMessageId: null,
     orderId: null,
     completedAt: null,
+    buyAnywayAt: null,
   };
+  if (!input.lock) {
+    cart.status = "completed";
+    cart.orderId = `WM-${code.slice(0, 4)}`;
+    cart.completedAt = createdAt;
+    cart.coolingOffEndsAt = createdAt;
+  }
+  return cart;
+}
+
+/** Shared unlock for chat confirmation and Buy anyway. */
+export function completeOrder(cart: Cart, now: Date, source: "chat" | "buy-anyway"): Cart {
+  if (cart.status === "completed") {
+    return cart;
+  }
+  cart.status = "completed";
+  cart.orderId = `WM-${cart.code.slice(0, 4)}`;
+  cart.completedAt = now.toISOString();
+  cart.reminderFireAt = null;
+  if (source === "buy-anyway") {
+    cart.buyAnywayAt = now.toISOString();
+  }
+  return cart;
 }
 
 function uniqueCode(taken: ((code: string) => boolean) | undefined): string {
