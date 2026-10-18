@@ -1,5 +1,6 @@
 import { interpretBag, parsePriceCents, type InterpretedBag } from "../../src/apple-bag.js";
 import { formatUsd } from "../../src/format.js";
+import { AMAZON_BAG_ITEM, AMAZON_BAG_TOTAL } from "./stores/amazon.js";
 import { mutationIsOurs } from "./page-observer.js";
 
 export type BagLineItem = {
@@ -46,7 +47,7 @@ export function bagParseKey(bag: PageBag): string | null {
   if (bag.totalCents == null || bag.itemNames.length === 0) {
     return null;
   }
-  return `${bag.itemNames.join("\n")}|${bag.totalCents}`;
+  return `${bag.itemNames.join("\n")}|${bag.quantity ?? ""}|${bag.totalCents}`;
 }
 
 /** Post only when a re-read differs from the bag already on the server. */
@@ -288,8 +289,8 @@ type BagTimer = {
  * Header and footer mutations stay outside this set.
  */
 export function bagWatchTargets(root: ParentNode): Element[] {
-  const item = root.querySelector('li[data-autom^="bag-item-"], li.rs-bag-item');
-  const total = root.querySelector('[data-autom="bagtotalvalue"]');
+  const item = root.querySelector('li[data-autom^="bag-item-"], li.rs-bag-item') ?? root.querySelector(AMAZON_BAG_ITEM);
+  const total = root.querySelector('[data-autom="bagtotalvalue"]') ?? root.querySelector(AMAZON_BAG_TOTAL);
   if (!item && !total) {
     return [];
   }

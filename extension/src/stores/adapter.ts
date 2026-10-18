@@ -1,12 +1,18 @@
 export interface BagItem {
   item: string;
+  /** Line total in integer cents (unit price times quantity). */
   price: number;
   category: string;
+  /** Units on this line, when the store shows one. */
+  quantity?: number;
 }
 
 export interface Bag {
   items: BagItem[];
+  /** Bag total in integer cents. */
   total: number;
+  /** Units of the first line, for the same card Apple shows. */
+  quantity?: number;
 }
 
 export interface StoreAdapter {

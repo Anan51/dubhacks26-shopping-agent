@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { applePage, shouldEngage } from "./sites.js";
+import { applePage, isFallbackBag, isLocalAmazonFixture, shouldEngage } from "./sites.js";
 
 describe("apple pages", () => {
   it("matches the bag and regional checkout hosts", () => {
@@ -28,6 +28,13 @@ describe("apple pages", () => {
     assert.equal(shouldEngage("http://127.0.0.1:4321/fallback", []), true);
     assert.equal(shouldEngage("http://127.0.0.1:4321/fallback/cable", []), true);
     assert.equal(shouldEngage("http://localhost:4321/fallback", []), true);
+    assert.equal(shouldEngage("http://127.0.0.1:4321/amazon", []), false);
     assert.equal(shouldEngage("http://127.0.0.1:4321/dev", []), false);
+    assert.equal(applePage("http://127.0.0.1:4321/amazon"), null);
+    assert.equal(isLocalAmazonFixture("http://127.0.0.1:4321/amazon"), true);
+    assert.equal(isLocalAmazonFixture("http://localhost:4321/amazon/"), true);
+    assert.equal(isLocalAmazonFixture("https://www.amazon.com/gp/cart/view.html"), false);
+    assert.equal(isFallbackBag("http://127.0.0.1:4321/amazon"), true);
+    assert.equal(isFallbackBag("http://127.0.0.1:4321/fallback"), true);
   });
 });

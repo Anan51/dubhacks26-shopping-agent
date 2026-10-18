@@ -12,7 +12,7 @@ Three minutes, no Grok key. Replies happen in iMessage. Simmer never clicks Appl
 6. Chrome → `chrome://extensions` → Developer mode → Load unpacked → `extension/dist`
 7. Extension options: local server `http://127.0.0.1:4321`. Leave the opt-out list empty. apple.com is on until you add it.
 
-The extension only matches the Apple bag, Apple checkout hosts, and `http://127.0.0.1:4321/fallback` (plus `/fallback/cable` and localhost).
+The extension only matches the Apple bag, Apple checkout hosts, Amazon cart and checkout, and `http://127.0.0.1:4321/fallback` (plus `/fallback/cable`, `/amazon`, and localhost).
 
 A shopper with nothing on file starts at impulsiveness **4.5** of 8 (soft). The legacy base added to the grade is **2**. Purchase score = that base + justification grade, clamped to 1–5. The corner card does not show `Impulsiveness N of 8`. That sentence is in the explanation after a non-zero grade.
 
@@ -58,6 +58,7 @@ To show opt-out: extension options, add `127.0.0.1` (or `apple.com`), save, relo
 | What failed | What you use |
 | --- | --- |
 | apple.com will not load | `http://127.0.0.1:4321/fallback` — example phone, $1,200, unnecessary, same extension |
+| amazon.com should not be opened | `http://127.0.0.1:4321/amazon` — headphones and a case, $51.98, same card and the same checkout gate. The page does not continue to Amazon |
 | Need a necessary buy | `http://127.0.0.1:4321/fallback/cable` — USB-C charge cable, $19, no lock |
 | Bag text cannot be read | The overlay says **Couldn't read bag**. No example phone is created |
 | No phone linked | The overlay says to text `link <userId>` to Simmer's iMessage number |

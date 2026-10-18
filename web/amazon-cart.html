@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Simmer Amazon cart</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: Georgia, "Iowan Old Style", serif;
+        background: #f6efe4;
+        color: #3a2416;
+      }
+      main {
+        max-width: 40rem;
+        margin: 2rem auto;
+        padding: 1.5rem;
+      }
+      .note {
+        background: #f3e2cf;
+        padding: 0.8rem 1rem;
+        border-radius: 0.8rem;
+      }
+      button,
+      input[type="button"] {
+        font: inherit;
+        margin-right: 0.5rem;
+        border: 0;
+        border-radius: 999px;
+        padding: 0.7rem 1rem;
+        background: #8a4b24;
+        color: white;
+      }
+      #buy-now {
+        background: #111;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="note">
+        Local Amazon cart. Example data. Simmer reads the item names, quantities, and subtotal in cents, then waits.
+        This page never takes a card and never continues to Amazon.
+      </p>
+      <h1>Shopping Cart</h1>
+      <div id="amazon-bag">
+      <div id="sc-active-cart">
+        <div data-asin="B001" class="sc-list-item" data-quantity="2">
+          <span class="sc-product-title">Noise-cancelling headphones</span>
+          <span class="a-price sc-product-price" data-a-strike="true"><span class="a-offscreen">$40.00</span></span>
+          <span class="a-price"><span class="a-offscreen">$19.99</span></span>
+          <select name="quantity" aria-hidden="true"><option value="9" selected>9</option></select>
+          <select name="quantity">
+            <option value="1">1</option>
+            <option value="2" selected>2</option>
+          </select>
+        </div>
+        <div data-asin="B002" class="sc-list-item">
+          <span class="a-truncate-full">Phone case</span>
+          <span class="a-price"><span class="a-offscreen">$12.00</span></span>
+          <span class="a-dropdown-prompt">Qty: 1</span>
+        </div>
+        <span id="sc-subtotal-amount-activecart"><span class="a-offscreen">$51.98</span></span>
+      </div>
+      </div>
+      <p>
+        <input id="proceed" name="proceedToRetailCheckout" type="button" value="Proceed to checkout" />
+        <input id="buy-now" name="submit.buy-now" type="button" value="Buy Now" />
+        <button type="button" id="remove">Delete</button>
+      </p>
+      <nav>
+        <input id="nav-proceed" name="proceedToRetailCheckout" type="button" value="Proceed to checkout" />
+      </nav>
+      <footer>
+        <input id="footer-buy" type="button" value="Buy Now" />
+      </footer>
+      <p id="result" hidden>The button is uncovered. No order was placed.</p>
+    </main>
+    <script>
+      function uncover() {
+        document.getElementById("result").hidden = false;
+      }
+      document.getElementById("proceed").addEventListener("click", uncover);
+      document.getElementById("buy-now").addEventListener("click", uncover);
+    </script>
+  </body>
+</html>

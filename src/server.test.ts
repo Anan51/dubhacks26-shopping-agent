@@ -222,6 +222,17 @@ describe("apple bag lock", () => {
     assert.match(html, /\$1,200\.00/);
     assert.match(html, /Check Out/);
     assert.doesNotMatch(html, /Visa/);
+
+    const amazon = await fetch(`${base}/amazon`);
+    assert.equal(amazon.status, 200);
+    const amazonHtml = await amazon.text();
+    assert.match(amazonHtml, /Noise-cancelling headphones/);
+    assert.match(amazonHtml, /Phone case/);
+    assert.match(amazonHtml, /\$51\.98/);
+    assert.match(amazonHtml, /Proceed to checkout/);
+    assert.match(amazonHtml, /Buy Now/);
+    assert.doesNotMatch(amazonHtml, /Visa/);
+    assert.doesNotMatch(amazonHtml, /amazon\.com\/gp\/buy/);
   });
 
   async function get(path: string): Promise<unknown> {

@@ -203,6 +203,10 @@ export function createApp(deps: AppDeps): RunningApp {
     res.type("html").send(readFileSync(path.join(process.cwd(), "web", "fallback-cable.html"), "utf8"));
   });
 
+  app.get("/amazon", (_req, res) => {
+    res.type("html").send(readFileSync(path.join(process.cwd(), "web", "amazon-cart.html"), "utf8"));
+  });
+
   app.get("/api/config", (_req, res) => {
     res.json({
       synthetic: true,
