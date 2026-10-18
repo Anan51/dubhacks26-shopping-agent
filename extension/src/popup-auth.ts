@@ -189,9 +189,10 @@ export function mountPopupAuth(
       return;
     }
     viewEpoch += 1;
+    const rejectedStoredToken = announcedId === null && failedToken !== null;
     sessionToken = null;
     await clearStoredToken();
-    showSignedOut();
+    showSignedOut(rejectedStoredToken);
   }
 
   async function showSignedIn(account: { id: string; email: string; token: string | null }): Promise<void> {
@@ -221,13 +222,16 @@ export function mountPopupAuth(
     }
   }
 
-  function showSignedOut(): void {
+  function showSignedOut(notifyWhenUnannounced = false): void {
     form.hidden = false;
     signed.hidden = true;
     who.textContent = "";
     survey.hide();
     hideAccountPanels();
     if (announcedId === null) {
+      if (notifyWhenUnannounced) {
+        hooks?.onAuthChange?.(null);
+      }
       return;
     }
     announcedId = null;
