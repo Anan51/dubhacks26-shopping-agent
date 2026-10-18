@@ -61,3 +61,7 @@ The manifest matches the Apple bag (`/shop/bag`, including regional paths), `sec
 - Trade-in values and the $35 financing balance are example data, labeled on screen.
 - The store is in memory unless `WAITMATE_STORE_PATH` is set.
 - Email login and Backboard memory stay off until `MONGODB_URI`, `JWT_SECRET`, and `BACKBOARD_API_KEY` are set. See [AUTH.md](AUTH.md).
+
+## Regret matching
+
+When `BACKBOARD_API_KEY` is set, scoring searches that shopper's assistant for similar regrets. The search score is a distance, and 0 is an identical memory. A hit counts when the memory is a regret, `categoryForItem` puts it in the same category as the bag, and the distance is at most `REGRET_SEARCH_MAX_DISTANCE`. The default is `0.7`. An unset value, or a value outside 0 to 1, falls back to `0.7`. When both sides are `other`, the names also have to share a token. The search waits 3.5 seconds. A slow or failed search counts as nothing, so the regret signal stays at zero. Regrets only raise the score. Kept purchases never lower it.
