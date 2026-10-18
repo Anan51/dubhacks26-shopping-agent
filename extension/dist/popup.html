@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Simmer</title>
+    <style>
+      body {
+        margin: 0;
+        width: 320px;
+        font-family: Georgia, "Iowan Old Style", serif;
+        background: #f6efe4;
+        color: #3a2416;
+      }
+      header, main { padding: 0.8rem 0.9rem; }
+      header { border-bottom: 1px solid #eadccb; }
+      h1 { font-size: 1.15rem; margin: 0.15rem 0 0; }
+      .kicker, .fine { color: #7a5b45; font-size: 0.78rem; margin: 0; }
+      ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
+      button.card {
+        width: 100%;
+        text-align: left;
+        font: inherit;
+        background: #fffaf3;
+        border: 1px solid #eadccb;
+        border-radius: 0.8rem;
+        padding: 0.55rem 0.65rem;
+        color: inherit;
+        cursor: pointer;
+      }
+      button.card strong { display: block; }
+      .line { color: #8a4b24; }
+      dl { margin: 0.45rem 0 0; }
+      dt { color: #7a5b45; font-size: 0.72rem; }
+      dd { margin: 0 0 0.35rem; }
+      .warn { font-size: 0.75rem; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <p class="kicker">Simmer</p>
+      <h1 id="state">Marinating</h1>
+      <p class="fine">Unlock only re-enables Apple's button. Example data, not a carrier quote.</p>
+    </header>
+    <main>
+      <ul id="list"></ul>
+      <p id="empty" class="fine" hidden>No bag yet. Open a checkout page.</p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
