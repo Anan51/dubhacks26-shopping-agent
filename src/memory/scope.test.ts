@@ -286,6 +286,21 @@ describe("memory scope", () => {
         assert.deepEqual(client.calls, []);
       }
     }
+
+    const secret = record(USER, "regret", "secret-regret-from-a", null);
+    const unrelated = record(USER, "goal", "b only wants to wait", null);
+    const local = searchClient([]);
+    const narrowed = await searchMemoriesForCurrentUser(
+      request({ id: USER }, { body: { query: "secret-regret-from-a" } }),
+      {
+        directory: directoryOf(account(USER, null)),
+        client: local,
+        index: listing([unrelated, secret]),
+        remote: false,
+      },
+    );
+    assert.deepEqual(narrowed, [secret]);
+    assert.deepEqual(local.calls, []);
   });
 });
 

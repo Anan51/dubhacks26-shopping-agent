@@ -212,7 +212,8 @@ function matchesAnyQueryToken(memory: MemoryRecord, query: string): boolean {
   return query
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .filter((token) => token.length > 0)
+    // A one-letter piece, such as the "a" in "secret-regret-from-a", matches inside unrelated words.
+    .filter((token) => token.length >= 2)
     .some((token) => haystack.includes(token));
 }
 
