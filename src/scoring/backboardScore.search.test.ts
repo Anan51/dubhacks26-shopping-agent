@@ -382,6 +382,31 @@ describe("regret search scoring", { concurrency: false }, () => {
     assert.equal(macbookCross.score, 4.5);
   });
 
+  it("does not treat a shared stopword as overlap on an other bag", async () => {
+    const ada = await User.create({
+      email: "search-stopwords@example.com",
+      passwordHash: HASH,
+      hourlyRate: 30,
+      weeklyBudget: 500,
+      backboardAssistantId: "asst-stopwords",
+    });
+    const blackMug: ImpulseItem = { item: "black mug", category: "other", price: 12, necessary: false };
+    const colorOnly = await computeImpulseScore(ada.id, blackMug, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [hit("regretted purchase: black socks (other, $8)", 0.2)]),
+    });
+    assert.equal(colorOnly.score, 4.5);
+    assert.equal(colorOnly.why, null);
+
+    const hikingSocks: ImpulseItem = { item: "wool hiking socks", category: "other", price: 16, necessary: false };
+    const sharedNoun = await computeImpulseScore(ada.id, hikingSocks, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [hit("regretted purchase: wool socks (other, $12)", 0.2)]),
+    });
+    assert.ok(sharedNoun.score > 4.5);
+    assert.equal(sharedNoun.why, "You regretted a similar purchase before.");
+  });
+
   it("keeps a necessary cart and a search with no hits at 4.5", async () => {
     const ada = await User.create({
       email: "search-demo-path@example.com",
@@ -567,6 +592,21 @@ describe("regret search scoring", { concurrency: false }, () => {
     });
     assert.equal(missed.score, 4.5);
     assert.equal(missed.why, null);
+  });
+
+  it("files buds, tabs, and books before the phone keywords", () => {
+    assert.equal(categoryForItem("Galaxy Buds 3"), "audio");
+    assert.equal(categoryForItem("Pixel Buds Pro"), "audio");
+    assert.equal(categoryForItem("Galaxy Tab S9"), "tablet");
+    assert.equal(categoryForItem("Pixel Tablet"), "tablet");
+    assert.equal(categoryForItem("Galaxy Book"), "computer");
+    assert.equal(categoryForItem("Chromebook"), "computer");
+    assert.equal(categoryForItem("Galaxy Watch 7"), "watch");
+    assert.equal(categoryForItem("Pixel 9"), "phone");
+    assert.equal(categoryForItem("Galaxy S25 Ultra"), "phone");
+    assert.equal(categoryForItem("iPhone 17 Pro"), "phone");
+    assert.equal(categoryForItem("Android phone"), "phone");
+    assert.equal(categoryForItem("tablet"), "tablet");
   });
 
   it("falls back to 4.5 when the regret search times out", async () => {
