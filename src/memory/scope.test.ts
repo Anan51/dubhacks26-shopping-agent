@@ -180,7 +180,7 @@ describe("memory scope", () => {
       {
         id: null,
         content: "Regret: Bought noise-cancelling headphones for a flight",
-        score: 0.52,
+        score: 0.36,
         createdAt: null,
       },
     ]);
@@ -382,7 +382,9 @@ describe("memory scope", () => {
       remote: true,
     };
     for (const query of ["wool socks", "kitchen blender"]) {
-      const found = await searchMemoriesForCurrentUser(request({ id: USER }, { body: { query } }), deps);
+      const found = await searchWithDistance("0.7", () =>
+        searchMemoriesForCurrentUser(request({ id: USER }, { body: { query } }), deps),
+      );
       assert.deepEqual(found, []);
     }
   });
@@ -396,43 +398,47 @@ describe("memory scope", () => {
       index: listing([other, monitors, headphones]),
       remote: true,
     };
-    const found = await searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "headphones monitors" } }), {
-      ...deps,
-      client: searchClient([
-        { id: "bb-phones", content: "Regret: noise-cancelling headphones", score: 0.7, createdAt: null },
-        { id: "bb-monitors", content: "Goal: studio monitors", score: 0.71, createdAt: null },
-      ]),
-    });
+    const found = await searchWithDistance("0.7", () =>
+      searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "headphones monitors" } }), {
+        ...deps,
+        client: searchClient([
+          { id: "bb-phones", content: "Regret: noise-cancelling headphones", score: 0.7, createdAt: null },
+          { id: "bb-monitors", content: "Goal: studio monitors", score: 0.71, createdAt: null },
+        ]),
+      }),
+    );
     assert.deepEqual(found, [headphones]);
 
-    const missingScore = await searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "headphones monitors" } }), {
-      ...deps,
-      client: searchClient([
-        { id: "bb-phones", content: "Regret: noise-cancelling headphones", score: null, createdAt: null },
-        { id: "bb-monitors", content: "Goal: studio monitors", score: 0.9, createdAt: null },
-      ]),
-    });
+    const missingScore = await searchWithDistance("0.7", () =>
+      searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "headphones monitors" } }), {
+        ...deps,
+        client: searchClient([
+          { id: "bb-phones", content: "Regret: noise-cancelling headphones", score: null, createdAt: null },
+          { id: "bb-monitors", content: "Goal: studio monitors", score: 0.9, createdAt: null },
+        ]),
+      }),
+    );
     assert.deepEqual(missingScore, [headphones]);
   });
 
   it("honors REGRET_SEARCH_MAX_DISTANCE and still returns only owned rows", async () => {
     const monitors = record(USER, "regret", "studio monitors", "bb-monitors");
-    const other = record(OTHER, "regret", "studio monitors", "bb-other");
+    const other = record(OTHER, "regret", "wool socks for winter", "bb-other");
     const depsFor = (score: number) => ({
       directory: directoryOfUsers([account(USER, "asst-ada"), account(OTHER, "asst-other")]),
       client: searchClient([
         { id: "bb-monitors", content: "Regret: studio monitors", score, createdAt: null },
-        { id: "bb-other", content: "Regret: studio monitors", score: 0.01, createdAt: null },
+        { id: "bb-other", content: "Regret: wool socks for winter", score: 0.01, createdAt: null },
       ]),
       index: listing([other, monitors]),
       remote: true,
     });
-    const query = request({ id: USER }, { body: { query: "wool socks" } });
+    const query = request({ id: USER }, { body: { query: "kitchen blender" } });
 
-    assert.deepEqual(await searchMemoriesForCurrentUser(query, depsFor(0.85)), []);
+    assert.deepEqual(await searchWithDistance("0.7", () => searchMemoriesForCurrentUser(query, depsFor(0.85))), []);
     assert.deepEqual(await searchWithDistance("0.9", () => searchMemoriesForCurrentUser(query, depsFor(0.85))), [monitors]);
     assert.deepEqual(await searchWithDistance("0.4", () => searchMemoriesForCurrentUser(query, depsFor(0.5))), []);
-    assert.deepEqual(await searchMemoriesForCurrentUser(query, depsFor(0.5)), [monitors]);
+    assert.deepEqual(await searchWithDistance("0.7", () => searchMemoriesForCurrentUser(query, depsFor(0.5))), [monitors]);
   });
 });
 
