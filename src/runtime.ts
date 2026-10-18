@@ -110,7 +110,6 @@ export function createRuntime(deps: {
         conversationId: message.conversationId,
         text: reply,
         agentSenderId: result.cart?.agentSenderId ?? message.agentSenderId,
-        parentMessageId: message.id,
         idempotencyKey: `simmer:${message.id}`,
       });
       delivered = !sendFailed(outcome);
