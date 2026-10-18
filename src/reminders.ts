@@ -8,7 +8,7 @@ const MAX_TIMEOUT_MS = 2_147_000_000;
 export function reminderCopy(cart: Cart, origin: string): string {
   const name = cart.items[0]?.name ?? "your bag";
   const until = cart.vaultUntil ? formatLongDate(cart.vaultUntil) : "the saved date";
-  return `Simmer here. Cart ${cart.code} (${name}) stays covered in the Vault until ${until}. Your Apple bag stays marinating.`;
+  return `Simmer here. Cart ${cart.code} (${name}) stays paused until ${until}. Your Apple bag stays marinating.`;
 }
 
 export class ReminderScheduler {

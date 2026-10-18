@@ -12,6 +12,8 @@ npm test
 npm run dev
 ```
 
+`npm test` does not launch a browser. `npm run test:zoom` installs Chromium and checks the card at several zoom levels. See [TESTING.md](TESTING.md).
+
 Leave Photon blank until you connect an iMessage line. Replies that unlock a bag are graded iMessage texts.
 
 `npm run typecheck` and `npm run build` compile the server, the desk, and the extension.
@@ -39,7 +41,7 @@ The manifest matches the Apple bag (`/shop/bag`, including regional paths), `sec
 2. Add one item and open the bag. Simmer covers the page with **Marinating**, steam rings, and a 10-minute timer. Reply to Simmer's iMessage to unlock. Simmer does not click Apple's button.
 3. The overlay shows the product name and total. If the page cannot be read, it says **Couldn't read bag**.
 4. Text `link <userId>` once so a later checkout can reach that iMessage thread.
-5. **Sleep on it** is an optional pause. **Demo: skip 24 hours** ends a vault and leaves the bag locked. Neither one unlocks checkout. A graded reply with a score of 4 or 5 does.
+5. **Sleep on it** shows only for a score of 2 or 3. **Demo: end the pause** (demo build) ends a pause and leaves the bag locked. Neither one unlocks checkout. A graded reply with a score of 4 or 5 does.
 6. If apple.com will not load, open [http://127.0.0.1:4321/fallback](http://127.0.0.1:4321/fallback). That page is example data and the same extension path. It is not the main demo.
 
 `/api/pay` only reports the lock for the desk. It does not charge anyone.

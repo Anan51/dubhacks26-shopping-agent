@@ -39,7 +39,7 @@ describe("glance", () => {
   it("names Marinating when a bag is locked and Unlocked when nothing is waiting", () => {
     assert.equal(lockGlance([item()]), "Marinating");
     assert.equal(lockGlance([item({ status: "unlocked" })]), "Unlocked");
-    assert.equal(lockGlance([item({ status: "vault" })]), "In the Vault");
+    assert.equal(lockGlance([item({ status: "vault" })]), "Paused");
   });
 
   it("uses one line for wait, buy, and vault time", () => {

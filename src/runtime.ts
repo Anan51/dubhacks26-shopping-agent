@@ -29,6 +29,24 @@ export function createRuntime(deps: {
     }
     // Claim the id before any await so a replay cannot send a second reply.
     deps.store.rememberInbound(message.id);
+    const prior = deps.store.getSession(message.conversationId);
+    const priorTurnCount = prior?.turns.length ?? 0;
+    const priorLastInboundId = prior?.lastInboundId ?? null;
+    try {
+      await handleInbound(message);
+    } catch (error) {
+      deps.store.forgetInbound(message.id);
+      const session = deps.store.getSession(message.conversationId);
+      if (session?.lastInboundId === message.id) {
+        session.turns = session.turns.slice(0, priorTurnCount);
+        session.lastInboundId = priorLastInboundId;
+        deps.store.saveSession(session);
+      }
+      throw error;
+    }
+  }
+
+  async function handleInbound(message: InboundMessage): Promise<void> {
     const result = await applyTurn({
       session: deps.store.getSession(message.conversationId) ?? null,
       conversationId: message.conversationId,
@@ -104,12 +122,7 @@ export function createRuntime(deps: {
       delivered = false;
     }
     if (!delivered) {
-      deps.store.forgetInbound(message.id);
-      if (result.session.lastInboundId === message.id) {
-        result.session.lastInboundId = null;
-        deps.store.saveSession(result.session);
-      }
-      return;
+      throw new Error("iMessage send failed.");
     }
     if (result.markReplied && result.cart) {
       result.cart.replied = true;

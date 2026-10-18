@@ -152,7 +152,7 @@ describe("Photon inbound replies", () => {
       text: "cracked screen, battery dies by 3pm, I need it for work tomorrow",
     };
     try {
-      await runtime.enqueue(inbound);
+      await assert.rejects(runtime.enqueue(inbound), /iMessage send failed/);
     } finally {
       console.error = original;
     }
@@ -162,7 +162,7 @@ describe("Photon inbound replies", () => {
     assert.equal(saved?.isUnlocked, false);
     assert.equal(saved?.status, "locked");
     assert.match(saved?.advice ?? "", /^Buy\./);
-    assert.match(store.getSession(SPACE)?.turns.at(-1)?.text ?? "", /^Buy\./);
+    assert.equal(store.getSession(SPACE)?.turns.length ?? 0, 0);
     assert.equal(store.hasHandledInbound("pho_msg_save_first"), false);
     const logText = logged.join("\n");
     assert.match(logText, /iMessage send failed/);
@@ -171,11 +171,14 @@ describe("Photon inbound replies", () => {
 
     await runtime.enqueue(inbound);
     const retried = store.getCart("EF56GH");
+    const turns = store.getSession(SPACE)?.turns ?? [];
     assert.equal(attempts, 2);
     assert.equal(retried?.replied, true);
     assert.equal(retried?.isUnlocked, false);
     assert.equal(retried?.status, "locked");
     assert.match(retried?.advice ?? "", /^Buy\./);
+    assert.equal(turns.filter((turn) => turn.role === "shopper").length, 1);
+    assert.equal(turns.filter((turn) => turn.role === "agent").length, 1);
   });
 
   it("does not mark replied when the send returns failure, and a retry can succeed", async () => {
@@ -200,7 +203,7 @@ describe("Photon inbound replies", () => {
       conversationId: SPACE,
       text: "the new color looks nice",
     };
-    await runtime.enqueue(inbound);
+    await assert.rejects(runtime.enqueue(inbound), /iMessage send failed/);
     const saved = store.getCart("GH78JK");
     assert.equal(saved?.replied, false);
     assert.equal(saved?.isUnlocked, false);
@@ -243,6 +246,58 @@ describe("Photon inbound replies", () => {
     assert.equal(saved?.status, "locked");
     assert.match(saved?.advice ?? "", /^(Buy|Wait|Skip)\./);
     assert.equal(store.hasHandledInbound("pho_msg_ok"), true);
+  });
+
+  it("forgets the inbound id when the turn throws before a send", async () => {
+    const inner = linkedStore("MN12PQ");
+    let failRead = true;
+    let attempts = 0;
+    const store = {
+      getCart(code: string) {
+        if (failRead) {
+          failRead = false;
+          throw new Error("store read failed");
+        }
+        return inner.getCart(code);
+      },
+      saveCart: (cart: Parameters<typeof inner.saveCart>[0]) => inner.saveCart(cart),
+      listCarts: () => inner.listCarts(),
+      getSession: (id: string) => inner.getSession(id),
+      saveSession: (session: Parameters<typeof inner.saveSession>[0]) => inner.saveSession(session),
+      getPhoneLink: (id: string) => inner.getPhoneLink(id),
+      savePhoneLink: (link: Parameters<typeof inner.savePhoneLink>[0]) => inner.savePhoneLink(link),
+      findPhoneLinkByConversation: (id: string) => inner.findPhoneLinkByConversation(id),
+      hasHandledInbound: (id: string) => inner.hasHandledInbound(id),
+      rememberInbound: (id: string) => inner.rememberInbound(id),
+      forgetInbound: (id: string) => inner.forgetInbound(id),
+      reset: () => inner.reset(),
+    };
+    const runtime = createRuntime({
+      store,
+      now: () => NOW,
+      demoReminderMs: 60_000,
+      send: async () => {
+        attempts += 1;
+      },
+      armReminder: () => undefined,
+      disarmReminder: () => undefined,
+      polish: async (template) => template,
+    });
+    const inbound = {
+      id: "pho_msg_before_send",
+      conversationId: SPACE,
+      text: "the new color looks nice",
+    };
+    await assert.rejects(runtime.enqueue(inbound), /store read failed/);
+    assert.equal(attempts, 0);
+    assert.equal(store.hasHandledInbound("pho_msg_before_send"), false);
+    assert.equal(store.getCart("MN12PQ")?.replied, false);
+
+    await runtime.enqueue(inbound);
+    assert.equal(attempts, 1);
+    assert.equal(store.getCart("MN12PQ")?.replied, true);
+    assert.equal(store.getCart("MN12PQ")?.isUnlocked, false);
+    assert.equal(store.hasHandledInbound("pho_msg_before_send"), true);
   });
 });
 

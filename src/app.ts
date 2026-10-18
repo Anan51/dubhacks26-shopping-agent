@@ -7,6 +7,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import { handleWebhook } from "../api/webhook.js";
 import { currentCarts } from "./current-cart.js";
 import { demoReplyOpen, devRoutesOpen, manualUnlockOpen } from "./dev-access.js";
+import { offersSleep } from "./score-band.js";
 import {
   bagFingerprint,
   FALLBACK_TOTAL_CENTS,
@@ -329,7 +330,7 @@ export function createApp(deps: AppDeps): RunningApp {
     if (!cart.replied) {
       if (isEnforcedVault(cart, now())) {
         res.status(423).json({
-          error: "This bag is in the Impulse Vault.",
+          error: "Checkout stays paused until the hold ends.",
           vaultUntil: cart.vaultUntil,
           cart: publicCart(cart, deps.agentHandle),
         });
@@ -356,7 +357,7 @@ export function createApp(deps: AppDeps): RunningApp {
       res.status(404).json({ error: "Cart not found." });
       return;
     }
-    if (cart.scoreBucket !== "soft") {
+    if (!offersSleep(cart.scoreBucket)) {
       res.status(409).json({
         error: "Sleep is only for a soft score.",
         cart: publicCart(cart, deps.agentHandle),

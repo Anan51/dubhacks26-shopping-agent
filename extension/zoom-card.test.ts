@@ -1,17 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { describe, it } from "node:test";
 
 import * as esbuild from "esbuild";
 import { chromium, type Page } from "playwright";
 
-const root = path.resolve(import.meta.dirname, "../..");
+const root = path.resolve(import.meta.dirname, "..");
 const cssPath = path.join(root, "extension/src/overlay.css");
 const fixturePath = path.join(root, "extension/fixtures/apple-bag-cable-row.html");
-const artifactDir = "/opt/cursor/artifacts/zoom";
+const artifactDir = process.env.SIMMER_ZOOM_DIR
+  ? path.resolve(process.env.SIMMER_ZOOM_DIR)
+  : path.join(root, "test-artifacts", "zoom");
 const WINDOW_HEIGHT = 800;
 const ZOOMS = [67, 80, 100, 125, 150] as const;
 const WIDTHS = [1280, 800] as const;
@@ -34,11 +35,8 @@ describe("overlay zoom", () => {
     });
     const css = readFileSync(cssPath, "utf8").replaceAll("</", "<\\/");
     const bag = readFileSync(fixturePath, "utf8");
-    const htmlPath = path.join(outDir, "bag.html");
-    writeFileSync(
-      htmlPath,
-      `<!doctype html><html><head><meta charset="utf-8"><title>Bag - Apple</title></head><body>${bag}<style id="simmer-css">${css}</style><script src="./card.js"></script></body></html>`,
-    );
+    const bundle = readFileSync(scriptPath, "utf8").replaceAll("</script", "<\\/script");
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Bag - Apple</title></head><body>${bag}<style id="simmer-css">${css}</style><script>${bundle}</script></body></html>`;
     mkdirSync(artifactDir, { recursive: true });
 
     const browser = await chromium.launch({ headless: true });
@@ -54,7 +52,7 @@ describe("overlay zoom", () => {
             deviceScaleFactor: scale,
           });
           const page = await context.newPage();
-          await page.goto(pathToFileURL(htmlPath).href);
+          await page.setContent(html, { waitUntil: "domcontentloaded" });
           await page.getByRole("button", { name: "Why" }).click();
           const box = await cardBox(page);
           const shot = path.join(artifactDir, `${zoom}-${width}.png`);

@@ -53,7 +53,7 @@ export type GlanceItem = {
   scoreReason?: string | null;
 };
 
-export type LockGlance = "Marinating" | "Unlocked" | "In the Vault";
+export type LockGlance = "Marinating" | "Unlocked" | "Paused";
 
 /** Header for the popup. A live bag lock wins over a resting vault. */
 export function lockGlance(items: readonly GlanceItem[]): LockGlance {
@@ -61,7 +61,7 @@ export function lockGlance(items: readonly GlanceItem[]): LockGlance {
     return "Marinating";
   }
   if (items.some((item) => item.status === "vault")) {
-    return "In the Vault";
+    return "Paused";
   }
   return "Unlocked";
 }
@@ -190,7 +190,7 @@ function appendScoreLines(item: GlanceItem, lines: BreakdownLine[]): void {
     });
   }
   if (item.scoreBucket === "strict") {
-    lines.push({ label: "Time limit", value: "24 hours, required. Demo: skip 24 hours lifts it." });
+    lines.push({ label: "Time limit", value: "Checkout stays paused until the hold ends." });
   } else if (item.scoreBucket === "soft") {
     lines.push({ label: "Time limit", value: "Optional. Sleep on it is not required." });
   } else if (item.scoreBucket === "free") {
@@ -213,7 +213,7 @@ function alternativeGlance(decision: GlanceDecision): string {
 
 function vaultLine(vaultUntil: string | null, nowMs: number): string {
   if (!vaultUntil) {
-    return "Ready again in 24 hours.";
+    return "This one can wait.";
   }
   const left = Date.parse(vaultUntil) - nowMs;
   if (left <= 0) {
