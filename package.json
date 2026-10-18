@@ -15,7 +15,8 @@
     "build": "tsc && vite build --config web/vite.config.ts && vite build --config extension/vite.config.ts",
     "build:demo": "node scripts/build-demo.mjs",
     "test": "tsx --test src/*.test.ts src/auth/*.test.ts src/memory/*.test.ts extension/src/*.test.ts",
-    "smoke:grok": "tsx src/smoke-grok.ts"
+    "smoke:grok": "tsx src/smoke-grok.ts",
+    "check:mongo": "tsx src/check-mongo.ts"
   },
   "dependencies": {
     "@photon-ai/api": "0.5.0",

@@ -13,12 +13,18 @@ export function mongoConfigured(uri: string | null | undefined): boolean {
   return Boolean(uri?.trim());
 }
 
+export type ConnectMongoOptions = {
+  serverSelectionTimeoutMS?: number;
+  dbName?: string;
+};
+
 /**
  * Connects when a URI is present. A missing URI is the normal demo path:
  * the process keeps booting and auth routes report that MongoDB is not configured.
  */
-export async function connectMongo(uri: string | null): Promise<MongoState> {
-  if (!mongoConfigured(uri)) {
+export async function connectMongo(uri: string | null, options: ConnectMongoOptions = {}): Promise<MongoState> {
+  const trimmed = uri?.trim() ?? "";
+  if (!mongoConfigured(trimmed)) {
     if (state !== "ready") {
       state = "not-configured";
     }
@@ -26,7 +32,12 @@ export async function connectMongo(uri: string | null): Promise<MongoState> {
   }
   state = "connecting";
   try {
-    await mongoose.connect(uri!.trim());
+    await mongoose.connect(trimmed, {
+      ...(options.serverSelectionTimeoutMS !== undefined
+        ? { serverSelectionTimeoutMS: options.serverSelectionTimeoutMS }
+        : {}),
+      ...(options.dbName ? { dbName: options.dbName } : {}),
+    });
     state = "ready";
   } catch (error) {
     state = "error";

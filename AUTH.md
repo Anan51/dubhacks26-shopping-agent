@@ -33,6 +33,10 @@ When `BACKBOARD_API_KEY` is unset, the client is an in-memory stand-in and the n
 
 No Google OAuth client is required.
 
+Put `MONGODB_URI` in `.env`.
+Run `npm run check:mongo`.
+`PASS` means Atlas, auth, and memory work live.
+
 ## Confirmed Backboard contract
 
 A live check at 10:00 PM PT on Oct 17, 2026 confirmed the rows below. Every request sent the raw `BACKBOARD_API_KEY` in `X-API-Key`. There is no key prefix and it is not a bearer token.

@@ -158,6 +158,12 @@ export class HttpBackboardClient implements BackboardClient {
     await this.request("DELETE", `/assistants/${encodeURIComponent(assistantId)}/memories`);
   }
 
+  /** Live-checked: DELETE /assistants/{id} → 200 { message, assistant_id, deleted_at }. */
+  async deleteAssistant(assistantId: string): Promise<void> {
+    requireAssistant(assistantId);
+    await this.request("DELETE", `/assistants/${encodeURIComponent(assistantId)}`);
+  }
+
   private async request(method: string, path: string, payload?: unknown): Promise<unknown> {
     const headers: Record<string, string> = {
       // Raw key. A live call accepted it with no prefix.
