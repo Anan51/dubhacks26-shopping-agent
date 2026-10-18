@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 
 import { JSDOM } from "jsdom";
 
-import { bagContentKey, bagReadAction, quantityTotalLabel, readPageBag } from "./bag-dom.js";
+import { bagContentKey, bagReadAction, bagWatchTargets, quantityTotalLabel, readPageBag, watchBagDom } from "./bag-dom.js";
 
 const CABLE_FIXTURE = new URL("../fixtures/apple-bag-cable-row.html", import.meta.url);
 
@@ -131,5 +131,74 @@ describe("apple.com cable row fixture", () => {
     assert.equal(bagReadAction(postedKey, reread), "post");
     assert.equal(bagReadAction(bagContentKey(reread), reread), "keep");
     assert.equal(bagReadAction(null, reread), "post");
+  });
+
+  it("watches the bag area and debounces a quantity edit without reading the rest of the page", async () => {
+    const row = readFileSync(CABLE_FIXTURE, "utf8");
+    const { document } = new JSDOM(
+      `<!doctype html><html><body><header><a id="outside">Store</a></header><div id="bag-column">${row}</div></body></html>`,
+    ).window;
+    const column = document.querySelector("#bag-column");
+    assert.equal(column?.id, "bag-column");
+    assert.ok(column);
+    assert.deepEqual(bagWatchTargets(document), [column]);
+    assert.equal(column.contains(document.querySelector("#outside")), false);
+
+    const queued: Array<() => void> = [];
+    let scheduled = 0;
+    let cancelled = 0;
+    let reads = 0;
+    const watch = watchBagDom(
+      document,
+      () => {
+        reads += 1;
+      },
+      {
+        schedule(run) {
+          scheduled += 1;
+          queued.push(run);
+          return scheduled;
+        },
+        cancel() {
+          cancelled += 1;
+        },
+      },
+    );
+
+    const outside = document.querySelector("#outside");
+    assert.ok(outside);
+    outside.textContent = "Mac";
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(scheduled, 0);
+
+    const total = document.querySelector('[data-autom="bagtotalvalue"]');
+    assert.ok(total);
+    total.textContent = "$21.00";
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(scheduled, 1);
+    assert.equal(reads, 0);
+
+    total.textContent = "$19.00";
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(cancelled, 1);
+    assert.equal(scheduled, 2);
+    const latest = queued[queued.length - 1];
+    assert.ok(latest);
+    latest();
+    assert.equal(reads, 1);
+
+    const select = document.querySelector('select[data-autom="item-quantity-dropdown"]');
+    assert.equal(select?.tagName, "SELECT");
+    assert.ok(select);
+    (select as HTMLSelectElement).value = "1";
+    const reread = readPageBag(document);
+    assert.equal(reread.quantity, 1);
+    assert.equal(reread.totalCents, 1_900);
+
+    watch.disconnect();
+    total.textContent = "$21.00";
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(scheduled, 2);
+    assert.equal(watch.connected(), false);
   });
 });

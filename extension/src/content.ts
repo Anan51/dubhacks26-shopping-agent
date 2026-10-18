@@ -1,9 +1,13 @@
 import css from "./overlay.css?inline";
 
-import { bagOrFallback, isBlockedControl, type BagControl } from "../../src/apple-bag.js";
+import { bagOrFallback } from "../../src/apple-bag.js";
 import { applePage, hostOptedOut, type ApplePage } from "../../src/sites.js";
-import { bagContentKey, bagReadAction, readPageBag, type PageBag } from "./bag-dom.js";
+import { bagContentKey, bagReadAction, readPageBag, watchBagDom, type BagWatch, type PageBag } from "./bag-dom.js";
+import { deliverExtensionMessage, extensionContextAlive } from "./extension-context.js";
+import { installGate } from "./gate.js";
 import { mountOverlay, type OverlayModel } from "./overlay.js";
+
+let onContextDead = (): void => undefined;
 
 type Settings = {
   origin: string;
@@ -25,11 +29,15 @@ if (page) {
 }
 
 async function start(kind: ApplePage): Promise<void> {
+  let stopped = false;
+  onContextDead = () => {
+    stopped = true;
+  };
   const settings = await loadSettings();
-  if (hostOptedOut(location.hostname, settings.optOut)) {
+  if (stopped || !extensionContextAlive(chrome.runtime) || hostOptedOut(location.hostname, settings.optOut)) {
     return;
   }
-  const gate = installGate(kind);
+  const gate = installGate(document, kind);
   const host = document.createElement("div");
   host.id = "simmer-root";
   const shadow = host.attachShadow({ mode: "open" });
@@ -45,7 +53,25 @@ async function start(kind: ApplePage): Promise<void> {
   let quantity: number | null = null;
   let update = (_next: OverlayModel): void => undefined;
   let mounted = false;
-  let stopped = false;
+  let pollTimer = 0;
+  let fallbackTimer = 0;
+  let showBlock = false;
+  let bagWatch: BagWatch | null = null;
+  let pageObserver: MutationObserver | null = null;
+
+  const shutdown = () => {
+    if (stopped) {
+      return;
+    }
+    stopped = true;
+    window.clearInterval(pollTimer);
+    window.clearTimeout(fallbackTimer);
+    bagWatch?.disconnect();
+    pageObserver?.disconnect();
+    gate.stop();
+    host.remove();
+  };
+  onContextDead = shutdown;
 
   const actions = {
     unlock: () => {
@@ -88,8 +114,10 @@ async function start(kind: ApplePage): Promise<void> {
     }
     const unlocked = cart.isUnlocked === true && cart.status === "unlocked";
     if (unlocked) {
+      showBlock = false;
       gate.lift();
     } else {
+      showBlock = true;
       gate.paint();
     }
     if (cart.necessity === "necessary") {
@@ -97,8 +125,7 @@ async function start(kind: ApplePage): Promise<void> {
       return;
     }
     if (unlocked) {
-      stopped = true;
-      host.remove();
+      shutdown();
       return;
     }
     show(modelFrom(cart, thread, settings, null, quantity));
@@ -134,6 +161,9 @@ async function start(kind: ApplePage): Promise<void> {
         parsed: bag.parsed,
         pageHost: location.hostname,
       });
+      if (stopped) {
+        return;
+      }
       if (!isRecord(created) || typeof created.code !== "string") {
         if (!code) {
           show(emptyModel(settings, "------", "Simmer can't reach the local server."));
@@ -146,9 +176,14 @@ async function start(kind: ApplePage): Promise<void> {
       if (previous !== code) {
         await rememberCart(code);
       }
+      if (stopped) {
+        return;
+      }
       if (created.isUnlocked === true && created.status === "unlocked") {
+        showBlock = false;
         gate.lift();
       } else {
+        showBlock = true;
         gate.paint();
       }
       if (previous !== "" && previous === code) {
@@ -158,8 +193,12 @@ async function start(kind: ApplePage): Promise<void> {
       }
       if (!watching) {
         watching = true;
-        window.setInterval(() => {
-          void syncBag();
+        pollTimer = window.setInterval(() => {
+          if (stopped || !extensionContextAlive(chrome.runtime)) {
+            shutdown();
+            return;
+          }
+          void refresh();
         }, 1000);
       }
     } finally {
@@ -167,9 +206,8 @@ async function start(kind: ApplePage): Promise<void> {
     }
   };
 
-  // Apple rewrites the bag in place. Re-read on the lock-refresh tick instead of
-  // parsing every mutation. The server's cart, not the DOM, still drives the gate.
-  const syncBag = async () => {
+  // One initial read, then only when the bag area itself changes. The 1s timer polls lock state.
+  const readBagNow = () => {
     if (!document.body || stopped || posting) {
       return;
     }
@@ -177,45 +215,44 @@ async function start(kind: ApplePage): Promise<void> {
     if (interpreted.quantity != null) {
       quantity = interpreted.quantity;
     }
-    const action = bagReadAction(postedKey, interpreted);
-    switch (action) {
-      case "post":
-        await publish(interpreted);
-        return;
-      case "keep":
-        await refresh();
-        return;
-      default: {
-        const unreachable: never = action;
-        return unreachable;
+    if (code) {
+      const action = bagReadAction(postedKey, interpreted);
+      switch (action) {
+        case "post":
+          void publish(interpreted);
+          return;
+        case "keep":
+          return;
+        default: {
+          const unreachable: never = action;
+          return unreachable;
+        }
       }
-    }
-  };
-
-  const attempt = () => {
-    if (!document.body || code) {
-      return;
-    }
-    const interpreted = readPageBag(document.body);
-    if (interpreted.quantity != null) {
-      quantity = interpreted.quantity;
     }
     if (interpreted.parsed && interpreted.itemNames.length > 0) {
       void publish(interpreted);
     }
   };
 
-  const observer = new MutationObserver(() => {
-    gate.paint();
-    attempt();
+  pageObserver = new MutationObserver(() => {
+    if (stopped) {
+      return;
+    }
+    if (showBlock) {
+      gate.paint();
+    }
+    if (bagWatch && !bagWatch.connected() && bagWatch.retarget()) {
+      readBagNow();
+    }
   });
   whenReady(() => {
-    observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
-    attempt();
+    bagWatch = watchBagDom(document, readBagNow);
+    pageObserver?.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    readBagNow();
   });
-  window.setTimeout(() => {
-    if (!code) {
-      void publish(document.body ? readPageBag(document.body) : readPageBag(document));
+  fallbackTimer = window.setTimeout(() => {
+    if (!code && !stopped) {
+      readBagNow();
     }
   }, 4000);
 }
@@ -223,78 +260,6 @@ async function start(kind: ApplePage): Promise<void> {
 function isAppleHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
   return host === "apple.com" || host.endsWith(".apple.com");
-}
-
-function installGate(kind: ApplePage): { paint: () => void; lift: () => void } {
-  // Lift only clears the block. It must never click, submit, or complete Apple's button.
-  let blocked = true;
-  const stop = (event: Event) => {
-    if (!blocked) {
-      return;
-    }
-    const control = controlFrom(event.target);
-    if (!control || !isBlockedControl(control, kind)) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
-  };
-  const stopSubmit = (event: Event) => {
-    if (!blocked || !(event instanceof SubmitEvent)) {
-      return;
-    }
-    const control = controlFrom(event.submitter);
-    if (!control || !isBlockedControl(control, kind)) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
-  };
-  window.addEventListener("click", stop, true);
-  window.addEventListener("pointerdown", stop, true);
-  window.addEventListener("submit", stopSubmit, true);
-  const paint = () => {
-    if (!document.body) {
-      return;
-    }
-    const nodes = document.querySelectorAll("button, a, input, apple-pay-button, [role='button']");
-    for (const node of nodes) {
-      if (!(node instanceof HTMLElement)) {
-        continue;
-      }
-      const control = controlFrom(node);
-      const mark = blocked && control !== null && isBlockedControl(control, kind);
-      if (mark) {
-        node.setAttribute("data-simmer-blocked", "1");
-        node.setAttribute("aria-disabled", "true");
-      } else if (node.hasAttribute("data-simmer-blocked")) {
-        node.removeAttribute("data-simmer-blocked");
-        node.removeAttribute("aria-disabled");
-      }
-    }
-  };
-  return {
-    paint,
-    lift: () => {
-      blocked = false;
-      paint();
-    },
-  };
-}
-
-function controlFrom(target: EventTarget | null): BagControl | null {
-  const element = target instanceof Element ? target : null;
-  const control = element?.closest("button, a, input, apple-pay-button, [role='button']");
-  if (!(control instanceof HTMLElement)) {
-    return null;
-  }
-  return {
-    tag: control.tagName.toLowerCase(),
-    text: control.textContent?.replace(/\s+/g, " ").trim().slice(0, 80) ?? "",
-    ariaLabel: control.getAttribute("aria-label") ?? "",
-  };
 }
 
 function modelFrom(
@@ -487,11 +452,7 @@ function unwrap(value: unknown): unknown {
 }
 
 function message(payload: unknown): Promise<unknown> {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage(payload, (value) => {
-      resolve(chrome.runtime.lastError ? null : value);
-    });
-  });
+  return deliverExtensionMessage(chrome.runtime, payload, () => onContextDead());
 }
 
 function whenReady(run: () => void): void {

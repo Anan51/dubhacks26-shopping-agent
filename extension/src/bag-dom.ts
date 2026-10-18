@@ -249,3 +249,157 @@ function textRoot(root: ParentNode): HTMLElement | null {
   }
   return null;
 }
+
+/** Wait for a burst of bag edits (quantity, then the total) to settle before re-reading. */
+export const BAG_READ_DEBOUNCE_MS = 400;
+
+const BAG_OBSERVE: MutationObserverInit = {
+  subtree: true,
+  childList: true,
+  characterData: true,
+  attributes: true,
+  attributeFilter: ["value", "selected"],
+};
+
+export type BagWatch = {
+  /** True while the observed bag nodes are still in the document. */
+  connected: () => boolean;
+  /** Re-bind after Apple replaces the bag subtree. False when no bag is on the page. */
+  retarget: () => boolean;
+  disconnect: () => void;
+};
+
+type BagTimer = {
+  schedule: (run: () => void, ms: number) => unknown;
+  cancel: (id: unknown) => void;
+};
+
+/**
+ * The smallest nodes that contain the line item and the bag total.
+ * Header and footer mutations stay outside this set.
+ */
+export function bagWatchTargets(root: ParentNode): Element[] {
+  const item = root.querySelector('li[data-autom^="bag-item-"], li.rs-bag-item');
+  const total = root.querySelector('[data-autom="bagtotalvalue"]');
+  if (!item && !total) {
+    return [];
+  }
+  const shared = item && total ? ancestorWithinBag(item, total) : null;
+  if (shared) {
+    return [shared];
+  }
+  const targets: Element[] = [];
+  if (item) {
+    addTarget(targets, hostWithinBag(item));
+  }
+  if (total) {
+    addTarget(targets, hostWithinBag(total));
+  }
+  return targets;
+}
+
+/** Observe the bag area and coalesce edits into one callback. */
+export function watchBagDom(doc: Document, onChange: () => void, timer?: BagTimer, debounceMs = BAG_READ_DEBOUNCE_MS): BagWatch {
+  const view = doc.defaultView;
+  const schedule = timer?.schedule ?? ((run: () => void, ms: number) => (view ?? globalThis).setTimeout(run, ms));
+  const cancel = timer?.cancel ?? ((id: unknown) => (view ?? globalThis).clearTimeout(id as ReturnType<typeof setTimeout>));
+  const ObserverCtor = view?.MutationObserver ?? globalThis.MutationObserver;
+  let observer: MutationObserver | null = null;
+  let targets: Element[] = [];
+  let timerId: unknown = 0;
+  let timerLive = false;
+
+  const kick = () => {
+    if (timerLive) {
+      cancel(timerId);
+    }
+    timerLive = true;
+    timerId = schedule(() => {
+      timerLive = false;
+      onChange();
+    }, debounceMs);
+  };
+
+  const disconnectObserver = () => {
+    observer?.disconnect();
+    observer = null;
+    targets = [];
+  };
+
+  const retarget = (): boolean => {
+    const next = bagWatchTargets(doc);
+    if (next.length === 0) {
+      disconnectObserver();
+      return false;
+    }
+    if (observer && sameTargets(targets, next) && next.every((node) => node.isConnected)) {
+      return true;
+    }
+    disconnectObserver();
+    observer = new ObserverCtor(() => kick());
+    targets = next;
+    for (const target of next) {
+      observer.observe(target, BAG_OBSERVE);
+    }
+    return true;
+  };
+
+  retarget();
+  return {
+    connected: () => targets.length > 0 && targets.every((node) => node.isConnected),
+    retarget,
+    disconnect: () => {
+      if (timerLive) {
+        cancel(timerId);
+      }
+      timerLive = false;
+      disconnectObserver();
+    },
+  };
+}
+
+function ancestorWithinBag(item: Element, total: Element): Element | null {
+  if (item.contains(total)) {
+    return hostWithinBag(item);
+  }
+  if (total.contains(item)) {
+    return hostWithinBag(total);
+  }
+  const ancestors = new Set<Element>();
+  for (let current: Element | null = item; current && !isShell(current); current = current.parentElement) {
+    ancestors.add(current);
+  }
+  for (let current: Element | null = total; current && !isShell(current); current = current.parentElement) {
+    if (ancestors.has(current)) {
+      return current;
+    }
+  }
+  return null;
+}
+
+function hostWithinBag(node: Element): Element {
+  const parent = node.parentElement;
+  if (parent && !isShell(parent)) {
+    return parent;
+  }
+  return node;
+}
+
+function isShell(node: Element): boolean {
+  return node.tagName === "BODY" || node.tagName === "HTML";
+}
+
+function addTarget(targets: Element[], next: Element): void {
+  if (targets.some((target) => target === next || target.contains(next))) {
+    return;
+  }
+  const covering = targets.findIndex((target) => next.contains(target));
+  if (covering >= 0) {
+    targets.splice(covering, 1);
+  }
+  targets.push(next);
+}
+
+function sameTargets(left: readonly Element[], right: readonly Element[]): boolean {
+  return left.length === right.length && left.every((node, index) => node === right[index]);
+}
