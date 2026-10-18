@@ -123,6 +123,8 @@ export type Cart = {
   lastInboundMessageId: string | null;
   /** Marinating. The extension keeps Apple's buttons blocked until this is true. */
   isUnlocked: boolean;
+  /** Set when the countdown opens checkout. Absent on carts saved before this field. */
+  unlockReason?: "timer" | null;
   /** True after Simmer has sent advice for an inbound reply. Unlock stays hidden until then. */
   replied: boolean;
   /** Buy, wait, or skip, plus one plain sentence. Null until a reply is graded. */
