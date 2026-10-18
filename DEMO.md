@@ -28,16 +28,28 @@ Stay signed out. Do not enter a card. Do not go past the checkout entry.
 4. If the phone is not linked, the card says to text `link <userId>` to Simmer's iMessage number. Reply in that iMessage thread. The overlay says **Reply to Simmer's iMessage to unlock.**
 5. Text:
    `the new color looks nice`
-   Keywords grade that **-2**. Score is `2 + -2`, clamped to **1** (strict). The corner card says **Paused**. The status line says **This one can wait.** A bare "unlock" does not lift it. **Why** is one plain sentence plus the price now. **Sleep on it** is not shown.
-6. Open Why and click **Demo: end the pause** (demo build only). The bag is Marinating again. Check Out stays blocked. That button does not unlock the bag.
+   Keywords grade that **-2**. Purchase score = impulse + grade, clamped to 1–5. Impulse 2 makes `2 + -2` = **1**. `scoreBucket` in `src/score-band.ts`: below 2 is **strict**, 2–3 is **soft** (`SOFT_SCORE_MIN` is 2), and 4 and above is **free** (`FREE_SCORE_MIN` is 4). Strict advice is **Skip** (`Skip. This looks like a want, not a need.`). The corner card stays **Marinating**. The status line says **This one can wait.** Checkout stays blocked. Score 1 does not open a 24-hour vault, and the title does not become **Paused**. **Sleep on it** is not shown. A low score does not unlock an unnecessary bag. **Why** is one plain sentence plus the price now.
+6. **Demo: end the pause** stays hidden after that reply, because the bag is not paused. The button only ends a pause that is already open, and it leaves checkout locked.
 7. Text:
    `I need it for work`
-   Keywords grade that **+1**. Score is **3** (soft). The status line says **Worth a pause before buying.** **Sleep on it** is shown for this score. It does not unlock checkout.
+   Keywords grade that **+1**. Score is **3** (soft). Advice is **Wait**. The status line says **Worth a pause before buying.** **Sleep on it** is shown for this score. It does not unlock checkout.
 8. Text:
    `cracked screen, battery dies by 3pm, I need it for work tomorrow`
-   Keywords grade that **+3**. Score is **5** (free). The card goes away and Apple's button works. Simmer does not click it. The page note appears only after you press Check Out yourself.
+   Keywords grade that **+3**. Score is **5** (free). Advice is **Buy**, and the card shows that Buy line. The corner card stays **Marinating**. Checkout stays locked until you press **Unlock**, after the advice has been sent. **Sleep on it** is not shown. Simmer does not click Apple's button.
 
 A real Apple bag uses the header **Simmer** until the fallback page is showing example data. If the bag cannot be read, the card says **Couldn't read bag** and Simmer does not invent an example phone.
+
+## Simulate reply
+
+Demo only. `npm run dev:demo` sets `WAITMATE_DEMO=1` and does not set `NODE_ENV=production`, which opens `POST /api/dev/reply` with `{ "code", "text" }`. With the flag off, or in production, that route returns 404. `npm run build:demo` sets `VITE_SIMMER_DEMO=1` and renders the control. `npm run build` leaves it out.
+
+The control sends typed text or a preset. The text is graded on the same inbound path as a Photon iMessage reply. Photon is not called, and no iMessage is sent. Impulse 2 is the example-history shopper.
+
+| Preset | Keyword grade | Score | Card |
+| --- | --- | --- | --- |
+| `new color looks nice` | -2 | 1, strict | **Skip**. Checkout stays locked |
+| `cracked screen` | 0, so no purchase score | unchanged | **Wait**. The phone is broken; price math still decides |
+| `I need it for work tomorrow` | +2 | 4, free | **Buy**. Checkout stays locked until Unlock |
 
 To show opt-out: extension options, add `127.0.0.1` (or `apple.com`), save, reload the bag. The overlay stays off and Check Out works again. Remove the line and reload to turn Simmer back on.
 
@@ -59,7 +71,9 @@ To show opt-out: extension options, add `127.0.0.1` (or `apple.com`), save, relo
 - Impulse scores come from two mock histories in `src/history.ts`: Example history: frequent buyer is 2, Deliberate is 4. They are not a model of a real shopper.
 - Trade-in values, the $35 financing, the $420 example balance, and the offer catalog are synthetic. They are not a current T-Mobile quote. `decide()` still produces that alternative for scores 1 and 2–3.
 - The example offer appears only when waiting for it costs less than buying now.
-- A score of 1 pauses checkout. **Demo: end the pause** (demo build) ends that pause and leaves the bag locked. It does not unlock checkout.
-- Score 2–3 offers **Sleep on it**. That pause is optional and does not unlock checkout.
-- Score 4 or 5, from a graded iMessage reply, unlocks the bag. Simmer does not click Apple's button.
+- Purchase score = impulse + justification grade, clamped to 1–5. `scoreBucket` is strict below 2, soft from 2 through 3, and free from 4 up. Advice is **Skip** for strict, **Wait** for soft, and **Buy** for free.
+- Score 1 (strict) is **Skip**. The status line is **This one can wait.** The bag stays Marinating. It does not enter a 24-hour vault, and the title does not become **Paused**. A low score does not unlock an unnecessary bag. **Sleep on it** is not shown.
+- Score 2–3 (soft) is **Wait**. **Sleep on it** is shown only for that band. The pause is optional and does not unlock checkout.
+- Score 4 or 5 (free) is **Buy**. Checkout stays locked until **Unlock**, after the advice has been sent. Simmer does not click Apple's button.
+- A necessary bag unlocks with no reply. An unnecessary bag stays locked after a graded reply until you press **Unlock**, and only once that advice has been sent. **Demo: end the pause** ends an open pause and leaves checkout locked.
 - The extension is built for port 4321.

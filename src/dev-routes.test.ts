@@ -78,7 +78,7 @@ describe("dev routes", () => {
       });
       assert.equal(messages.status, 200);
       const demoOff = await post(locked.base, "/api/dev/reply", { code: heldCode, text: "hello" });
-      assert.equal(demoOff.status, 403);
+      assert.equal(demoOff.status, 404);
       const skipOff = await post(locked.base, `/api/carts/${heldCode}/skip-vault`, {});
       assert.equal(skipOff.status, 403);
       const skipProduction = await post(production.base, `/api/carts/${prodCode}/skip-vault`, {});
