@@ -636,8 +636,37 @@ export function createApp(deps: AppDeps): RunningApp {
           ...(link.agentSenderId ? { agentSenderId: link.agentSenderId } : {}),
           idempotencyKey: `simmer:ping:${cart.code}:${link.linkedAt}`,
         });
+        // The thread is shared. Repoint it at this cart so the next reply
+        // with no code grades this bag, not whichever cart was here before.
+        pointPhoneSession(link.conversationId, cart);
       },
     });
+  }
+
+  function pointPhoneSession(conversationId: string, cart: Cart): void {
+    const existing = deps.store.getSession(conversationId);
+    if (existing?.cartCode === cart.code) {
+      return;
+    }
+    const session: Session = existing ?? {
+      conversationId,
+      cartCode: null,
+      step: "need_code",
+      signals: {},
+      turns: [],
+      lastInboundId: null,
+      signalSource: null,
+      updatedAt: now().toISOString(),
+    };
+    session.cartCode = cart.code;
+    session.step = "need_code";
+    session.signals = { ...cart.signals };
+    if (session.signals.problems) {
+      session.signals.problems = [...session.signals.problems];
+    }
+    session.signalSource = cart.signalSource;
+    session.updatedAt = now().toISOString();
+    deps.store.saveSession(session);
   }
 
   function appendDesk(conversationId: string, text: string, cartCode: string): void {
