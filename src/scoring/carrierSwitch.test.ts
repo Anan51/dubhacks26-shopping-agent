@@ -515,6 +515,65 @@ describe("carrier switch on the cart route", () => {
       });
     }
   });
+
+  it("does not ping a $55 carrier pass when the same cart is posted again", async () => {
+    const store = createMemoryStore();
+    const running = createApp({
+      store,
+      origin: "http://127.0.0.1",
+      lockMs: 600_000,
+      demoReminderMs: 60_000,
+      demoDefault: false,
+      agentHandle: null,
+      photon: null,
+      xaiModel: "grok-4.20-0309-non-reasoning",
+      xaiTimeoutMs: 8_000,
+      polish: async (template) => template,
+    });
+    const server = createServer(running.app);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${address.port}`;
+    const passBody = {
+      userId: "user-pass-ping",
+      itemNames: ["Switch to Carrier X"],
+      totalCents: CARRIER_PASS.newMonthlyCents,
+      parsed: true,
+      pageHost: "127.0.0.1",
+      demo: false,
+      carrier: CARRIER_PASS,
+    };
+    try {
+      const created = await post(base, "/api/carts", passBody);
+      assert.equal(created.status, 201);
+      const open = created.body as CartSnap;
+      assert.equal(open.totalCents, 5_500);
+      assert.equal(open.isUnlocked, true);
+      assert.equal(open.status, "unlocked");
+      assert.equal(open.lastPing ?? null, null);
+      const stored = store.getCart(open.code);
+      assert.ok(stored);
+      stored.necessity = null;
+      stored.necessitySource = null;
+      stored.necessityReason = null;
+      store.saveCart(stored);
+      const again = await post(base, "/api/carts", passBody);
+      assert.equal(again.status, 200);
+      const replay = again.body as CartSnap;
+      assert.equal(replay.code, open.code);
+      assert.equal(replay.isUnlocked, true);
+      assert.equal(replay.status, "unlocked");
+      assert.equal(replay.necessity, "necessary");
+      assert.equal(replay.lastPing ?? null, null);
+    } finally {
+      running.scheduler.stop();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
 });
 
 type CartSnap = {
@@ -524,6 +583,13 @@ type CartSnap = {
   totalCents?: number;
   necessity: string | null;
   carrierLine?: string | null;
+  lastPing?: {
+    delivered: boolean;
+    reason: string | null;
+    smsLink: string | null;
+    qrDataUrl: string | null;
+    prefilled: string;
+  } | null;
   impulse?: { score1to8: number; why: string | null } | null;
   decision: unknown;
 };
