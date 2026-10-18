@@ -6,6 +6,8 @@ import { breakdownLines, oneLineVerdict, type GlanceItem, type GlanceSignals, ty
 import { UPGRADE_PROMPT } from "../../src/links.js";
 import type { Decision } from "../../src/types.js";
 
+import { quantityTotalLabel } from "./bag-dom.js";
+
 export type OverlayModel = {
   code: string;
   status: "locked" | "vault" | "unlocked";
@@ -15,6 +17,7 @@ export type OverlayModel = {
   totalCents: number;
   parsedFromPage: boolean;
   itemNames: string[];
+  quantity: number | null;
   explanation: string | null;
   decision: Decision | null;
   signals: GlanceSignals;
@@ -107,8 +110,11 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
       <section className="card" role="dialog" aria-labelledby="simmer-title">
         <p className="kicker">Simmer · example data</p>
         <h1 id="simmer-title">{title}</h1>
+        {model.quantity != null && model.itemNames[0] ? <p>{model.itemNames[0]}</p> : null}
         <p>
-          {model.itemNames[0] ?? "Apple bag"} · {formatUsd(model.totalCents)}
+          {model.quantity != null
+            ? quantityTotalLabel(model.quantity, model.totalCents)
+            : `${model.itemNames[0] ?? "Apple bag"} · ${formatUsd(model.totalCents)}`}
         </p>
         <p className="clock" aria-live="polite">
           {clock}

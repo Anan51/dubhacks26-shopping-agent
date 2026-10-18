@@ -12,7 +12,7 @@
     "start": "NODE_ENV=production tsx src/server.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json && tsc --noEmit -p extension/tsconfig.json",
     "build": "tsc && vite build --config web/vite.config.ts && vite build --config extension/vite.config.ts",
-    "test": "tsx --test src/*.test.ts",
+    "test": "tsx --test src/*.test.ts extension/src/*.test.ts",
     "smoke:grok": "tsx src/smoke-grok.ts"
   },
   "dependencies": {
@@ -26,11 +26,13 @@
   },
   "devDependencies": {
     "@types/express": "^4.17.25",
+    "@types/jsdom": "^30.0.0",
     "@types/node": "^24.10.1",
     "@types/qrcode": "^1.5.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "jsdom": "^29.1.1",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"
   }

@@ -1,7 +1,8 @@
 import css from "./overlay.css?inline";
 
-import { bagOrFallback, interpretBag, isBlockedControl, type BagControl, type InterpretedBag } from "../../src/apple-bag.js";
+import { bagOrFallback, isBlockedControl, type BagControl } from "../../src/apple-bag.js";
 import { applePage, hostOptedOut, type ApplePage } from "../../src/sites.js";
+import { isMisleadingProductName, readPageBag, type PageBag } from "./bag-dom.js";
 import { mountOverlay, type OverlayModel } from "./overlay.js";
 
 type Settings = {
@@ -39,6 +40,7 @@ async function start(kind: ApplePage): Promise<void> {
 
   let code = "";
   let posting = false;
+  let quantity: number | null = null;
   let update = (_next: OverlayModel): void => undefined;
   let mounted = false;
   let stopped = false;
@@ -80,7 +82,7 @@ async function start(kind: ApplePage): Promise<void> {
     }
     if (cart.necessity === "necessary") {
       gate.lift();
-      show(modelFrom(cart, thread, settings, null));
+      show(modelFrom(cart, thread, settings, null, quantity));
       return;
     }
     if (cart.isUnlocked === true && cart.status === "unlocked") {
@@ -89,22 +91,30 @@ async function start(kind: ApplePage): Promise<void> {
       host.remove();
       return;
     }
-    show(modelFrom(cart, thread, settings, null));
+    show(modelFrom(cart, thread, settings, null, quantity));
     gate.paint();
   };
 
-  const publish = async (interpreted: InterpretedBag) => {
+  const publish = async (interpreted: PageBag) => {
     if (code || posting) {
       return;
     }
     posting = true;
+    if (interpreted.quantity != null) {
+      quantity = interpreted.quantity;
+    }
     try {
       if (!interpreted.parsed && settings.cartCode && kind === "checkout") {
         code = settings.cartCode;
         await refresh();
         return;
       }
-      const bag = bagOrFallback(interpreted);
+      const names = interpreted.itemNames.filter((name) => !isMisleadingProductName(name, document));
+      const bag = bagOrFallback(
+        names.length > 0
+          ? { itemNames: names, totalCents: interpreted.totalCents, parsed: interpreted.parsed }
+          : { itemNames: [], totalCents: null, parsed: false },
+      );
       const created = await post("/api/carts", {
         userId: settings.userId,
         itemNames: bag.itemNames.slice(0, 1),
@@ -121,7 +131,7 @@ async function start(kind: ApplePage): Promise<void> {
       if (created.necessity === "necessary") {
         gate.lift();
       }
-      show(modelFrom(created, { turns: [] }, settings, null));
+      show(modelFrom(created, { turns: [] }, settings, null, quantity));
       window.setInterval(() => {
         void refresh();
       }, 1000);
@@ -134,8 +144,11 @@ async function start(kind: ApplePage): Promise<void> {
     if (!document.body || code) {
       return;
     }
-    const interpreted = interpretBag(linesFrom(document.body));
-    if (interpreted.parsed) {
+    const interpreted = readPageBag(document.body);
+    if (interpreted.quantity != null) {
+      quantity = interpreted.quantity;
+    }
+    if (interpreted.parsed && interpreted.itemNames.length > 0) {
       void publish(interpreted);
     }
   };
@@ -150,7 +163,7 @@ async function start(kind: ApplePage): Promise<void> {
   });
   window.setTimeout(() => {
     if (!code) {
-      void publish(interpretBag(document.body ? linesFrom(document.body) : []));
+      void publish(document.body ? readPageBag(document.body) : readPageBag(document));
     }
   }, 4000);
 }
@@ -214,17 +227,6 @@ function installGate(kind: ApplePage): { paint: () => void; lift: () => void } {
   };
 }
 
-function linesFrom(root: ParentNode): string[] {
-  const element = root instanceof HTMLElement ? root : document.body;
-  if (!element) {
-    return [];
-  }
-  return element.innerText
-    .split(/\n+/)
-    .map((line) => line.replace(/\s+/g, " ").trim())
-    .filter((line) => line.length > 0 && line.length < 180);
-}
-
 function controlFrom(target: EventTarget | null): BagControl | null {
   const element = target instanceof Element ? target : null;
   const control = element?.closest("button, a, input, apple-pay-button, [role='button']");
@@ -238,7 +240,13 @@ function controlFrom(target: EventTarget | null): BagControl | null {
   };
 }
 
-function modelFrom(cart: Record<string, unknown>, thread: unknown, settings: Settings, error: string | null): OverlayModel {
+function modelFrom(
+  cart: Record<string, unknown>,
+  thread: unknown,
+  settings: Settings,
+  error: string | null,
+  quantity: number | null,
+): OverlayModel {
   const ping = isRecord(cart.lastPing) ? cart.lastPing : null;
   const turns = isRecord(thread) && Array.isArray(thread.turns) ? thread.turns.flatMap(turnFrom) : [];
   const names = Array.isArray(cart.items)
@@ -254,6 +262,7 @@ function modelFrom(cart: Record<string, unknown>, thread: unknown, settings: Set
     totalCents: typeof cart.totalCents === "number" ? cart.totalCents : 0,
     parsedFromPage: cart.parsedFromPage === true,
     itemNames: names,
+    quantity,
     explanation: typeof cart.explanation === "string" ? cart.explanation : null,
     decision: isRecord(cart.decision) ? decisionFrom(cart.decision) : null,
     signals: signalsFrom(cart.signals),
@@ -362,6 +371,7 @@ function emptyModel(settings: Settings, code: string, error: string): OverlayMod
     totalCents: 0,
     parsedFromPage: false,
     itemNames: [],
+    quantity: null,
     explanation: null,
     decision: null,
     signals: {},
