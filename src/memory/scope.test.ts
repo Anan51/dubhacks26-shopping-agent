@@ -7,12 +7,13 @@ import express, { type Request } from "express";
 
 import type { AccountDirectory, AccountUser } from "../auth/accounts.js";
 import { createMemoryRouter } from "../auth/routes.js";
-import type { BackboardClient, MemoryWrite } from "./backboard.js";
+import type { BackboardClient, MemoryRecord, MemorySearchHit, MemoryWrite } from "./backboard.js";
 import {
   createInMemoryIndex,
   getMemoriesForCurrentUser,
   personalizeNudge,
   rememberForCurrentUser,
+  searchMemoriesForCurrentUser,
   ScopeError,
   type MemoryIndex,
 } from "./service.js";
@@ -169,6 +170,138 @@ describe("memory scope", () => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
   });
+
+  it("ranks the caller's rows from Backboard hits for a multi-word query", async () => {
+    const monitors = record(USER, "regret", "studio monitors", "bb-monitors");
+    const headphones = record(USER, "regret", "Bought noise-cancelling headphones for a flight", "bb-phones");
+    const cable = record(USER, "goal", "spare headphones audio cable", "bb-cable");
+    const client = searchClient([
+      { id: "bb-monitors", content: "mentioned speakers", score: 0.93, createdAt: null },
+      {
+        id: null,
+        content: "Regret: Bought noise-cancelling headphones for a flight",
+        score: 0.81,
+        createdAt: null,
+      },
+    ]);
+    const found = await searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "headphones audio" } }), {
+      directory: directoryOf(account(USER, "asst-ada")),
+      client,
+      index: listing([cable, headphones, monitors]),
+      remote: true,
+    });
+    assert.equal(
+      found.some((memory) => memory.text === "Bought noise-cancelling headphones for a flight"),
+      true,
+    );
+    assert.deepEqual(found, [monitors, headphones]);
+    assert.deepEqual(client.calls, [{ assistantId: "asst-ada", query: "headphones audio", limit: 10 }]);
+  });
+
+  it("still returns an owned row for a single-word query", async () => {
+    const headphones = record(USER, "regret", "Bought noise-cancelling headphones for a flight", "bb-phones");
+    const monitors = record(USER, "goal", "studio monitors", "bb-monitors");
+    const client = searchClient([
+      {
+        id: "bb-phones",
+        content: "Regret: Bought noise-cancelling headphones for a flight",
+        score: 0.88,
+        createdAt: null,
+      },
+    ]);
+    const found = await searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "headphones" } }), {
+      directory: directoryOf(account(USER, "asst-ada")),
+      client,
+      index: listing([monitors, headphones]),
+      remote: true,
+    });
+    assert.deepEqual(found, [headphones]);
+    assert.deepEqual(client.calls, [{ assistantId: "asst-ada", query: "headphones", limit: 10 }]);
+  });
+
+  it("does not return another user's memory from search", async () => {
+    const ada = account(USER, "asst-ada");
+    const byron = account(OTHER, "asst-byron");
+    const adaMemory = record(USER, "regret", "Bought noise-cancelling headphones for a flight", "bb-ada");
+    const byronMemory = record(OTHER, "regret", "headphones audio desk", "bb-byron");
+    const client = searchClient([
+      { id: "bb-byron", content: "Regret: headphones audio desk", score: 0.99, createdAt: null },
+      {
+        id: "bb-ada",
+        content: "Regret: Bought noise-cancelling headphones for a flight",
+        score: 0.4,
+        createdAt: null,
+      },
+    ]);
+    const deps = {
+      directory: directoryOfUsers([ada, byron]),
+      client,
+      index: listing([byronMemory, adaMemory]),
+      remote: true,
+    };
+    const found = await searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "headphones audio" } }), deps);
+    assert.deepEqual(found, [adaMemory]);
+    assert.equal(
+      found.every((memory) => memory.userId === USER),
+      true,
+    );
+    const other = await searchMemoriesForCurrentUser(request({ id: OTHER }, { body: { query: "headphones audio" } }), deps);
+    assert.deepEqual(other, [byronMemory]);
+    assert.deepEqual(client.calls, [
+      { assistantId: "asst-ada", query: "headphones audio", limit: 10 },
+      { assistantId: "asst-byron", query: "headphones audio", limit: 10 },
+    ]);
+    await assert.rejects(
+      () =>
+        searchMemoriesForCurrentUser(
+          request({ id: USER }, { body: { query: "headphones audio", userId: OTHER } }),
+          deps,
+        ),
+      /Refusing a client-supplied/,
+    );
+    assert.equal(client.calls.length, 2);
+  });
+
+  it("matches any query token when Backboard search has no usable hits", async () => {
+    const headphones = record(USER, "regret", "Bought noise-cancelling headphones for a flight", "bb-phones");
+    const milk = record(USER, "goal", "milk and eggs", null);
+    const modes: { remote: boolean; assistantId: string | null; hits: MemorySearchHit[] }[] = [
+      { remote: false, assistantId: "asst-ada", hits: [] },
+      { remote: true, assistantId: "asst-ada", hits: [] },
+      { remote: true, assistantId: null, hits: [] },
+      { remote: true, assistantId: "asst-ada", hits: [{ id: null, content: "   ", score: null, createdAt: null }] },
+    ];
+    for (const mode of modes) {
+      const client = searchClient(mode.hits);
+      const found = await searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "headphones audio" } }), {
+        directory: directoryOf(account(USER, mode.assistantId)),
+        client,
+        index: listing([milk, headphones]),
+        remote: mode.remote,
+      });
+      assert.deepEqual(found, [headphones]);
+      if (mode.remote && mode.assistantId) {
+        assert.deepEqual(client.calls, [{ assistantId: "asst-ada", query: "headphones audio", limit: 10 }]);
+      } else {
+        assert.deepEqual(client.calls, []);
+      }
+    }
+
+    const secret = record(USER, "regret", "secret-regret-from-a", null);
+    const unrelated = record(USER, "goal", "b only wants to wait", null);
+    const local = searchClient([]);
+    const narrowed = await searchMemoriesForCurrentUser(
+      request({ id: USER }, { body: { query: "secret-regret-from-a" } }),
+      {
+        directory: directoryOf(account(USER, null)),
+        client: local,
+        index: listing([unrelated, secret]),
+        remote: false,
+      },
+    );
+    assert.deepEqual(narrowed, [secret]);
+    assert.deepEqual(local.calls, []);
+  });
 });
 
 function request(user: { id: string }, extra: { query?: Request["query"]; body?: unknown; params?: Request["params"] } = {}): Request {
@@ -180,14 +313,14 @@ function request(user: { id: string }, extra: { query?: Request["query"]; body?:
   } as Request;
 }
 
-function record(userId: string, type: MemoryRecordType, text: string) {
+function record(userId: string, type: MemoryRecordType, text: string, backboardMemoryId: string | null = null) {
   return {
     userId,
     type,
     text,
     createdAt: "2026-01-01T00:00:00.000Z",
     meta: {},
-    backboardMemoryId: null,
+    backboardMemoryId,
   };
 }
 
@@ -209,6 +342,15 @@ function recordingIndex(): { index: MemoryIndex; calls: string[] } {
   };
 }
 
+function account(id: string, backboardAssistantId: string | null): AccountUser {
+  return {
+    id,
+    email: `${id}@example.com`,
+    passwordHash: "$argon2id$stored",
+    backboardAssistantId,
+  };
+}
+
 function directoryOf(user: AccountUser): AccountDirectory {
   return {
     async findByEmail() {
@@ -222,6 +364,68 @@ function directoryOf(user: AccountUser): AccountDirectory {
     },
     async setAssistantId(_id, assistantId) {
       user.backboardAssistantId = assistantId;
+    },
+  };
+}
+
+function directoryOfUsers(users: AccountUser[]): AccountDirectory {
+  return {
+    async findByEmail(email) {
+      return users.find((user) => user.email === email) ?? null;
+    },
+    async findById(id) {
+      return users.find((user) => user.id === id) ?? null;
+    },
+    async create() {
+      throw new Error("not used");
+    },
+    async setAssistantId(id, assistantId) {
+      const user = users.find((entry) => entry.id === id);
+      if (user) {
+        user.backboardAssistantId = assistantId;
+      }
+    },
+  };
+}
+
+function listing(rows: MemoryRecord[]): MemoryIndex {
+  return {
+    async insert(row) {
+      return row;
+    },
+    async list() {
+      return rows;
+    },
+  };
+}
+
+function searchClient(hits: MemorySearchHit[]): BackboardClient & {
+  calls: { assistantId: string; query: string; limit: number }[];
+} {
+  const calls: { assistantId: string; query: string; limit: number }[] = [];
+  return {
+    calls,
+    async createAssistant() {
+      throw new Error("not used");
+    },
+    async addMemory() {
+      throw new Error("not used");
+    },
+    async getMemoryOperation() {
+      throw new Error("not used");
+    },
+    async searchMemories(assistantId: string, query: string, limit: number) {
+      calls.push({ assistantId, query, limit });
+      return hits;
+    },
+    async sendMessage() {
+      throw new Error("not used");
+    },
+    async resetMemories() {
+      return undefined;
+    },
+    async deleteMemory() {
+      return undefined;
     },
   };
 }
