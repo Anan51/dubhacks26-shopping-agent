@@ -139,10 +139,7 @@ function paintListed(doc: Document, buttons: readonly Element[], blocked: boolea
     }
   }
   for (const node of buttons) {
-    node.setAttribute("data-simmer-blocked", "1");
-    node.setAttribute("aria-disabled", "true");
-    disableIfOurs(node);
-    ensureBadge(node);
+    markBlocked(node);
   }
   for (const badge of doc.querySelectorAll("[data-simmer-badge]")) {
     const previous = badge.previousElementSibling;
@@ -168,10 +165,7 @@ export function paintBlockedControls(doc: Document, kind: ApplePage, blocked: bo
   }
   for (const node of doc.querySelectorAll(CANDIDATES)) {
     if (shouldBlock(node, kind)) {
-      node.setAttribute("data-simmer-blocked", "1");
-      node.setAttribute("aria-disabled", "true");
-      disableIfOurs(node);
-      ensureBadge(node);
+      markBlocked(node);
     } else if (node.hasAttribute("data-simmer-blocked")) {
       restoreControl(node);
     }
@@ -188,19 +182,34 @@ function isDisableable(node: Element): node is HTMLButtonElement | HTMLInputElem
   return node.tagName === "BUTTON" || node.tagName === "INPUT";
 }
 
+function markBlocked(node: Element): void {
+  setAttrIfChanged(node, "data-simmer-blocked", "1");
+  setAttrIfChanged(node, "aria-disabled", "true");
+  disableIfOurs(node);
+  ensureBadge(node);
+}
+
+function setAttrIfChanged(node: Element, name: string, value: string): void {
+  if (node.getAttribute(name) !== value) {
+    node.setAttribute(name, value);
+  }
+}
+
 function disableIfOurs(node: Element): void {
   if (!isDisableable(node)) {
     return;
   }
   if (node.getAttribute("data-simmer-disabled") === "1") {
-    node.disabled = true;
+    if (!node.disabled) {
+      node.disabled = true;
+    }
     return;
   }
   if (node.disabled) {
     return;
   }
   node.disabled = true;
-  node.setAttribute("data-simmer-disabled", "1");
+  setAttrIfChanged(node, "data-simmer-disabled", "1");
 }
 
 function restoreControl(node: Element): void {
@@ -231,7 +240,9 @@ function shouldBlock(node: Element, kind: ApplePage): boolean {
 function ensureBadge(node: Element): void {
   const next = node.nextElementSibling;
   if (next?.hasAttribute("data-simmer-badge")) {
-    next.textContent = "Marinating";
+    if (next.textContent !== "Marinating") {
+      next.textContent = "Marinating";
+    }
     return;
   }
   const badge = node.ownerDocument.createElement("span");

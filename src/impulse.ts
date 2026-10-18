@@ -172,7 +172,7 @@ export function scoreReply(input: {
       : `Purchase score ${input.score} = impulse ${input.impulse} + grade ${signed} (${input.gradeSource}).`;
   switch (input.bucket) {
     case "free":
-      return `${math} Score ${input.score} unlocks the bag. Apple's button works again. Simmer will not click it.`;
+      return `${math} ${freeBandSentence(input.score, false)}`;
     case "soft":
       return `${math} Score ${input.score} is soft. ${input.alternative} Sleep on it if you want. That pause is optional.`;
     case "strict":
@@ -220,7 +220,8 @@ export function applyPurchaseScore(
   switch (bucket) {
     case "free":
       liftCart(cart);
-      return { bucket, reply };
+      syncFreeBandCopy(cart);
+      return { bucket, reply: leadParagraph(cart.explanation) ?? reply };
     case "soft":
       if (cart.status === "vault" && cart.vaultMode !== "soft") {
         cart.vaultUntil = null;
@@ -235,6 +236,37 @@ export function applyPurchaseScore(
     default:
       return assertNever(bucket);
   }
+}
+
+/** Desk copy for a free score. The bag stays paused until Unlock is pressed. */
+export function freeBandSentence(score: number, unlocked: boolean): string {
+  if (unlocked) {
+    return "OK to buy. Apple's button works again. Simmer will not click it.";
+  }
+  return `Score ${score} means this can be unlocked. Press Unlock to get Apple's button back. This stays Paused.`;
+}
+
+/** Rewrites the free-band sentence so it matches whether Unlock has been pressed. */
+export function syncFreeBandCopy(cart: Pick<Cart, "scoreBucket" | "purchaseScore" | "isUnlocked" | "status" | "explanation">): void {
+  if (cart.scoreBucket !== "free" || cart.purchaseScore == null || cart.explanation == null) {
+    return;
+  }
+  const locked = freeBandSentence(cart.purchaseScore, false);
+  const open = freeBandSentence(cart.purchaseScore, true);
+  const unlocked = cart.isUnlocked && cart.status === "unlocked";
+  const next = unlocked ? open : locked;
+  const previous = unlocked ? locked : open;
+  if (cart.explanation.includes(previous)) {
+    cart.explanation = cart.explanation.replace(previous, next);
+  }
+}
+
+function leadParagraph(text: string | null): string | null {
+  if (!text) {
+    return null;
+  }
+  const part = text.split("\n\n")[0];
+  return part && part.length > 0 ? part : null;
 }
 
 function withoutScorePreface(text: string | null): string | null {

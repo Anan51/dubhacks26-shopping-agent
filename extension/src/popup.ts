@@ -24,6 +24,8 @@ type CartPayload = {
   purchaseScore?: GlanceItem["purchaseScore"];
   scoreBucket?: GlanceItem["scoreBucket"];
   scoreReason?: GlanceItem["scoreReason"];
+  replied?: boolean;
+  advice?: string | null;
   lastPing?: ReplyPing;
 };
 
@@ -134,6 +136,8 @@ function toGlance(cart: CartPayload): GlanceItem {
     purchaseScore: cart.purchaseScore ?? null,
     scoreBucket: cart.scoreBucket ?? null,
     scoreReason: cart.scoreReason ?? null,
+    replied: cart.replied === true,
+    advice: cart.advice ?? null,
   };
 }
 

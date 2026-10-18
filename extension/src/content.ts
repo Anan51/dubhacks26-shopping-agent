@@ -1,12 +1,13 @@
 import css from "./overlay.css?inline";
 
 import { applePage, hostOptedOut, isFallbackBag } from "../../src/sites.js";
-import { bagContentKey, bagReadAction, readPageBag, watchBagDom, type BagWatch, type PageBag } from "./bag-dom.js";
+import { bagContentKey, bagParseKey, bagReadAction, readPageBag, watchBagDom, type BagWatch, type PageBag } from "./bag-dom.js";
 import { bindCheckoutClicks } from "./checkout-record.js";
 import { deliverExtensionMessage, extensionContextAlive } from "./extension-context.js";
 import { installGate } from "./gate.js";
 import { buttonsToBlock } from "./overlay/block.js";
 import { mountSimmerCard } from "./overlay/mount.js";
+import { watchPage, type PageWatch } from "./page-observer.js";
 import type { OverlayModel } from "./overlay.js";
 import { adapterFor } from "./stores/index.js";
 import type { StoreAdapter } from "./stores/adapter.js";
@@ -54,7 +55,8 @@ async function start(site: StoreAdapter): Promise<void> {
   let fallbackTimer = 0;
   let showBlock = false;
   let bagWatch: BagWatch | null = null;
-  let pageObserver: MutationObserver | null = null;
+  let pageWatch: PageWatch | null = null;
+  let lastParsed: string | null = null;
   let stopCheckout = (): void => undefined;
 
   const shutdown = () => {
@@ -65,7 +67,7 @@ async function start(site: StoreAdapter): Promise<void> {
     window.clearInterval(pollTimer);
     window.clearTimeout(fallbackTimer);
     bagWatch?.disconnect();
-    pageObserver?.disconnect();
+    pageWatch?.disconnect();
     gate.stop();
     card?.unmount();
     stopCheckout();
@@ -80,8 +82,8 @@ async function start(site: StoreAdapter): Promise<void> {
     window.clearTimeout(fallbackTimer);
     bagWatch?.disconnect();
     bagWatch = null;
-    pageObserver?.disconnect();
-    pageObserver = null;
+    pageWatch?.disconnect();
+    pageWatch = null;
     showBlock = false;
     gate.lift();
     gate.stop();
@@ -147,7 +149,7 @@ async function start(site: StoreAdapter): Promise<void> {
       gate.lift();
     } else {
       showBlock = true;
-      gate.paint();
+      paintLock();
     }
     if (cart.necessity === "necessary") {
       show(modelFrom(cart, null, settings, null, quantity));
@@ -227,7 +229,7 @@ async function start(site: StoreAdapter): Promise<void> {
         gate.lift();
       } else {
         showBlock = true;
-        gate.paint();
+        paintLock();
       }
       if (previous !== "" && previous === code) {
         await refresh();
@@ -261,6 +263,13 @@ async function start(site: StoreAdapter): Promise<void> {
     if (interpreted.quantity != null) {
       quantity = interpreted.quantity;
     }
+    const parsedKey = bagParseKey(interpreted);
+    if (parsedKey !== null && parsedKey === lastParsed) {
+      return;
+    }
+    if (parsedKey !== null) {
+      lastParsed = parsedKey;
+    }
     if (code) {
       const action = bagReadAction(postedKey, interpreted);
       switch (action) {
@@ -280,20 +289,28 @@ async function start(site: StoreAdapter): Promise<void> {
     }
   };
 
-  pageObserver = new MutationObserver(() => {
-    if (stopped) {
+  const paintLock = () => {
+    const write = () => gate.paint();
+    if (pageWatch) {
+      pageWatch.mute(write);
       return;
     }
-    if (showBlock) {
-      gate.paint();
-    }
-    if (bagWatch && !bagWatch.connected() && bagWatch.retarget()) {
-      readBagNow();
-    }
-  });
+    write();
+  };
+
   whenReady(() => {
     bagWatch = watchBagDom(document, readBagNow);
-    pageObserver?.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    pageWatch = watchPage(document, () => {
+      if (stopped) {
+        return;
+      }
+      if (showBlock) {
+        paintLock();
+      }
+      if (bagWatch && !bagWatch.connected() && bagWatch.retarget()) {
+        readBagNow();
+      }
+    });
     readBagNow();
   });
   fallbackTimer = window.setTimeout(() => {

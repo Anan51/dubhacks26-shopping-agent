@@ -16,6 +16,8 @@ npm run dev
 
 Leave Photon blank until you connect an iMessage line. Replies that unlock a bag are graded iMessage texts.
 
+The server listens on 127.0.0.1 unless `HOST` is set. The extension and `npm run dev:demo` still use `http://localhost:4321`.
+
 `npm run typecheck` and `npm run build` compile the server, the desk, and the extension.
 
 ## Demo mode

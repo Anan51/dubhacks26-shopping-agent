@@ -32,6 +32,8 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
 
 export type AppConfig = {
   port: number;
+  /** Socket bind address. Defaults to loopback. HOST overrides it. */
+  host: string;
   origin: string;
   lockMs: number;
   demoReminderMs: number;
@@ -54,6 +56,7 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const xaiApiKey = env.XAI_API_KEY?.trim();
   return {
     port,
+    host: listenHost(env),
     origin: env.WAITMATE_PUBLIC_ORIGIN?.trim() || `http://localhost:${port}`,
     lockMs: numberFrom(env.WAITMATE_LOCK_MS, DEFAULT_LOCK_MS),
     demoReminderMs: numberFrom(env.WAITMATE_DEMO_REMINDER_MS, 60_000),
@@ -75,6 +78,15 @@ export function photonConfigured(env: NodeJS.ProcessEnv = process.env): boolean 
       env.PHOTON_PLATFORM?.trim() &&
       env.PHOTON_AGENT_HANDLE?.trim(),
   );
+}
+
+/** Loopback unless HOST is set to something else. */
+export function listenHost(env: NodeJS.ProcessEnv = process.env): string {
+  const host = env.HOST?.trim();
+  if (host && host.length > 0) {
+    return host;
+  }
+  return "127.0.0.1";
 }
 
 function numberFrom(value: string | undefined, fallback: number): number {

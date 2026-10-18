@@ -34,6 +34,18 @@ describe("popup current bag", () => {
     });
     assert.equal(awaitingShopperReply(asked), true);
     assert.equal(plainCartLabel(asked, NOW), PAUSED_LABEL);
+    const graded = item({
+      necessity: null,
+      status: "locked",
+      justificationGrade: null,
+      lastPing: { delivered: true },
+      purchaseScore: null,
+      scoreBucket: null,
+      replied: true,
+      advice: "Wait. Your current phone is broken.",
+    });
+    assert.equal(awaitingShopperReply(graded), false);
+    assert.equal(plainCartLabel(graded, NOW).includes("reply"), false);
     assert.equal(plainCartLabel(item({ necessity: null, purchaseScore: 5, scoreBucket: "free", status: "unlocked" }), NOW), OK_LABEL);
     assert.equal(plainCartLabel(item({ necessity: "necessary", purchaseScore: 5, scoreBucket: "free", status: "unlocked" }), NOW), NECESSARY_LABEL);
     assert.equal(plainCartLabel(item({ necessity: null, status: "unlocked", purchaseScore: null, userImpulseScore: null }), NOW), OK_LABEL);

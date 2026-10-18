@@ -32,7 +32,7 @@ import { readConfig } from "./config.js";
 import { handleIncomingEvent } from "./handle-message.js";
 import { isPersonaId, PERSONAS, personaById, personaFor, type PersonaId } from "./history.js";
 import { decide, EXAMPLE_OWED_CENTS } from "./heuristic.js";
-import { applyPurchaseScore, classifyNecessity, keywordNecessity } from "./impulse.js";
+import { applyPurchaseScore, classifyNecessity, keywordNecessity, syncFreeBandCopy } from "./impulse.js";
 import { EXAMPLE_OFFERS } from "./offers.js";
 import { deskChatUrl, linkPhoneSms, linkPhoneText, prefilledText, textSimmerLink } from "./links.js";
 import { isUserId, notifyCheckout } from "./phone-link.js";
@@ -332,6 +332,7 @@ export function createApp(deps: AppDeps): RunningApp {
       }
     }
     unlockCart(cart, now());
+    syncFreeBandCopy(cart);
     deps.store.saveCart(cart);
     scheduler.disarm(cart.code);
     res.json(publicCart(cart, deps.agentHandle));

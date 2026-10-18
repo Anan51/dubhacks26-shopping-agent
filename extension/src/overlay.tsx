@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import { DEMO_REPLY_PRESETS } from "../../src/demo-reply-presets.js";
 import { formatUsd } from "../../src/format.js";
-import { oneLineVerdict, type GlanceItem, type GlanceSignals, type GlanceSources } from "../../src/glance.js";
+import { overlayClockText, type GlanceItem, type GlanceSignals, type GlanceSources } from "../../src/glance.js";
 import { offersSleep } from "../../src/score-band.js";
 import { pauseSentence, priceLine, simmerKicker } from "../../src/overlay-copy.js";
 import type { Decision } from "../../src/types.js";
@@ -103,14 +103,7 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
         : model.status === "vault"
           ? "Paused"
           : "Marinating";
-  const clock =
-    model.necessity === "necessary" && model.purchaseScore == null
-      ? "Checkout can proceed"
-      : model.purchaseScore != null || model.status === "vault"
-        ? oneLineVerdict(glance, now)
-        : remaining > 0
-          ? clockFrom(remaining)
-          : "0:00";
+  const clock = overlayClockText(glance, now, remaining);
   const showLockControls = model.necessity !== "necessary" && !unreadable;
   const unlinked = !model.pingDelivered && model.pingReason !== "send_failed" && model.linkMessage;
   return (
@@ -213,14 +206,9 @@ function toGlance(model: OverlayModel): GlanceItem {
     purchaseScore: model.purchaseScore,
     scoreBucket: model.scoreBucket,
     scoreReason: model.scoreReason,
+    replied: model.replied,
+    advice: model.advice,
   };
-}
-
-function clockFrom(ms: number): string {
-  const total = Math.max(0, Math.ceil(ms / 1000));
-  const minutes = Math.floor(total / 60);
-  const seconds = total % 60;
-  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
 function DemoReplyForm({ onSend }: { onSend: (text: string) => void }) {

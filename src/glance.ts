@@ -51,6 +51,9 @@ export type GlanceItem = {
   purchaseScore?: number | null;
   scoreBucket?: "free" | "soft" | "strict" | null;
   scoreReason?: string | null;
+  /** True after a reply has been graded and the advice has been stored. */
+  replied?: boolean;
+  advice?: string | null;
 };
 
 export type LockGlance = "Marinating" | "Unlocked" | "Paused";
@@ -84,6 +87,9 @@ export function oneLineVerdict(item: GlanceItem, nowMs: number): string {
     return vaultLine(item.vaultUntil, nowMs);
   }
   if (item.userImpulseScore != null && item.purchaseScore == null && item.status === "locked") {
+    if (item.replied) {
+      return gradedReplyStatus(item);
+    }
     return "Reply and say why you want this.";
   }
   if (item.status === "unlocked") {
@@ -96,6 +102,46 @@ export function oneLineVerdict(item: GlanceItem, nowMs: number): string {
   const months = decision.waitMonths > 0 ? decision.waitMonths : 1;
   const monthWord = months === 1 ? "month" : "months";
   return `Waiting about ${months} ${monthWord} saves about ${approxUsd(decision.savingsCents)}.`;
+}
+
+/**
+ * Corner-card status line.
+ * A graded reply replaces the countdown, including a grade that does not move the score.
+ */
+export function overlayClockText(item: GlanceItem, nowMs: number, remainingMs: number): string {
+  if (item.necessity === "necessary" && item.purchaseScore == null) {
+    return "Checkout can proceed";
+  }
+  if (item.replied || item.purchaseScore != null || item.status === "vault") {
+    return oneLineVerdict(item, nowMs);
+  }
+  if (remainingMs > 0) {
+    const total = Math.max(0, Math.ceil(remainingMs / 1000));
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
+    return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+  }
+  return "0:00";
+}
+
+function gradedReplyStatus(item: GlanceItem): string {
+  const advice = item.advice?.trim() ?? "";
+  const match = /^([A-Za-z]+)\.\s+(.+)$/.exec(advice);
+  const choice = match?.[1];
+  const because = match?.[2];
+  if (choice && because) {
+    const reason = because.replace(/\.$/, "");
+    const lower = reason.charAt(0).toLowerCase() + reason.slice(1);
+    return `Got your reply. ${choice}: ${lower}.`;
+  }
+  if (advice.length > 0) {
+    return `Got your reply. ${advice}`;
+  }
+  const reason = item.gradeReason?.trim();
+  if (reason) {
+    return `Got your reply. ${reason}`;
+  }
+  return "Got your reply.";
 }
 
 export type BreakdownLine = {

@@ -19,7 +19,11 @@ export function awaitingShopperReply(item: {
   status: GlanceItem["status"];
   justificationGrade?: number | null;
   lastPing?: ReplyPing;
+  replied?: boolean;
 }): boolean {
+  if (item.replied === true) {
+    return false;
+  }
   return item.status === "locked" && item.justificationGrade == null && item.lastPing?.delivered === true;
 }
 
