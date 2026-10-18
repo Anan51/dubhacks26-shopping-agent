@@ -33,7 +33,7 @@ import { handleIncomingEvent } from "./handle-message.js";
 import { isPersonaId, PERSONAS, personaById, personaFor, type PersonaId } from "./history.js";
 import { decide, EXAMPLE_OWED_CENTS } from "./heuristic.js";
 import { applyPurchaseScore, classifyNecessity, keywordNecessity, syncFreeBandCopy } from "./impulse.js";
-import { capItemName } from "./item-name.js";
+import { capItemName, readHiddenItemCount } from "./item-name.js";
 import { EXAMPLE_OFFERS } from "./offers.js";
 import { deskChatUrl, linkPhoneSms, linkPhoneText, prefilledText, textSimmerLink } from "./links.js";
 import { isUserId, notifyCheckout } from "./phone-link.js";
@@ -266,6 +266,7 @@ export function createApp(deps: AppDeps): RunningApp {
       if (authUserId && readAuthUserId(existing) === undefined) {
         assignAuthUser(existing, authUserId);
       }
+      rememberHiddenItemCount(existing, bag.hiddenItemCount);
       if (existing.necessity == null) {
         const keyword = keywordNecessity(bagText);
         applyNecessity(existing, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason });
@@ -294,6 +295,7 @@ export function createApp(deps: AppDeps): RunningApp {
       userId,
       taken: (code) => deps.store.getCart(code) !== undefined,
     });
+    rememberHiddenItemCount(cart, bag.hiddenItemCount);
     seedDecision(cart);
     if (deps.personalizeNudge && req.user?.id && cart.explanation) {
       cart.explanation = await deps.personalizeNudge(cart.explanation, req.user.id);
@@ -747,7 +749,9 @@ function applyNecessity(
   }
 }
 
-function postedBag(body: Record<string, unknown>): { itemNames: string[]; totalCents: number; parsed: true } | null {
+function postedBag(
+  body: Record<string, unknown>,
+): { itemNames: string[]; totalCents: number; parsed: true; hiddenItemCount: number } | null {
   const names = Array.isArray(body.itemNames)
     ? body.itemNames
         .flatMap((name) => {
@@ -764,7 +768,17 @@ function postedBag(body: Record<string, unknown>): { itemNames: string[]; totalC
   if (!parsed || total === null) {
     return null;
   }
-  return { itemNames: names, totalCents: total, parsed: true };
+  return { itemNames: names, totalCents: total, parsed: true, hiddenItemCount: readHiddenItemCount(body.hiddenItemCount) };
+}
+
+/** Kept off the Cart type. The extension reads it back from the saved cart JSON. */
+function rememberHiddenItemCount(cart: Cart, hiddenItemCount: number): void {
+  const record = cart as Cart & { hiddenItemCount?: number };
+  if (hiddenItemCount > 0) {
+    record.hiddenItemCount = hiddenItemCount;
+    return;
+  }
+  delete record.hiddenItemCount;
 }
 
 function publicCart(cart: Cart, agentHandle: string | null) {

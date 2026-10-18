@@ -1,4 +1,4 @@
-import { postedItemNames } from "../../src/item-name.js";
+import { cartItemLines, readHiddenItemCount } from "../../src/item-name.js";
 import { applePage, hostOptedOut, isFallbackBag } from "../../src/sites.js";
 import { bagContentKey, bagParseKey, bagReadAction, watchBagDom, type BagWatch, type PageBag } from "./bag-dom.js";
 import { bindCheckoutClicks } from "./checkout-record.js";
@@ -333,12 +333,14 @@ function start(site: StoreAdapter): Running {
         }
         return;
       }
+      const posted = cartItemLines(bag.items.map((item) => item.item));
       const created = await post(
         page,
         "/api/carts",
         {
           userId: settings.userId,
-          itemNames: postedItemNames(bag.items.map((item) => item.item)),
+          itemNames: posted.shown,
+          ...(posted.more > 0 ? { hiddenItemCount: posted.more } : {}),
           totalCents: bag.total,
           parsed: true,
           pageHost: page.location.hostname,
@@ -502,6 +504,7 @@ function modelFrom(
     totalCents: typeof cart.totalCents === "number" ? cart.totalCents : 0,
     parsedFromPage: cart.parsedFromPage === true,
     itemNames: names,
+    hiddenItemCount: readHiddenItemCount(cart.hiddenItemCount),
     quantity,
     explanation: typeof cart.explanation === "string" ? cart.explanation : null,
     decision: isRecord(cart.decision) ? decisionFrom(cart.decision) : null,

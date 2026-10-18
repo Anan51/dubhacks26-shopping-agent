@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import { JSDOM } from "jsdom";
 import React from "react";
 
+// Brings the Express Request.user augmentation into this project's typecheck.
+import "../../src/auth/session.js";
+import { createApp } from "../../src/app.js";
+import { createMemoryStore } from "../../src/store.js";
 import { boot, type BootHost } from "./content-boot.js";
 import { mountOverlay, type OverlayModel } from "./overlay.js";
 
@@ -154,6 +160,39 @@ describe("cart card items", { concurrency: false }, () => {
       booted.close();
     }
   });
+
+  it("rebuilds +k more from the saved cart after the real post", async () => {
+    const running = createApp({
+      store: createMemoryStore(),
+      origin: "http://127.0.0.1",
+      lockMs: 600_000,
+      demoReminderMs: 60_000,
+      demoDefault: false,
+      agentHandle: null,
+      photon: null,
+      xaiModel: "grok-test",
+      xaiTimeoutMs: 1_000,
+      polish: async (template) => template,
+      backboardEnabled: false,
+    });
+    const server = createServer(running.app);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${address.port}`;
+    try {
+      await assertSavedBag(base, ["Alpha", "Bravo", "Charlie", "Delta", "Echo"], 0);
+      await assertSavedBag(base, ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"], 1);
+      await assertSavedBag(base, ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf"], 2);
+    } finally {
+      running.scheduler.stop();
+      running.stopCheckIns();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
 });
 
 function line(asin: string, title: string, price: string, quantity: string): string {
@@ -174,7 +213,77 @@ function cartHtml(rows: string[], subtotal: string): string {
   </body>`;
 }
 
-function bootCart(url: string, html: string): { document: Document; posts: PostedBag[]; close: () => void } {
+type CartPostBody = { itemNames?: string[]; totalCents?: number; hiddenItemCount?: number };
+
+async function assertSavedBag(base: string, names: string[], hidden: number): Promise<void> {
+  const dollars = names.length.toFixed(2);
+  let saved: Record<string, unknown> | null = null;
+  const booted = bootCart(
+    "https://www.amazon.com/gp/cart/view.html",
+    cartHtml(
+      names.map((name, index) =>
+        line(
+          `B${index}`,
+          name,
+          "$1.00",
+          `<select name="quantity"><option value="1" selected>1</option></select>`,
+        ),
+      ),
+      `$${dollars}`,
+    ),
+    async (body) => {
+      const response = await fetch(`${base}/api/carts`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const parsed = (await response.json()) as Record<string, unknown>;
+      if (!response.ok) {
+        throw new Error(`cart post failed: ${response.status}`);
+      }
+      saved = parsed;
+      return parsed;
+    },
+  );
+  try {
+    await Promise.race([
+      booted.saved,
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(() => reject(new Error("saved cart did not rebuild")), 5_000);
+      }),
+    ]);
+    await flush();
+    const cart = saved as Record<string, unknown> | null;
+    const items = Array.isArray(cart?.items) ? cart.items : [];
+    const itemNames = items.flatMap((item) =>
+      item && typeof item === "object" && "name" in item && typeof item.name === "string" ? [item.name] : [],
+    );
+    assert.deepEqual(itemNames, names.slice(0, 5));
+    assert.equal(cart?.hiddenItemCount, hidden > 0 ? hidden : undefined);
+    const text = cardText(booted.document);
+    for (const name of names.slice(0, 5)) {
+      assert.equal(text.includes(name), true, name);
+    }
+    for (const name of names.slice(5)) {
+      assert.equal(text.includes(name), false, name);
+    }
+    if (hidden > 0) {
+      assert.equal(text.includes(`+${hidden} more`), true);
+    } else {
+      assert.equal(text.includes(" more"), false);
+    }
+    assert.equal(text.includes(`${names.length} items · $${names.length}`), true);
+    assert.equal(booted.document.querySelector("input[name='proceedToRetailCheckout']")?.getAttribute("data-simmer-blocked"), "1");
+  } finally {
+    booted.close();
+  }
+}
+
+function bootCart(
+  url: string,
+  html: string,
+  save?: (body: CartPostBody) => Promise<Record<string, unknown>>,
+): { document: Document; posts: PostedBag[]; saved: Promise<void>; close: () => void } {
   const dom = new JSDOM(html, { url });
   const view = dom.window;
   const previous = {
@@ -182,6 +291,12 @@ function bootCart(url: string, html: string): { document: Document; posts: Poste
     window: (globalThis as { window?: Window }).window,
   };
   const posts: PostedBag[] = [];
+  let markSaved: () => void = () => undefined;
+  let failSaved: (error: unknown) => void = () => undefined;
+  const saved = new Promise<void>((resolve, reject) => {
+    markSaved = resolve;
+    failSaved = reject;
+  });
   view.setInterval = (() => 0) as typeof view.setInterval;
   view.setTimeout = (() => 0) as typeof view.setTimeout;
   const pageWindow = view as unknown as Window;
@@ -194,7 +309,7 @@ function bootCart(url: string, html: string): { document: Document; posts: Poste
         action?: string;
         method?: string;
         path?: string;
-        body?: { itemNames?: string[]; totalCents?: number };
+        body?: CartPostBody;
       };
       if (payload.action === "settings") {
         callback?.({ origin: "http://127.0.0.1:4321", optOut: [], userId: "user-local", cartCode: "" });
@@ -208,6 +323,18 @@ function bootCart(url: string, html: string): { document: Document; posts: Poste
         const itemNames = payload.body?.itemNames ?? [];
         const totalCents = payload.body?.totalCents ?? 0;
         posts.push({ itemNames, totalCents });
+        if (save) {
+          void save(payload.body ?? {})
+            .then((body) => {
+              callback?.({ ok: true, body });
+              markSaved();
+            })
+            .catch((error: unknown) => {
+              callback?.({ ok: false, body: null });
+              failSaved(error);
+            });
+          return;
+        }
         callback?.({
           ok: true,
           body: {
@@ -219,6 +346,7 @@ function bootCart(url: string, html: string): { document: Document; posts: Poste
             items: itemNames.map((name) => ({ name })),
           },
         });
+        markSaved();
         return;
       }
       callback?.({ ok: true, body: null });
@@ -235,6 +363,7 @@ function bootCart(url: string, html: string): { document: Document; posts: Poste
   return {
     document: view.document,
     posts,
+    saved,
     close() {
       (globalThis as { document?: Document }).document = previous.document;
       (globalThis as { window?: Window }).window = previous.window;
