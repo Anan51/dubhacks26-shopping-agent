@@ -11,7 +11,8 @@ export function attachSurvey(
   origin: string,
   authorization: () => Promise<string | null>,
   onComplete: () => void,
-): { refresh(): Promise<boolean>; hide(): void } {
+  onUnauthorized: (token: string | null) => Promise<void>,
+): { refresh(): Promise<boolean | "unauthorized">; hide(): void } {
   const style = document.createElement("style");
   style.textContent = [
     "#simmer-survey { display: flex; flex-direction: column; gap: 0.35rem; padding-bottom: 0.4rem; }",
@@ -55,7 +56,12 @@ export function attachSurvey(
   return {
     async refresh() {
       error.hidden = true;
+      const token = await authorization();
       const state = await loadSurvey(origin, authorization);
+      if (state === "unauthorized") {
+        await onUnauthorized(token);
+        return "unauthorized";
+      }
       const completed = state?.completed === true;
       section.hidden = completed;
       return completed;
@@ -79,12 +85,17 @@ export function attachSurvey(
       const price = Number(row.price.value);
       return [{ item, price: Number.isFinite(price) ? price : Number.NaN, regretted: row.regretted.checked }];
     });
+    const token = await authorization();
     try {
       const response = await surveyFetch(origin, "/onboarding/survey", authorization, {
         hourlyRate: readOptionalMoney(hourly.input.value),
         weeklyBudget: readOptionalMoney(weekly.input.value),
         recentPurchases,
       });
+      if (response.status === 401) {
+        await onUnauthorized(token);
+        return;
+      }
       if (!response.ok) {
         error.hidden = false;
         error.textContent = "Could not save the survey.";
@@ -147,8 +158,14 @@ function readOptionalMoney(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-async function loadSurvey(origin: string, authorization: () => Promise<string | null>): Promise<SurveyState | null> {
+async function loadSurvey(
+  origin: string,
+  authorization: () => Promise<string | null>,
+): Promise<SurveyState | "unauthorized" | null> {
   const response = await surveyFetch(origin, "/onboarding/survey", authorization);
+  if (response.status === 401) {
+    return "unauthorized";
+  }
   if (!response.ok) {
     return null;
   }

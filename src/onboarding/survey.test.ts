@@ -17,7 +17,7 @@ import { createMemoryRuntime } from "../memory/runtime.js";
 import { PurchaseRecord } from "../purchases/model.js";
 import { createPurchaseRouter } from "../purchases/routes.js";
 import { budgetMemoryLine, countRegrets, getBudgetProfile, getHourlyRate, getSavedGoals, getWeeklyBudget, hasRegrettedPurchase, purchaseVoteLine, weeklySpend, writeUserMemoryLine } from "../purchases/service.js";
-import { createOnboardingRouter } from "./routes.js";
+import { createOnboardingRouter, createSettingsRouter } from "./routes.js";
 
 const SECRET = "survey-test-secret";
 let base = "";
@@ -69,6 +69,7 @@ describe("onboarding survey", () => {
     };
     app.use("/purchases", createPurchaseRouter(accountRoutes));
     app.use("/onboarding", createOnboardingRouter(accountRoutes));
+    app.use("/settings", createSettingsRouter(accountRoutes));
     const server = createServer(app);
     await new Promise<void>((resolve) => {
       server.listen(0, "127.0.0.1", () => resolve());
@@ -87,11 +88,12 @@ describe("onboarding survey", () => {
     await mongod.stop();
   });
 
-  it("saves the survey once, seeds purchases, and writes budget lines", async () => {
+  it("saves the survey once, records the purchases you entered, and writes budget lines", async () => {
     const ada = await signup("ada-survey@example.com");
     assert.equal(typeof ada.token, "string");
     const before = await get("/purchases/history", ada.token);
-    assert.equal((before.body.purchases as { isExample: boolean }[]).every((row) => row.isExample), true);
+    assert.deepEqual(before.body.purchases, []);
+    assert.equal(await PurchaseRecord.countDocuments({ userId: ada.id, isExample: true }), 0);
 
     const started = writes.length;
     const saved = await post(
@@ -111,14 +113,14 @@ describe("onboarding survey", () => {
       completed: boolean;
       hourlyRate: number;
       weeklyBudget: number;
-      purchases: { item: string; feedback: string; isExample: boolean; verdict: string | null }[];
+      purchases: { item: string; feedback: string; isExample: boolean; source: string; verdict: string | null }[];
     };
     assert.equal(body.completed, true);
     assert.equal(body.hourlyRate, 42);
     assert.equal(body.weeklyBudget, 150);
     assert.equal(body.purchases[0]?.feedback, "regretted");
     assert.equal(body.purchases[1]?.feedback, "kept");
-    assert.equal(body.purchases.every((row) => row.isExample === false && row.verdict === null), true);
+    assert.equal(body.purchases.every((row) => row.isExample === false && row.source === "survey" && row.verdict === null), true);
     assert.equal(writes.includes(budgetMemoryLine("hourly rate", 42)), true);
     assert.equal(writes.includes(budgetMemoryLine("weekly budget", 150)), true);
     assert.equal(writes.includes(purchaseVoteLine("regretted", "AirPods", "audio", 179)), true);
@@ -329,6 +331,65 @@ describe("onboarding survey", () => {
       /Backboard memory write failed/,
     );
   });
+
+  it("reads and updates settings, writes memory, and reflects the edit in the budget profile", async () => {
+    const ada = await signup("ada-settings@example.com");
+    const open = await fetch(`${base}/settings`);
+    assert.equal(open.status, 401);
+    const forged = await fetch(`${base}/settings`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", authorization: "Bearer not-a-token" },
+      body: JSON.stringify({ hourlyRate: 10 }),
+    });
+    assert.equal(forged.status, 401);
+
+    const initial = await get("/settings", ada.token);
+    assert.equal(initial.status, 200);
+    assert.deepEqual(initial.body, { hourlyRate: null, weeklyBudget: null });
+
+    const started = writes.length;
+    const saved = await patch("/settings", { hourlyRate: 55, weeklyBudget: 200 }, ada.token);
+    assert.equal(saved.status, 200);
+    assert.deepEqual(saved.body, { hourlyRate: 55, weeklyBudget: 200 });
+    assert.deepEqual(await getBudgetProfile(ada.id), { hourlyRate: 55, weeklyBudget: 200 });
+    assert.equal(writes.includes(budgetMemoryLine("hourly rate", 55)), true);
+    assert.equal(writes.includes(budgetMemoryLine("weekly budget", 200)), true);
+    assert.equal(writes.length, started + 2);
+
+    const onlyWeekly = await patch("/settings", { weeklyBudget: 90 }, ada.token);
+    assert.equal(onlyWeekly.status, 200);
+    assert.deepEqual(onlyWeekly.body, { hourlyRate: 55, weeklyBudget: 90 });
+    assert.deepEqual(await getBudgetProfile(ada.id), { hourlyRate: 55, weeklyBudget: 90 });
+    assert.equal(writes.includes(budgetMemoryLine("weekly budget", 90)), true);
+
+    const current = await get("/settings", ada.token);
+    assert.deepEqual(current.body, { hourlyRate: 55, weeklyBudget: 90 });
+  });
+
+  it("rejects settings that are not positive numbers and leaves the profile alone", async () => {
+    const ada = await signup("ada-settings-bad@example.com");
+    await patch("/settings", { hourlyRate: 40 }, ada.token);
+    const invalid: unknown[] = [
+      {},
+      { hourlyRate: 0 },
+      { hourlyRate: -5 },
+      { weeklyBudget: 0 },
+      { hourlyRate: "40" },
+      { weeklyBudget: null },
+      { hourlyRate: Number.POSITIVE_INFINITY },
+    ];
+    for (const body of invalid) {
+      const response = await patch("/settings", body, ada.token);
+      assert.equal(response.status, 400);
+      const message = String(response.body.error ?? "");
+      assert.equal(message.includes("hourlyRate"), false);
+      assert.equal(message.includes("weeklyBudget"), false);
+    }
+    assert.deepEqual(await getBudgetProfile(ada.id), { hourlyRate: 40, weeklyBudget: null });
+    const foreign = await patch("/settings", { userId: "someone-else", hourlyRate: 12 }, ada.token);
+    assert.equal(foreign.status, 400);
+    assert.deepEqual(await getBudgetProfile(ada.id), { hourlyRate: 40, weeklyBudget: null });
+  });
 });
 
 async function surveyCompleted(userId: string): Promise<boolean> {
@@ -353,6 +414,15 @@ async function signup(email: string): Promise<{ id: string; token: string }> {
 
 async function get(path: string, token: string): Promise<{ status: number; body: Record<string, unknown> }> {
   const response = await fetch(`${base}${path}`, { headers: { authorization: `Bearer ${token}` } });
+  return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+}
+
+async function patch(path: string, body: unknown, token: string): Promise<{ status: number; body: Record<string, unknown> }> {
+  const response = await fetch(`${base}${path}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
 }
 

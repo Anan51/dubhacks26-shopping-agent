@@ -1,6 +1,7 @@
 import { isRecord } from "../../src/record.js";
 import { authOriginFromStorage } from "./auth-flag.js";
 import { attachPurchaseHistory } from "./popup-purchases.js";
+import { attachSettings } from "./popup-settings.js";
 import { attachSurvey } from "./popup-survey.js";
 
 const LOGIN_ERROR = "Invalid email or password.";
@@ -17,12 +18,15 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
   const style = document.createElement("style");
   style.textContent = [
     "#simmer-auth { padding: 0.7rem 0.9rem 0; }",
-    "#simmer-auth form, #simmer-auth .signed { display: flex; flex-direction: column; gap: 0.35rem; }",
+    "#simmer-auth form, #simmer-auth .signed, #simmer-settings { display: flex; flex-direction: column; gap: 0.35rem; }",
     "#simmer-auth input, #simmer-auth button { font: inherit; }",
     "#simmer-auth input { border: 1px solid #eadccb; border-radius: 0.55rem; padding: 0.35rem 0.45rem; background: #fffaf3; color: inherit; }",
-    "#simmer-auth .row { display: flex; gap: 0.35rem; }",
+    "#simmer-auth .row, #simmer-auth .tabs { display: flex; gap: 0.35rem; }",
     "#simmer-auth button { background: #8a4b24; color: white; border: 0; border-radius: 999px; padding: 0.35rem 0.7rem; cursor: pointer; }",
+    "#simmer-auth .tabs button { background: transparent; color: inherit; border: 1px solid #eadccb; }",
+    "#simmer-auth .tabs button[aria-selected='true'] { background: #8a4b24; color: white; border-color: #8a4b24; }",
     "#simmer-auth .error { color: #8a4b24; font-size: 0.75rem; margin: 0; }",
+    "#simmer-settings { padding-bottom: 0.6rem; }",
   ].join("");
 
   const section = document.createElement("section");
@@ -37,7 +41,7 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
   const row = document.createElement("div");
   row.className = "row";
   const signup = actionButton("Sign up");
-  const login = actionButton("Log in");
+  const login = actionButton("Sign in");
   row.append(signup, login);
   form.append(email.label, password.label, row, error);
 
@@ -46,11 +50,25 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
   signed.hidden = true;
   const who = document.createElement("p");
   who.className = "fine";
-  const logout = actionButton("Log out");
+  const logout = actionButton("Sign out");
   signed.append(who, logout);
+
+  const tabs = document.createElement("div");
+  tabs.className = "tabs";
+  tabs.setAttribute("role", "tablist");
+  tabs.hidden = true;
+  const purchasesTab = tabButton("Past purchases");
+  const settingsTab = tabButton("Settings");
+  tabs.append(purchasesTab, settingsTab);
+
+  const purchasesPanel = document.createElement("div");
+  purchasesPanel.hidden = true;
+  const settingsPanel = document.createElement("div");
+  settingsPanel.hidden = true;
 
   section.append(form, signed);
   let sessionToken: string | null = null;
+  let viewEpoch = 0;
   const authorization = async (): Promise<string | null> => {
     if (sessionToken) {
       return sessionToken;
@@ -58,10 +76,12 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
     sessionToken = await readStoredToken();
     return sessionToken;
   };
-  const history = attachPurchaseHistory(section, origin, authorization);
+  const history = attachPurchaseHistory(purchasesPanel, origin, authorization, unauthorized);
+  const settings = attachSettings(settingsPanel, origin, authorization, unauthorized);
   const survey = attachSurvey(section, origin, authorization, () => {
-    history.show();
-  });
+    showPurchases();
+  }, unauthorized);
+  section.append(tabs, purchasesPanel, settingsPanel);
   parent.prepend(style, section);
 
   signup.addEventListener("click", () => {
@@ -72,6 +92,12 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
   });
   logout.addEventListener("click", () => {
     void signOut();
+  });
+  purchasesTab.addEventListener("click", () => {
+    showPurchases();
+  });
+  settingsTab.addEventListener("click", () => {
+    showSettings();
   });
   form.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -85,7 +111,7 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
     hideError();
     const body = { email: email.input.value.trim(), password: password.input.value };
     try {
-      const response = await authFetch(origin, kind === "signup" ? "/auth/signup" : "/auth/login", body);
+      const response = await authFetch(origin, kind === "signup" ? "/auth/signup" : "/auth/login", body, null);
       if (!response.ok) {
         showError(kind === "login" ? LOGIN_ERROR : SIGNUP_ERROR);
         return;
@@ -102,9 +128,13 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
   }
 
   async function refresh(): Promise<void> {
+    const view = viewEpoch;
     try {
       const token = await authorization();
       const response = await authFetch(origin, "/auth/me", undefined, token);
+      if (view !== viewEpoch) {
+        return;
+      }
       if (!response.ok) {
         if (response.status === 401) {
           sessionToken = null;
@@ -118,6 +148,7 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
         showSignedOut();
         return;
       }
+      sessionToken = await readStoredToken();
       await showSignedIn(account.email);
     } catch {
       showSignedOut();
@@ -125,12 +156,12 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
   }
 
   async function signOut(): Promise<void> {
+    viewEpoch += 1;
     hideError();
     try {
       await authFetch(origin, "/auth/logout", {});
     } catch {
       showError(REACH_ERROR);
-      return;
     }
     password.input.value = "";
     sessionToken = null;
@@ -138,19 +169,35 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
     showSignedOut();
   }
 
+  async function unauthorized(failedToken: string | null): Promise<void> {
+    if (sessionToken && sessionToken !== failedToken) {
+      return;
+    }
+    viewEpoch += 1;
+    sessionToken = null;
+    await clearStoredToken();
+    showSignedOut();
+  }
+
   async function showSignedIn(address: string, token?: string | null): Promise<void> {
+    const view = ++viewEpoch;
     if (token) {
       sessionToken = token;
       await storeToken(token);
+    } else if (!sessionToken) {
+      sessionToken = await readStoredToken();
     }
     form.hidden = true;
     signed.hidden = false;
     who.textContent = address;
     const completed = await survey.refresh();
+    if (view !== viewEpoch || completed === "unauthorized") {
+      return;
+    }
     if (completed) {
-      history.show();
+      showPurchases();
     } else {
-      history.hide();
+      hideAccountPanels();
     }
   }
 
@@ -159,6 +206,36 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
     signed.hidden = true;
     who.textContent = "";
     survey.hide();
+    hideAccountPanels();
+  }
+
+  function showPurchases(): void {
+    tabs.hidden = false;
+    purchasesPanel.hidden = false;
+    settingsPanel.hidden = true;
+    purchasesTab.setAttribute("aria-selected", "true");
+    settingsTab.setAttribute("aria-selected", "false");
+    settings.hide();
+    history.show();
+  }
+
+  function showSettings(): void {
+    tabs.hidden = false;
+    purchasesPanel.hidden = true;
+    settingsPanel.hidden = false;
+    purchasesTab.setAttribute("aria-selected", "false");
+    settingsTab.setAttribute("aria-selected", "true");
+    history.hide();
+    settings.show();
+  }
+
+  function hideAccountPanels(): void {
+    tabs.hidden = true;
+    purchasesPanel.hidden = true;
+    settingsPanel.hidden = true;
+    purchasesTab.setAttribute("aria-selected", "false");
+    settingsTab.setAttribute("aria-selected", "false");
+    settings.hide();
     history.hide();
   }
 
@@ -171,6 +248,13 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
     error.hidden = true;
     error.textContent = "";
   }
+}
+
+function tabButton(text: string): HTMLButtonElement {
+  const button = actionButton(text);
+  button.setAttribute("role", "tab");
+  button.setAttribute("aria-selected", "false");
+  return button;
 }
 
 function field(name: string, labelText: string, type: string): { label: HTMLLabelElement; input: HTMLInputElement } {
@@ -235,4 +319,3 @@ function readStoredToken(): Promise<string | null> {
     });
   });
 }
-

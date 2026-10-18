@@ -7,9 +7,11 @@ import { isRecord } from "../record.js";
 import {
   budgetMemoryLine,
   categoryForItem,
+  getBudgetProfile,
   insertRealPurchase,
   purchaseVoteLine,
   writeUserMemoryLine,
+  type BudgetProfile,
   type PurchaseView,
 } from "../purchases/service.js";
 
@@ -82,6 +84,7 @@ export async function submitSurvey(
               price: purchase.price,
               verdict: null,
               feedback: purchase.regretted ? "regretted" : "kept",
+              source: "survey",
             },
             { session },
           ),
@@ -182,4 +185,48 @@ function isPrice(value: unknown): value is number {
 
 function asMoney(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+export async function readSettings(userId: string): Promise<BudgetProfile> {
+  return getBudgetProfile(userId);
+}
+
+export async function updateSettings(
+  userId: string,
+  body: unknown,
+  deps: { directory: AccountDirectory; client: BackboardClient; remote: boolean },
+): Promise<BudgetProfile> {
+  const parsed = parseSettingsPatch(body);
+  if (parsed.hourlyRate !== undefined) {
+    await writeUserMemoryLine(userId, budgetMemoryLine("hourly rate", parsed.hourlyRate), "goal", deps, { field: "hourlyRate" });
+  }
+  if (parsed.weeklyBudget !== undefined) {
+    await writeUserMemoryLine(userId, budgetMemoryLine("weekly budget", parsed.weeklyBudget), "goal", deps, { field: "weeklyBudget" });
+  }
+  await User.updateOne({ _id: userId }, { $set: parsed });
+  return getBudgetProfile(userId);
+}
+
+function parseSettingsPatch(body: unknown): { hourlyRate?: number; weeklyBudget?: number } {
+  if (!isRecord(body)) {
+    throw new SurveyError(400, "Enter hourly income or a weekly budget.");
+  }
+  const patch: { hourlyRate?: number; weeklyBudget?: number } = {};
+  if ("hourlyRate" in body) {
+    patch.hourlyRate = readPositiveMoney(body.hourlyRate, "Hourly income");
+  }
+  if ("weeklyBudget" in body) {
+    patch.weeklyBudget = readPositiveMoney(body.weeklyBudget, "Weekly budget");
+  }
+  if (patch.hourlyRate === undefined && patch.weeklyBudget === undefined) {
+    throw new SurveyError(400, "Enter hourly income or a weekly budget.");
+  }
+  return patch;
+}
+
+function readPositiveMoney(value: unknown, label: string): number {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0 && value <= MONEY_CAP) {
+    return value;
+  }
+  throw new SurveyError(400, `${label} must be a positive number.`);
 }

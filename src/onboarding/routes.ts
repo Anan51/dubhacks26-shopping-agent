@@ -5,14 +5,16 @@ import type { AccountDirectory } from "../auth/accounts.js";
 import { authenticatedUserId, refuseClientScope, ScopeError } from "../memory/service.js";
 import type { BackboardClient } from "../memory/backboard.js";
 import { isRecord } from "../record.js";
-import { readSurvey, submitSurvey, SurveyError } from "./service.js";
+import { readSettings, readSurvey, submitSurvey, SurveyError, updateSettings } from "./service.js";
 
-export function createOnboardingRouter(deps: {
+type OnboardingDeps = {
   authenticate: RequestHandler;
   directory: AccountDirectory;
   client: BackboardClient;
   remote: boolean;
-}): Router {
+};
+
+export function createOnboardingRouter(deps: OnboardingDeps): Router {
   const router = express.Router();
   router.use(deps.authenticate);
 
@@ -34,6 +36,35 @@ export function createOnboardingRouter(deps: {
       refuseAnyUserId(req);
       const survey = await submitSurvey(userId, req.body, deps);
       res.status(201).json(survey);
+    } catch (error: unknown) {
+      sendSurveyError(res, error);
+    }
+  });
+
+  return router;
+}
+
+export function createSettingsRouter(deps: OnboardingDeps): Router {
+  const router = express.Router();
+  router.use(deps.authenticate);
+
+  router.get("/", async (req, res) => {
+    try {
+      const userId = authenticatedUserId(req);
+      refuseClientScope(req, userId);
+      refuseAnyUserId(req);
+      res.json(await readSettings(userId));
+    } catch (error: unknown) {
+      sendSurveyError(res, error);
+    }
+  });
+
+  router.patch("/", async (req, res) => {
+    try {
+      const userId = authenticatedUserId(req);
+      refuseClientScope(req, userId);
+      refuseAnyUserId(req);
+      res.json(await updateSettings(userId, req.body, deps));
     } catch (error: unknown) {
       sendSurveyError(res, error);
     }

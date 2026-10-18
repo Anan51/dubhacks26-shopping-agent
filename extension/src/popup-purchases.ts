@@ -1,5 +1,5 @@
 import { isRecord } from "../../src/record.js";
-import { nextPurchaseFeedback, purchaseHistoryBanner, type PurchaseFeedback } from "./purchase-feedback.js";
+import { nextPurchaseFeedback, type PurchaseFeedback } from "./purchase-feedback.js";
 
 export type { PurchaseFeedback };
 
@@ -10,19 +10,20 @@ export type PurchaseRow = {
   price: number;
   feedback: PurchaseFeedback;
   isExample: boolean;
+  source: "survey" | "checkout";
 };
 
 export function attachPurchaseHistory(
   parent: HTMLElement,
   origin: string,
   authorization?: () => Promise<string | null>,
+  onUnauthorized?: (token: string | null) => Promise<void>,
 ): { show(): void; hide(): void } {
   const style = document.createElement("style");
   style.textContent = [
     "#simmer-purchases { padding: 0.2rem 0 0.4rem; }",
     "#simmer-purchases ul { list-style: none; margin: 0.35rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }",
     "#simmer-purchases li { display: flex; justify-content: space-between; gap: 0.4rem; align-items: center; background: #fffaf3; border: 1px solid #eadccb; border-radius: 0.7rem; padding: 0.4rem 0.5rem; }",
-    "#simmer-purchases .example { color: #8a4b24; font-size: 0.72rem; }",
     "#simmer-purchases .votes { display: flex; gap: 0.25rem; }",
     "#simmer-purchases button { font: inherit; border: 1px solid #eadccb; background: #fffaf3; border-radius: 999px; padding: 0.15rem 0.4rem; cursor: pointer; }",
     "#simmer-purchases button[aria-pressed='true'] { background: #8a4b24; border-color: #8a4b24; }",
@@ -32,15 +33,16 @@ export function attachPurchaseHistory(
   section.hidden = true;
   const heading = document.createElement("p");
   heading.className = "kicker";
-  heading.textContent = "Recent purchases";
-  const banner = document.createElement("p");
-  banner.className = "fine";
-  banner.hidden = true;
+  heading.textContent = "Past purchases";
+  const empty = document.createElement("p");
+  empty.className = "fine";
+  empty.textContent = "No purchases yet.";
+  empty.hidden = true;
   const list = document.createElement("ul");
   const status = document.createElement("p");
   status.className = "error";
   status.hidden = true;
-  section.append(heading, banner, list, status);
+  section.append(heading, empty, list, status);
   parent.append(style, section);
 
   return {
@@ -51,7 +53,7 @@ export function attachPurchaseHistory(
     hide() {
       section.hidden = true;
       list.replaceChildren();
-      banner.hidden = true;
+      empty.hidden = true;
       status.hidden = true;
     },
   };
@@ -59,10 +61,15 @@ export function attachPurchaseHistory(
   async function load(): Promise<void> {
     status.hidden = true;
     try {
+      const token = await (authorization?.() ?? Promise.resolve(null));
       const response = await fetch(`${origin}/purchases/history?limit=15`, {
         credentials: "include",
-        headers: { accept: "application/json", ...(await bearerHeader(authorization)) },
+        headers: { accept: "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
       });
+      if (response.status === 401) {
+        await onUnauthorized?.(token);
+        return;
+      }
       if (!response.ok) {
         status.hidden = false;
         status.textContent = "Could not load purchases.";
@@ -70,9 +77,7 @@ export function attachPurchaseHistory(
       }
       const body = (await response.json()) as unknown;
       const purchases = readPurchases(body);
-      const note = purchaseHistoryBanner(purchases);
-      banner.hidden = note === null;
-      banner.textContent = note ?? "";
+      empty.hidden = purchases.length > 0;
       list.replaceChildren();
       for (const purchase of purchases) {
         list.append(row(purchase));
@@ -87,12 +92,6 @@ export function attachPurchaseHistory(
     const item = document.createElement("li");
     const title = document.createElement("span");
     title.textContent = `${purchase.item} · ${purchase.category} · ${formatPrice(purchase.price)}`;
-    if (purchase.isExample) {
-      const label = document.createElement("span");
-      label.className = "example";
-      label.textContent = "Example data";
-      title.append(" ", label);
-    }
     const votes = document.createElement("span");
     votes.className = "votes";
     votes.append(voteButton(purchase, "kept", "Thumbs up"), voteButton(purchase, "regretted", "Thumbs down"));
@@ -115,13 +114,22 @@ export function attachPurchaseHistory(
   async function vote(purchase: PurchaseRow, choice: "kept" | "regretted"): Promise<void> {
     status.hidden = true;
     const feedback = nextPurchaseFeedback(purchase.feedback, choice);
+    const token = await (authorization?.() ?? Promise.resolve(null));
     try {
       const response = await fetch(`${origin}/purchases/${purchase._id}/feedback`, {
         method: "POST",
         credentials: "include",
-        headers: { accept: "application/json", "content-type": "application/json", ...(await bearerHeader(authorization)) },
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ feedback }),
       });
+      if (response.status === 401) {
+        await onUnauthorized?.(token);
+        return;
+      }
       if (!response.ok) {
         status.hidden = false;
         status.textContent = "Could not save that rating.";
@@ -133,17 +141,6 @@ export function attachPurchaseHistory(
       status.textContent = "Could not save that rating.";
     }
   }
-}
-
-async function bearerHeader(authorization?: () => Promise<string | null>): Promise<Record<string, string>> {
-  if (!authorization) {
-    return {};
-  }
-  const token = await authorization();
-  if (!token) {
-    return {};
-  }
-  return { authorization: `Bearer ${token}` };
 }
 
 function formatPrice(price: number): string {
@@ -165,6 +162,11 @@ function readPurchases(body: unknown): PurchaseRow[] {
       return [];
     }
     const feedback = entry.feedback === "regretted" || entry.feedback === "kept" ? entry.feedback : null;
+    const source = entry.source === "survey" ? "survey" : "checkout";
+    const isExample = entry.isExample === true;
+    if (isExample && source !== "survey") {
+      return [];
+    }
     return [
       {
         _id: entry._id,
@@ -172,7 +174,8 @@ function readPurchases(body: unknown): PurchaseRow[] {
         category: typeof entry.category === "string" ? entry.category : "other",
         price: typeof entry.price === "number" ? entry.price : 0,
         feedback,
-        isExample: entry.isExample === true,
+        isExample,
+        source,
       },
     ];
   });

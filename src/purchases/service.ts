@@ -19,6 +19,7 @@ export type PurchaseView = {
   verdict: string | null;
   feedback: PurchaseFeedback | null;
   isExample: boolean;
+  source: "survey" | "checkout";
   createdAt: string;
   ratedAt: string | null;
 };
@@ -32,14 +33,6 @@ export class PurchaseError extends Error {
     this.status = status;
   }
 }
-
-const EXAMPLES: { item: string; category: string; price: number; verdict: string }[] = [
-  { item: "iPhone 16", category: "phone", price: 799, verdict: "unlock" },
-  { item: "USB-C Charge Cable", category: "cable", price: 19, verdict: "unlock" },
-  { item: "AirPods", category: "audio", price: 179, verdict: "sleep" },
-  { item: "MagSafe Case", category: "case", price: 49, verdict: "sleep" },
-  { item: "Apple Watch", category: "watch", price: 399, verdict: "unlock" },
-];
 
 export function historyLimit(value: unknown): number {
   const parsed = typeof value === "string" ? Number(value) : 15;
@@ -173,29 +166,12 @@ export async function hasRegrettedPurchase(userId: string, category: string): Pr
   return found != null;
 }
 
+/** The shopper's own purchases, including survey entries. Seeded sample rows are not created or returned. */
 export async function listPurchases(userId: string, limit: number): Promise<PurchaseView[]> {
-  const real = await PurchaseRecord.countDocuments({ userId, isExample: false });
-  const showExamples = real === 0 && !(await surveyWasCompleted(userId));
-  if (showExamples) {
-    const examples = await PurchaseRecord.countDocuments({ userId, isExample: true });
-    if (examples === 0) {
-      const now = Date.now();
-      await PurchaseRecord.insertMany(
-        EXAMPLES.map((row, index) => ({
-          userId,
-          item: row.item,
-          category: row.category,
-          price: row.price,
-          verdict: row.verdict,
-          feedback: null,
-          isExample: true,
-          ratedAt: null,
-          createdAt: new Date(now - (EXAMPLES.length - index) * 60_000),
-        })),
-      );
-    }
-  }
-  const docs = await PurchaseRecord.find(showExamples ? { userId, isExample: true } : { userId, isExample: false })
+  const docs = await PurchaseRecord.find({
+    userId,
+    $or: [{ isExample: { $ne: true } }, { source: "survey" }],
+  })
     .sort({ createdAt: -1 })
     .limit(limit);
   return docs.map(toView);
@@ -209,6 +185,7 @@ export async function insertRealPurchase(
     price: number;
     verdict: string | null;
     feedback: PurchaseFeedback | null;
+    source?: "survey" | "checkout";
   },
   options?: { session?: ClientSession },
 ): Promise<PurchaseView> {
@@ -220,6 +197,7 @@ export async function insertRealPurchase(
     verdict: input.verdict,
     feedback: input.feedback,
     isExample: false,
+    source: input.source ?? "checkout",
     ratedAt: input.feedback ? new Date() : null,
     cartCode: null,
   };
@@ -371,6 +349,7 @@ function toView(doc: {
   verdict?: string | null;
   feedback?: string | null;
   isExample: boolean;
+  source?: string | null;
   createdAt?: Date;
   ratedAt?: Date | null;
 }): PurchaseView {
@@ -384,6 +363,7 @@ function toView(doc: {
     verdict: typeof doc.verdict === "string" && doc.verdict.length > 0 ? doc.verdict : null,
     feedback,
     isExample: doc.isExample,
+    source: doc.source === "survey" ? "survey" : "checkout",
     createdAt: doc.createdAt?.toISOString() ?? new Date(0).toISOString(),
     ratedAt: doc.ratedAt ? doc.ratedAt.toISOString() : null,
   };

@@ -78,28 +78,78 @@ describe("purchase feedback", () => {
     await mongod.stop();
   });
 
-  it("returns only the caller's newest purchases, capped at 15, and labels examples", async () => {
+  it("does not seed sample purchases when the shopper has no history", async () => {
     const ada = await signup("ada-purchases@example.com");
     const history = await get("/purchases/history?limit=15", ada.cookie);
     assert.equal(history.status, 200);
-    const purchases = history.body.purchases as { isExample: boolean; userId: string }[];
-    assert.equal(purchases.length, 5);
-    assert.equal(purchases.every((row) => row.isExample && row.userId === ada.id), true);
-    const capped = await get("/purchases/history?limit=2", ada.cookie);
-    assert.equal((capped.body.purchases as unknown[]).length, 2);
+    assert.deepEqual(history.body.purchases, []);
+    assert.equal(await PurchaseRecord.countDocuments({ userId: ada.id, isExample: true }), 0);
+  });
+
+  it("hides seeded examples and still returns survey purchases", async () => {
+    const ada = await signup("ada-filter@example.com");
+    await PurchaseRecord.create({
+      userId: ada.id,
+      item: "Fake AirPods",
+      category: "audio",
+      price: 179,
+      verdict: "sleep",
+      feedback: null,
+      isExample: true,
+      source: "checkout",
+    });
+    await PurchaseRecord.create({
+      userId: ada.id,
+      item: "Survey headphones",
+      category: "audio",
+      price: 99,
+      verdict: null,
+      feedback: "kept",
+      isExample: true,
+      source: "survey",
+    });
+    await PurchaseRecord.create({
+      userId: ada.id,
+      item: "Real cable",
+      category: "cable",
+      price: 19,
+      verdict: null,
+      feedback: null,
+      isExample: false,
+      source: "checkout",
+    });
+    const history = await get("/purchases/history?limit=15", ada.cookie);
+    const purchases = history.body.purchases as { item: string; source: string; isExample: boolean }[];
+    assert.deepEqual(
+      purchases.map((row) => row.item).sort(),
+      ["Real cable", "Survey headphones"],
+    );
+    assert.equal(purchases.find((row) => row.item === "Survey headphones")?.source, "survey");
+    assert.equal(purchases.some((row) => row.item === "Fake AirPods"), false);
   });
 
   it("saves, changes, and clears a rating and writes one Backboard line per change", async () => {
     const ada = await signup("ada-rate@example.com");
+    await PurchaseRecord.create({
+      userId: ada.id,
+      item: "AirPods",
+      category: "audio",
+      price: 179,
+      verdict: null,
+      feedback: null,
+      isExample: false,
+      source: "survey",
+    });
     const history = await get("/purchases/history", ada.cookie);
     const row = (history.body.purchases as { _id: string; item: string; category: string; price: number; isExample: boolean }[])[0];
     assert.ok(row);
+    assert.equal(row.isExample, false);
     const before = writes.length;
     const saved = await post(`/purchases/${row._id}/feedback`, { feedback: "regretted" }, ada.cookie);
     assert.equal(saved.status, 200);
     const purchase = saved.body.purchase as { feedback: string; isExample: boolean; ratedAt: string | null };
     assert.equal(purchase.feedback, "regretted");
-    assert.equal(purchase.isExample, true);
+    assert.equal(purchase.isExample, false);
     assert.ok(purchase.ratedAt);
     assert.equal(writes.at(-1), purchaseVoteLine("regretted", row.item, row.category, row.price));
 
@@ -122,6 +172,26 @@ describe("purchase feedback", () => {
   it("keeps ratings isolated and the regret helper per user", async () => {
     const ada = await signup("ada-iso@example.com");
     const blake = await signup("blake-iso@example.com");
+    await PurchaseRecord.create({
+      userId: ada.id,
+      item: "Ada phone",
+      category: "phone",
+      price: 20,
+      verdict: null,
+      feedback: null,
+      isExample: false,
+      source: "checkout",
+    });
+    await PurchaseRecord.create({
+      userId: blake.id,
+      item: "Blake case",
+      category: "case",
+      price: 30,
+      verdict: null,
+      feedback: null,
+      isExample: false,
+      source: "checkout",
+    });
     const adaHistory = await get("/purchases/history", ada.cookie);
     const blakeHistory = await get("/purchases/history", blake.cookie);
     const adaRow = (adaHistory.body.purchases as { _id: string; category: string }[])[0];
