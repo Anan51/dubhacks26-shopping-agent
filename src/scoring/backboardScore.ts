@@ -217,10 +217,9 @@ const NAME_STOPWORDS = new Set(["a", "an", "the", "and", "or", "of", "for", "to"
 
 /**
  * Sum of closeness for regret hits that match this bag.
- * Callers pass the bag category. The cart path passes `categoryForItem(item)`,
- * so a Pixel or Galaxy bag arrives as "other". A blank category falls back to
- * that same mapping. It does not override the name with a category the cart
- * never stored.
+ * Callers pass the bag category. The cart path passes `categoryForItem(item)`.
+ * A blank category falls back to that same mapping. It does not override the
+ * name with a category the cart never stored.
  * A regret counts when the saved vote category equals the bag category, or
  * `categoryForItem` of the memory subject equals the bag category, or the bag
  * category is "other" and the names share a token.
@@ -255,10 +254,10 @@ function similarRegretWeight(
 
 /**
  * Saved category, name-derived category, or a shared token on an "other" bag.
- * The cart's bag category is the keyword category. A Pixel 9 regret saved as
- * phone still matches that bag because the subject keywords to "other", and
- * the same name shares a token. A MacBook saved as "apple" still matches
- * because the subject keywords to "computer".
+ * The cart's bag category is the keyword category. A Pixel 9 bag keywords to
+ * phone, so it lines up with an iPhone regret. A MacBook saved as "apple"
+ * still matches because the subject keywords to "computer". A name that
+ * keywords to "other" still matches that bag when the names share a token.
  */
 function regretMatchesBag(bagCategory: string, bagItem: string, content: string): boolean {
   const subject = memorySubject(content);

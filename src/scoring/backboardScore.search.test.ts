@@ -392,8 +392,8 @@ describe("regret search scoring", { concurrency: false }, () => {
     assert.equal(flat.impulse.why, null);
   });
 
-  it("scores a Pixel 9 cart from a phone regret whose name keywords to other", async () => {
-    assert.equal(categoryForItem("Pixel 9"), "other");
+  it("scores a Pixel 9 cart from a phone regret whose name keywords to phone", async () => {
+    assert.equal(categoryForItem("Pixel 9"), "phone");
     const ada = await User.create({
       email: "search-pixel@example.com",
       passwordHash: HASH,
@@ -403,15 +403,37 @@ describe("regret search scoring", { concurrency: false }, () => {
     });
     const pixel = hit("regretted purchase: Pixel 9 (phone, $799.00)", 0.44);
     const raised = await scoreReadCart(ada.id, "Pixel 9", [pixel]);
-    // 4.5 + 0.7 * (1 - 0.44) rounds to 4.9. The cart category is "other".
+    // 4.5 + 0.7 * (1 - 0.44) rounds to 4.9. The cart category is "phone".
+    assert.ok(raised.impulse.score1to8 > 4.5);
+    assert.equal(raised.impulse.score1to8, 4.9);
+    assert.equal(raised.impulse.why, "You regretted a similar purchase before.");
+  });
+
+  it("raises a Pixel 9 cart from an iPhone regret", async () => {
+    assert.equal(categoryForItem("Pixel 9"), "phone");
+    assert.equal(categoryForItem("Galaxy S24"), "phone");
+    assert.equal(categoryForItem("Smartphone"), "phone");
+    assert.equal(categoryForItem("Android phone"), "phone");
+    assert.equal(categoryForItem("Galaxy Watch"), "watch");
+    assert.equal(categoryForItem("Pixel Tablet"), "tablet");
+    assert.equal(categoryForItem("megapixel print"), "other");
+    const ada = await User.create({
+      email: "search-pixel-iphone@example.com",
+      passwordHash: HASH,
+      hourlyRate: 30,
+      weeklyBudget: 500,
+      backboardAssistantId: "asst-pixel-iphone",
+    });
+    const iphone = hit("regretted purchase: iPhone 15 (phone, $999.00)", 0.44);
+    const raised = await scoreReadCart(ada.id, "Pixel 9", [iphone]);
     assert.ok(raised.impulse.score1to8 > 4.5);
     assert.equal(raised.impulse.score1to8, 4.9);
     assert.equal(raised.impulse.why, "You regretted a similar purchase before.");
   });
 
   it("raises a Galaxy S24 cart from a Pixel phone regret without a shared name token", async () => {
-    assert.equal(categoryForItem("Galaxy S24"), "other");
-    assert.equal(categoryForItem("Pixel 9"), "other");
+    assert.equal(categoryForItem("Galaxy S24"), "phone");
+    assert.equal(categoryForItem("Pixel 9"), "phone");
     const ada = await User.create({
       email: "search-galaxy@example.com",
       passwordHash: HASH,
@@ -499,7 +521,7 @@ describe("regret search scoring", { concurrency: false }, () => {
     });
     assert.equal(fromName.score, 4.9);
 
-    const unrecognized: ImpulseItem = { item: "Galaxy S24", category: "", price: 40, necessary: false };
+    const unrecognized: ImpulseItem = { item: "ceramic mug", category: "", price: 40, necessary: false };
     const missed = await computeImpulseScore(ada.id, unrecognized, undefined, {
       backboardEnabled: true,
       client: scriptedClient(async () => [freeText]),
