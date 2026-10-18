@@ -195,7 +195,7 @@ function launchExtension(userDataDir: string): Promise<BrowserContext> {
   });
 }
 
-async function assertSimmerCard(page: Page, store: "apple" | "amazon", notes: readonly string[]): Promise<void> {
+async function assertSimmerCard(page: Page, store: "apple" | "amazon" | "carrier", notes: readonly string[]): Promise<void> {
   const root = page.locator("#simmer-root");
   try {
     await root.waitFor({ state: "attached", timeout: 20_000 });

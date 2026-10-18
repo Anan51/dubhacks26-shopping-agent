@@ -86,13 +86,13 @@ export function readCarrierFacts(doc: Document): CarrierFacts | null {
   return { currentMonthlyCents, newMonthlyCents, balanceCents, monthsLeft, feeCents };
 }
 
-/** Reads a currency string such as "$80.00" into integer cents. */
+/** Reads a currency string such as "$80.00" into integer cents. A leading minus is not a price. */
 export function parseCarrierCents(text: string): number | null {
-  const match = text.replace(/\u00a0/g, " ").match(/-?\d[\d,]*(?:\.\d+)?/);
-  if (!match?.[0]) {
+  const match = text.replace(/\u00a0/g, " ").match(/-?\s*\$?\s*-?\d[\d,]*(?:\.\d+)?/);
+  if (!match?.[0] || match[0].includes("-")) {
     return null;
   }
-  const dollars = Number(match[0].replace(/,/g, ""));
+  const dollars = Number(match[0].replace(/[^0-9.]/g, ""));
   if (!Number.isFinite(dollars)) {
     return null;
   }
