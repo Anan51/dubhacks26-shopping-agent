@@ -45,7 +45,7 @@ const EXPECTED: Record<DemoReplyPreset, ExpectedReply> = {
     justificationGrade: -2,
     purchaseScore: 1,
     scoreBucket: "strict",
-    advice: "Skip. This looks like a want, not a need.",
+    advice: "Skip. This looks like a want, not a need. This one can wait.",
     impulsivenessLine: true,
     statusLine: "This one can wait.",
   },
@@ -53,15 +53,15 @@ const EXPECTED: Record<DemoReplyPreset, ExpectedReply> = {
     justificationGrade: null,
     purchaseScore: null,
     scoreBucket: null,
-    advice: "Wait. Your current phone is broken.",
+    advice: "Wait. Your current phone is broken. Give it a little time before you check out.",
     impulsivenessLine: false,
-    statusLine: "Got your reply. Wait: your current phone is broken.",
+    statusLine: "Got your reply. Wait: your current phone is broken. Give it a little time before you check out.",
   },
   "I need it for work tomorrow": {
     justificationGrade: 2,
     purchaseScore: 4,
     scoreBucket: "free",
-    advice: "Buy. This looks like a need.",
+    advice: "Buy. This looks like a need. You can check out after you press Unlock.",
     impulsivenessLine: true,
     statusLine: "Looks fine to buy.",
   },
@@ -240,7 +240,7 @@ describe("simulated reply", () => {
       assert.equal(typedReply.status, 200);
       assert.equal(typedReply.body.purchaseScore, 3);
       assert.equal(typedReply.body.scoreBucket, "soft");
-      assert.equal(typedReply.body.advice, "Wait. This looks like a need.");
+      assert.equal(typedReply.body.advice, "Wait. This looks like a need. Give it a little time before you check out.");
       assert.equal(typedReply.body.isUnlocked, false);
       assert.equal(typedReply.body.replied, true);
       const empty = await post(demo.base, "/api/dev/reply", { code: typed.body.code, text: "   " });

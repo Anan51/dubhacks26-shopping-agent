@@ -113,10 +113,34 @@ describe("overlay copy", () => {
     }
   });
 
-  it("sends buy, wait, or skip with one sentence", () => {
+  it("sends buy, wait, or skip with the follow-through in the same text", () => {
     assert.equal(adviceMessage(item({ scoreBucket: "strict" })), "Skip. This one can wait.");
     assert.equal(adviceMessage(item({ scoreBucket: "free", decision: { ...item().decision!, action: "unlock" } })), "Buy. You can check out after you press Unlock.");
-    assert.match(adviceMessage(item({ scoreBucket: "soft" })), /^Wait\./);
+    assert.equal(adviceMessage(item({ scoreBucket: "soft" })), "Wait. Give it a little time before you check out.");
+    const sources = item().motiveSources;
+    assert.ok(sources);
+    assert.equal(
+      adviceMessage(
+        item({
+          scoreBucket: "soft",
+          priceCents: 79_900,
+          signals: { needVsWant: "need", urgency: "medium", currentPhoneBroken: false },
+          motiveSources: { ...sources, needVsWant: "keywords" },
+        }),
+      ),
+      "Wait. This looks like a need. Give it a little time before you check out.",
+    );
+    assert.equal(
+      adviceMessage(
+        item({
+          scoreBucket: "free",
+          signals: { needVsWant: "need", currentPhoneBroken: true },
+          motiveSources: { ...sources, needVsWant: "keywords", currentPhoneBroken: "keywords" },
+          decision: { ...item().decision!, action: "unlock" },
+        }),
+      ),
+      "Buy. This looks like a need, and your current phone is broken. You can check out after you press Unlock.",
+    );
   });
 
   it("shows the price now, and a wait figure only when that number is real", () => {
