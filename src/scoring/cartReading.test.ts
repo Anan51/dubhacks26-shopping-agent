@@ -91,6 +91,22 @@ describe("impulse lock", () => {
       before,
     );
   });
+
+  it("does not vault an under-floor bag when the create score is strict", () => {
+    const cart = bag();
+    cart.totalCents = 3_200;
+    cart.items = itemsForBag(["Apple AirTag"], 3_200, true);
+    cart.isUnlocked = true;
+    cart.status = "unlocked";
+    applyImpulseReading(cart, reading(7, "strict"), NOW, 60_000, "create");
+    assert.equal(cart.impulse?.score1to8, 7);
+    assert.equal(cart.impulse?.band, "strict");
+    assert.equal(cart.userImpulseScore, 1);
+    assert.equal(cart.status, "unlocked");
+    assert.equal(cart.isUnlocked, true);
+    assert.equal(cart.vaultUntil, null);
+    assert.equal(cart.vaultMode, null);
+  });
 });
 
 const HASH = "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHQ$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

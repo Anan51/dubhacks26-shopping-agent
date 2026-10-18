@@ -718,6 +718,124 @@ describe("mixed bags on both cart routes", () => {
   });
 });
 
+describe("pause floor", () => {
+  it("unlocks a bag under $40 and still pauses a bag at or above it", async () => {
+    const running = createApp({
+      store: createMemoryStore(),
+      origin: "http://127.0.0.1",
+      lockMs: 600_000,
+      demoReminderMs: 60_000,
+      demoDefault: true,
+      agentHandle: null,
+      photon: null,
+      xaiModel: "grok-4.20-0309-non-reasoning",
+      xaiTimeoutMs: 8_000,
+      polish: async (template) => template,
+    });
+    const server = createServer(running.app);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${address.port}`;
+    try {
+      const airtag = await post(base, "/api/carts", postedItems("user-airtag", ["Apple AirTag"], 3_200));
+      const cheap = airtag.body as CartSnap;
+      assert.equal(airtag.status, 201);
+      assert.equal(cheap.necessity, "unnecessary");
+      assert.equal(cheap.necessitySource, "keywords");
+      assert.equal(cheap.status, "unlocked");
+      assert.equal(cheap.isUnlocked, true);
+      assert.equal(cheap.lastPing, null);
+      assert.equal(cheap.vaultUntil ?? null, null);
+      assert.equal(cheap.impulse?.score1to8, 4.5);
+      assert.equal(cheap.impulse?.band, "soft");
+      assert.equal(cheap.impulse?.why ?? null, null);
+      assert.equal(cheap.userImpulseScore, 2);
+      const paid = await post(base, "/api/pay", { code: cheap.code });
+      assert.equal(paid.status, 200);
+
+      const cloth = await post(
+        base,
+        "/api/carts",
+        postedItems("user-cloth", ["Apple AirTag", "Polishing cloth"], 3_500),
+      );
+      const several = cloth.body as CartSnap;
+      assert.equal(cloth.status, 201);
+      assert.equal(several.necessity, "unnecessary");
+      assert.equal(several.status, "unlocked");
+      assert.equal(several.isUnlocked, true);
+      assert.equal(several.lastPing, null);
+      assert.equal(several.impulse?.score1to8, 4.5);
+
+      const boundary = await post(base, "/api/carts", postedItems("user-boundary", ["Apple AirTag"], 4_000));
+      const exact = boundary.body as CartSnap;
+      assert.equal(boundary.status, 201);
+      assert.equal(exact.necessity, "unnecessary");
+      assert.equal(exact.status, "locked");
+      assert.equal(exact.isUnlocked, false);
+      assert.notEqual(exact.lastPing, null);
+      assert.equal(exact.impulse?.score1to8, 4.5);
+      const held = await post(base, "/api/pay", { code: exact.code });
+      assert.equal(held.status, 423);
+
+      const ipad = await post(base, "/api/carts", postedItems("user-ipad", ["iPad Pro 11"], 99_900));
+      const tablet = ipad.body as CartSnap;
+      assert.equal(ipad.status, 201);
+      assert.equal(tablet.necessity, "unnecessary");
+      assert.equal(tablet.necessitySource, "keywords");
+      assert.equal(tablet.status, "locked");
+      assert.equal(tablet.isUnlocked, false);
+      assert.notEqual(tablet.lastPing, null);
+      assert.equal(tablet.impulse?.score1to8, 4.5);
+      const paused = await post(base, "/api/pay", { code: tablet.code });
+      assert.equal(paused.status, 423);
+    } finally {
+      running.scheduler.stop();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("unlocks a reused under-floor bag without a ping", async () => {
+    const store = createMemoryStore();
+    const running = createApp({
+      store,
+      origin: "http://127.0.0.1",
+      lockMs: 600_000,
+      demoReminderMs: 60_000,
+      demoDefault: true,
+      agentHandle: null,
+      photon: null,
+      xaiModel: "grok-4.20-0309-non-reasoning",
+      xaiTimeoutMs: 8_000,
+      polish: async (template) => template,
+    });
+    const server = createServer(running.app);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${address.port}`;
+    try {
+      const again = await repostWithoutNecessity(store, base, postedItems("user-airtag-reuse", ["Apple AirTag", "Polishing cloth"], 3_900));
+      assert.equal(again.httpStatus, 200);
+      assert.equal(again.cart.necessity, "unnecessary");
+      assert.equal(again.cart.necessitySource, "keywords");
+      assert.equal(again.cart.status, "unlocked");
+      assert.equal(again.cart.isUnlocked, true);
+      assert.equal(again.cart.lastPing, null);
+      assert.equal(again.cart.impulse?.score1to8, 4.5);
+    } finally {
+      running.scheduler.stop();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+});
+
 describe("keyword necessity on the request path", () => {
   it("answers with keywords before a slow Grok call and repairs a deduped cart", async () => {
     const store = createMemoryStore();
@@ -786,8 +904,9 @@ describe("keyword necessity on the request path", () => {
       const revised = (await get(base, `/api/carts/${open.code}`)) as CartSnap;
       assert.equal(revised.necessitySource, "grok");
       assert.equal(revised.necessity, "unnecessary");
-      assert.equal(revised.status, "locked");
-      assert.equal(revised.isUnlocked, false);
+      assert.equal(revised.status, "unlocked");
+      assert.equal(revised.isUnlocked, true);
+      assert.equal(revised.lastPing, null);
     } finally {
       running.scheduler.stop();
       await new Promise<void>((resolve, reject) => {
@@ -845,6 +964,50 @@ describe("keyword necessity on the request path", () => {
       assert.equal(stored.status, "locked");
       const pay = await post(base, "/api/pay", { code: locked.code });
       assert.equal(pay.status, 423);
+    } finally {
+      running.scheduler.stop();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("lets Grok lock a keyword-necessary bag at the pause floor", async () => {
+    const running = createApp({
+      store: createMemoryStore(),
+      origin: "http://127.0.0.1",
+      lockMs: 600_000,
+      demoReminderMs: 60_000,
+      demoDefault: true,
+      agentHandle: null,
+      photon: null,
+      xaiApiKey: "test-key",
+      xaiModel: "grok-4.20-0309-non-reasoning",
+      xaiTimeoutMs: 8_000,
+      fetchImpl: async () =>
+        Response.json({
+          choices: [{ message: { content: '{"necessary": false, "reason": "Want."}' } }],
+        }),
+      polish: async (template) => template,
+    });
+    const server = createServer(running.app);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${address.port}`;
+    try {
+      const created = await post(base, "/api/carts", postedItems("user-floor-grok", ["USB-C charge cable"], 4_000));
+      assert.equal(created.status, 201);
+      const open = created.body as CartSnap;
+      assert.equal(open.necessity, "necessary");
+      assert.equal(open.isUnlocked, true);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const revised = (await get(base, `/api/carts/${open.code}`)) as CartSnap;
+      assert.equal(revised.necessitySource, "grok");
+      assert.equal(revised.necessity, "unnecessary");
+      assert.equal(revised.status, "locked");
+      assert.equal(revised.isUnlocked, false);
     } finally {
       running.scheduler.stop();
       await new Promise<void>((resolve, reject) => {
