@@ -22,7 +22,7 @@ The server listens on 127.0.0.1 unless `HOST` is set. The extension and `npm run
 
 ## CI
 
-Pull requests and pushes to `main` run [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on Node 24 (`ubuntu-latest`): `npm ci`, `npm test`, `npm run typecheck`, `npm run build`, then `npm run build:demo`. Those steps do not need MongoDB, Backboard, xAI, or Photon credentials.
+Pull requests and pushes to `main` run [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on Node 24 (`ubuntu-latest`): `npm ci`, `npm test`, `npm run typecheck`, `npm run build`, and `npm run build:demo`. A browser step then installs Playwright Chromium and runs `npm run test:e2e` and `npm run test:zoom`. `test:e2e` builds the default extension, starts the server on 127.0.0.1:4321 with no credentials, and checks that the Simmer card blocks checkout on `/fallback` and `/amazon`. None of these steps need MongoDB, Backboard, xAI, or Photon credentials.
 
 ![CI](https://github.com/Anan51/dubhacks26-shopping-agent/actions/workflows/ci.yml/badge.svg)
 
@@ -64,4 +64,4 @@ The manifest matches the Apple bag (`/shop/bag`, including regional paths), `sec
 
 ## Regret matching
 
-When `BACKBOARD_API_KEY` is set, scoring searches that shopper's assistant for similar regrets. The search score is a distance, and 0 is an identical memory. A hit counts when the memory is a regret, `categoryForItem` puts it in the same category as the bag, and the distance is at most `REGRET_SEARCH_MAX_DISTANCE`. The default is `0.7`. An unset value, or a value outside 0 to 1, falls back to `0.7`. When both sides are `other`, the names also have to share a token. The search waits 3.5 seconds. A slow or failed search counts as nothing, so the regret signal stays at zero. Regrets only raise the score. Kept purchases never lower it.
+When `BACKBOARD_API_KEY` is set, scoring searches that shopper's assistant for similar regrets. The search score is a distance, and 0 is an identical memory. A hit counts when the memory is a regret, a real category such as phone or computer matches by category while an `other` bag matches only when the item names share a word, and the distance is at most `REGRET_SEARCH_MAX_DISTANCE`. The default is `0.7`. An unset value, or a value outside 0 to 1, falls back to `0.7`. When both sides are `other`, the names also have to share a token. The search waits 3.5 seconds. A slow or failed search counts as nothing, so the regret signal stays at zero. Regrets only raise the score. Kept purchases never lower it.

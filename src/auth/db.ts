@@ -15,6 +15,8 @@ export function mongoConfigured(uri: string | null | undefined): boolean {
 type ConnectMongoOptions = {
   serverSelectionTimeoutMS?: number;
   dbName?: string;
+  autoIndex?: boolean;
+  autoCreate?: boolean;
 };
 
 /** A missing URI is not a startup error. Auth routes report that MongoDB is not configured. */
@@ -33,6 +35,8 @@ export async function connectMongo(uri: string | null, options: ConnectMongoOpti
         ? { serverSelectionTimeoutMS: options.serverSelectionTimeoutMS }
         : {}),
       ...(options.dbName ? { dbName: options.dbName } : {}),
+      ...(options.autoIndex !== undefined ? { autoIndex: options.autoIndex } : {}),
+      ...(options.autoCreate !== undefined ? { autoCreate: options.autoCreate } : {}),
     });
     state = "ready";
   } catch (error) {

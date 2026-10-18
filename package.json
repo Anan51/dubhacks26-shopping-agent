@@ -11,13 +11,15 @@
     "dev:demo": "node scripts/dev-demo.mjs",
     "dev:agent": "tsx src/server.ts",
     "start": "NODE_ENV=production tsx src/server.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json && tsc --noEmit -p extension/tsconfig.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.evidence.json && tsc --noEmit -p web/tsconfig.json && tsc --noEmit -p extension/tsconfig.json",
     "build": "tsc && vite build --config web/vite.config.ts && vite build --config extension/vite.config.ts",
     "build:demo": "node scripts/build-demo.mjs",
-    "test": "tsx --test src/*.test.ts src/auth/*.test.ts src/memory/*.test.ts src/purchases/*.test.ts src/onboarding/*.test.ts src/scoring/*.test.ts src/checkins/*.test.ts extension/src/*.test.ts",
+    "test": "tsx --test src/*.test.ts src/auth/*.test.ts src/memory/*.test.ts src/purchases/*.test.ts src/onboarding/*.test.ts src/scoring/*.test.ts src/checkins/*.test.ts extension/src/*.test.ts scripts/evidence-atlas.test.ts",
     "test:zoom": "playwright install chromium && tsx --test extension/zoom-card.test.ts extension/bag-presence.test.ts",
+    "test:e2e": "tsx --test --test-timeout=60000 --test-force-exit extension/e2e-smoke.test.ts",
     "smoke:grok": "tsx src/smoke-grok.ts",
-    "check:mongo": "tsx src/check-mongo.ts"
+    "check:mongo": "tsx src/check-mongo.ts",
+    "evidence:atlas": "tsx scripts/evidence-atlas.ts"
   },
   "dependencies": {
     "@photon-ai/api": "0.5.0",

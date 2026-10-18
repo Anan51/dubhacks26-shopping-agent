@@ -64,7 +64,7 @@ export function categoryForItem(name: string): string {
   if (/\b(macbook|mac|laptop)\b/.test(text)) {
     return "computer";
   }
-  if (/\b(phone|iphone)\b/.test(text)) {
+  if (/\b(phone|iphone|pixel|galaxy|smartphone|android phone)\b/.test(text)) {
     return "phone";
   }
   return "other";
