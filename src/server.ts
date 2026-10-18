@@ -8,6 +8,7 @@ import { createServer as createViteServer } from "vite";
 
 import { readAccountConfig } from "./auth/config.js";
 import { connectMongo, mongoState } from "./auth/db.js";
+import { redactMongoUri } from "./auth/redact.js";
 import { provisionAssistant, attachAccounts } from "./auth/routes.js";
 import { readOptionalUser, requireUser } from "./auth/session.js";
 import { createApp } from "./app.js";
@@ -56,7 +57,7 @@ export async function startServer(): Promise<void> {
     try {
       await connectMongo(accountConfig.mongodbUri);
     } catch (error: unknown) {
-      console.error(error instanceof Error ? error.message : "MongoDB connection failed.");
+      console.error(redactMongoUri(error instanceof Error ? error.message : "MongoDB connection failed."));
     }
   } else {
     console.log("MongoDB is not configured. Email login is off.");
