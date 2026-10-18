@@ -212,8 +212,9 @@ describe("purchase history popup", () => {
     await waitFor(() => document.body.textContent?.includes("Phone") === true);
     removeButton()?.click();
     confirmButton("Yes")?.click();
-    await waitFor(() => document.body.textContent?.includes("No purchases yet.") === true);
+    await waitFor(() => document.querySelector("#simmer-purchases li") === null);
     assert.equal(document.body.textContent?.includes("Phone"), false);
+    assert.equal(document.querySelector("#simmer-purchases .fine")?.hasAttribute("hidden"), false);
     assert.equal(deleted, "http://127.0.0.1:4321/purchases/64b000000000000000000012");
     assert.equal(authorization, "Bearer jwt-remove");
   });
@@ -277,7 +278,7 @@ describe("purchase history popup", () => {
     releaseDelete();
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.match(document.body.textContent ?? "", /Stale cable/);
-    assert.equal(document.body.textContent?.includes("No purchases yet."), false);
+    assert.equal(document.querySelector("#simmer-purchases .fine")?.hasAttribute("hidden"), true);
     assert.equal(document.body.textContent?.includes("Could not remove that purchase."), false);
     releaseFresh();
     await waitFor(() => document.body.textContent?.includes("Fresh phone") === true);
@@ -322,7 +323,11 @@ function removeButton(): HTMLButtonElement | undefined {
 }
 
 function confirmButton(label: "Yes" | "No"): HTMLButtonElement | undefined {
-  return [...document.querySelectorAll(".confirm button")].find((button) => button.textContent === label);
+  const button = [...document.querySelectorAll(".confirm button")].find((node) => node.textContent === label);
+  if (!button || button.tagName !== "BUTTON") {
+    return undefined;
+  }
+  return button as HTMLButtonElement;
 }
 
 async function waitFor(ready: () => boolean): Promise<void> {

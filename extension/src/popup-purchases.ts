@@ -128,8 +128,8 @@ export function attachPurchaseHistory(
       return;
     }
     const previous = item.querySelector(".row-error");
-    if (previous instanceof HTMLElement) {
-      previous.hidden = true;
+    if (previous) {
+      previous.setAttribute("hidden", "");
     }
     const confirm = document.createElement("p");
     confirm.className = "confirm";
@@ -179,13 +179,14 @@ export function attachPurchaseHistory(
   }
 
   function showRowError(item: HTMLLIElement, message: string): void {
-    let error = item.querySelector(".row-error");
-    if (!(error instanceof HTMLParagraphElement)) {
-      error = document.createElement("p");
-      error.className = "error row-error";
-      item.append(error);
+    let error = item.querySelector("p.row-error");
+    if (!error) {
+      const created = document.createElement("p");
+      created.className = "error row-error";
+      item.append(created);
+      error = created;
     }
-    error.hidden = false;
+    error.removeAttribute("hidden");
     error.textContent = message;
   }
 
