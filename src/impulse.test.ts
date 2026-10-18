@@ -13,6 +13,7 @@ import { InMemoryBackboardClient } from "./memory/backboard.js";
 import { PurchaseRecord } from "./purchases/model.js";
 import { purchaseVoteLine } from "./purchases/service.js";
 import { holdForUnlock, isEnforcedVault, itemsForBag, liftCart, sleepCart, startLockedCart, unlockCart, withCartFacts } from "./carts.js";
+import { CARRIER_PASS, CARRIER_WAIT, carrierSentence } from "./scoring/carrierSwitch.js";
 import { createMemoryStore } from "./store.js";
 import { decide } from "./heuristic.js";
 import { DELIBERATE, IMPULSIVE, personaFor } from "./history.js";
@@ -1024,11 +1025,13 @@ describe("keyword necessity on the request path", () => {
     try {
       const created = await post(base, "/api/carts", postedItems("user-floor-grok", ["USB-C charge cable"], 4_000));
       assert.equal(created.status, 201);
-      const open = created.body as CartSnap;
-      assert.equal(open.necessity, "necessary");
-      assert.equal(open.isUnlocked, true);
+      const pending = created.body as CartSnap;
+      assert.equal(pending.necessity, "necessary");
+      assert.equal(pending.necessitySource, "keywords");
+      assert.equal(pending.status, "locked");
+      assert.equal(pending.isUnlocked, false);
       await new Promise((resolve) => setTimeout(resolve, 50));
-      const revised = (await get(base, `/api/carts/${open.code}`)) as CartSnap;
+      const revised = (await get(base, `/api/carts/${pending.code}`)) as CartSnap;
       assert.equal(revised.necessitySource, "grok");
       assert.equal(revised.necessity, "unnecessary");
       assert.equal(revised.status, "locked");
@@ -1041,6 +1044,216 @@ describe("keyword necessity on the request path", () => {
     }
   });
 });
+
+describe("refineNecessity holds a keyword-necessary bag for the Grok veto", () => {
+  it("keeps a necessary bag pending until Grok confirms, then unlocks", async () => {
+    const held = deferResponse();
+    const running = await listenGrokApp(held.fetchImpl);
+    try {
+      const created = await post(running.base, "/api/carts", cableAtFloor("user-grok-confirm"));
+      assert.equal(created.status, 201);
+      const pending = created.body as CartSnap;
+      assert.equal(pending.necessity, "necessary");
+      assert.equal(pending.necessitySource, "keywords");
+      assert.equal(pending.status, "locked");
+      assert.equal(pending.isUnlocked, false);
+      const stillPending = (await get(running.base, `/api/carts/${pending.code}`)) as CartSnap;
+      assert.equal(stillPending.isUnlocked, false);
+      assert.equal(stillPending.status, "locked");
+
+      held.resolve(necessityJson(true, "A cable keeps the phone charging."));
+      const opened = await waitForCart(running.base, pending.code, (cart) => cart.necessitySource === "grok" && cart.isUnlocked);
+      assert.equal(opened.necessity, "necessary");
+      assert.equal(opened.necessitySource, "grok");
+      assert.equal(opened.status, "unlocked");
+      assert.equal(opened.isUnlocked, true);
+      const pay = await post(running.base, "/api/pay", { code: pending.code });
+      assert.equal(pay.status, 200);
+    } finally {
+      await running.close();
+    }
+  });
+
+  it("keeps the bag locked when Grok vetoes", async () => {
+    const held = deferResponse();
+    const running = await listenGrokApp(held.fetchImpl);
+    try {
+      const created = await post(running.base, "/api/carts", cableAtFloor("user-grok-veto"));
+      const pending = created.body as CartSnap;
+      assert.equal(pending.isUnlocked, false);
+      held.resolve(necessityJson(false, "Want."));
+      const revised = await waitForCart(running.base, pending.code, (cart) => cart.necessitySource === "grok");
+      assert.equal(revised.necessity, "unnecessary");
+      assert.equal(revised.necessitySource, "grok");
+      assert.equal(revised.status, "locked");
+      assert.equal(revised.isUnlocked, false);
+      const pay = await post(running.base, "/api/pay", { code: pending.code });
+      assert.equal(pay.status, 423);
+      assert.equal((pay.body as { ok: boolean; reason: string }).ok, false);
+      assert.equal((pay.body as { reason: string }).reason, "locked");
+    } finally {
+      await running.close();
+    }
+  });
+
+  it("unlocks from the keyword result when Grok errors", async () => {
+    const running = await listenGrokApp(async () => {
+      throw new Error("timeout");
+    });
+    try {
+      const created = await post(running.base, "/api/carts", cableAtFloor("user-grok-error"));
+      const pending = created.body as CartSnap;
+      assert.equal(created.status, 201);
+      assert.equal(pending.necessity, "necessary");
+      assert.equal(pending.necessitySource, "keywords");
+      assert.equal(pending.isUnlocked, false);
+      const opened = await waitForCart(running.base, pending.code, (cart) => cart.isUnlocked);
+      assert.equal(opened.necessity, "necessary");
+      assert.equal(opened.necessitySource, "keywords");
+      assert.equal(opened.status, "unlocked");
+      assert.equal(opened.isUnlocked, true);
+      const pay = await post(running.base, "/api/pay", { code: pending.code });
+      assert.equal(pay.status, 200);
+    } finally {
+      await running.close();
+    }
+  });
+
+  it("does not return a silent 200 when pay is clicked while the veto is pending", async () => {
+    const held = deferResponse();
+    const running = await listenGrokApp(held.fetchImpl);
+    try {
+      const created = await post(running.base, "/api/carts", cableAtFloor("user-grok-pay"));
+      const pending = created.body as CartSnap;
+      assert.equal(pending.status, "locked");
+      assert.equal(pending.isUnlocked, false);
+      const pay = await post(running.base, "/api/pay", { code: pending.code });
+      assert.notEqual(pay.status, 200);
+      assert.equal(pay.status, 423);
+      const gate = pay.body as { ok: boolean; httpStatus: number; isUnlocked: boolean; reason: string };
+      assert.equal(gate.ok, false);
+      assert.equal(gate.httpStatus, 423);
+      assert.equal(gate.isUnlocked, false);
+      assert.equal(gate.reason, "locked");
+      const unchanged = (await get(running.base, `/api/carts/${pending.code}`)) as CartSnap;
+      assert.equal(unchanged.isUnlocked, false);
+      assert.equal(unchanged.status, "locked");
+      assert.equal(unchanged.necessity, "necessary");
+      assert.equal(unchanged.necessitySource, "keywords");
+    } finally {
+      held.resolve(necessityJson(true, "Cable."));
+      await running.close();
+    }
+  });
+
+  it("does not hold a carrier cart at the pause floor when the item is keyword-necessary", async () => {
+    let grokCalls = 0;
+    const running = await listenGrokApp(() => {
+      grokCalls += 1;
+      return new Promise<Response>(() => undefined);
+    });
+    try {
+      const passed = await post(running.base, "/api/carts", {
+        ...cableAtFloor("user-carrier-pass"),
+        totalCents: CARRIER_PASS.newMonthlyCents,
+        carrier: CARRIER_PASS,
+      });
+      assert.equal(passed.status, 201);
+      const open = passed.body as CartSnap & { carrierLine?: string | null };
+      assert.equal(open.necessity, "necessary");
+      assert.equal(open.status, "unlocked");
+      assert.equal(open.isUnlocked, true);
+      assert.equal(open.carrierLine, carrierSentence(CARRIER_PASS));
+      const pay = await post(running.base, "/api/pay", { code: open.code });
+      assert.equal(pay.status, 200);
+      assert.equal((pay.body as { ok: boolean; isUnlocked: boolean }).ok, true);
+      assert.equal((pay.body as { isUnlocked: boolean }).isUnlocked, true);
+
+      const waiting = await post(running.base, "/api/carts", {
+        ...cableAtFloor("user-carrier-wait"),
+        totalCents: CARRIER_WAIT.newMonthlyCents,
+        carrier: CARRIER_WAIT,
+      });
+      assert.equal(waiting.status, 201);
+      const heldCart = waiting.body as CartSnap & { carrierLine?: string | null };
+      assert.equal(heldCart.necessity, "unnecessary");
+      assert.equal(heldCart.status, "locked");
+      assert.equal(heldCart.isUnlocked, false);
+      assert.equal(heldCart.carrierLine, carrierSentence(CARRIER_WAIT));
+      const blocked = await post(running.base, "/api/pay", { code: heldCart.code });
+      assert.equal(blocked.status, 423);
+      assert.equal((blocked.body as { ok: boolean; reason: string }).ok, false);
+      assert.equal((blocked.body as { reason: string }).reason, "locked");
+      assert.equal(grokCalls, 0);
+    } finally {
+      await running.close();
+    }
+  });
+});
+
+function cableAtFloor(userId: string) {
+  return postedItems(userId, ["USB-C charge cable"], 4_500);
+}
+
+function necessityJson(necessary: boolean, reason: string): Response {
+  return Response.json({
+    choices: [{ message: { content: JSON.stringify({ necessary, reason }) } }],
+  });
+}
+
+function deferResponse(): { fetchImpl: typeof fetch; resolve: (response: Response) => void } {
+  let resolveResponse: (response: Response) => void = () => undefined;
+  const pending = new Promise<Response>((resolve) => {
+    resolveResponse = resolve;
+  });
+  return {
+    fetchImpl: () => pending,
+    resolve: resolveResponse,
+  };
+}
+
+async function listenGrokApp(fetchImpl: typeof fetch): Promise<{ base: string; close: () => Promise<void> }> {
+  const running = createApp({
+    store: createMemoryStore(),
+    origin: "http://127.0.0.1",
+    lockMs: 600_000,
+    demoReminderMs: 60_000,
+    demoDefault: true,
+    agentHandle: null,
+    photon: null,
+    xaiApiKey: "test-key",
+    xaiModel: "grok-4.20-0309-non-reasoning",
+    xaiTimeoutMs: 8_000,
+    fetchImpl,
+    polish: async (template) => template,
+  });
+  const server = createServer(running.app);
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = server.address() as AddressInfo;
+  return {
+    base: `http://127.0.0.1:${address.port}`,
+    close: () =>
+      new Promise((resolve, reject) => {
+        running.scheduler.stop();
+        server.close((error) => (error ? reject(error) : resolve()));
+      }),
+  };
+}
+
+async function waitForCart(base: string, code: string, ready: (cart: CartSnap) => boolean): Promise<CartSnap> {
+  const deadline = Date.now() + 2_000;
+  let latest: CartSnap | null = null;
+  while (Date.now() < deadline) {
+    latest = (await get(base, `/api/carts/${code}`)) as CartSnap;
+    if (ready(latest)) {
+      return latest;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`cart ${code} stayed ${latest?.status ?? "missing"} / ${latest?.necessitySource ?? "none"}`);
+}
 
 function cart() {
   return pricedCart(["Example phone"], 120_000);
