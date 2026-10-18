@@ -82,5 +82,10 @@ describe("readIncomingMessage", () => {
     const groupRecord = group as { data: { object: { space: { kind: string } } } };
     groupRecord.data.object.space.kind = "group";
     assert.deepEqual(readIncomingMessage(group, config), { action: "ignore", reason: "not-direct" });
+
+    const agent = event();
+    const agentRecord = agent as { data: { object: { sentBy: { kind: string } } } };
+    agentRecord.data.object.sentBy.kind = "agent";
+    assert.deepEqual(readIncomingMessage(agent, config), { action: "ignore", reason: "not-human" });
   });
 });

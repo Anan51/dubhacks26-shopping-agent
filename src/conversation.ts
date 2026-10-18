@@ -3,9 +3,9 @@ import { extractCartCode, extractSignals, pickShopperSignals, type ExtractOption
 import { formatLongDate } from "./format.js";
 import { personaFor } from "./history.js";
 import { decide } from "./heuristic.js";
-import { applyPurchaseScore, gradeJustification } from "./impulse.js";
+import { applyPurchaseScore, gradeJustification, keywordGrade } from "./impulse.js";
 import { UPGRADE_PROMPT } from "./links.js";
-import { parseLinkCommand, threadUserId } from "./phone-link.js";
+import { justificationAsk, parseLinkCommand, threadUserId } from "./phone-link.js";
 import { phraseDecision } from "./phrase.js";
 import type { PhoneLink } from "./store.js";
 import { assertNever, type Cart, type ConversationContext, type Session } from "./types.js";
@@ -19,6 +19,8 @@ export type ApplyInput = {
   now: Date;
   demoReminderMs: number;
   loadCart: (code: string) => Cart | undefined;
+  /** Phone thread with no cart code in the text. Photon replies land here. */
+  resolveCart?: (conversationId: string) => Cart | undefined;
   extract?: ExtractOptions;
   /** Persist the cart while Grok is in flight so other pages can show it. */
   markReading?: (cart: Cart) => void;
@@ -92,7 +94,13 @@ export async function applyTurn(input: ApplyInput): Promise<ApplyResult> {
     session.step = "need_code";
   }
   if (!session.cartCode) {
-    return say(session, "Send the cart code from the Apple bag overlay, like: cart AB23CD.");
+    const resolved = input.resolveCart?.(input.conversationId);
+    if (resolved) {
+      session.cartCode = resolved.code;
+    }
+  }
+  if (!session.cartCode) {
+    return say(session, `I don't have your bag on this thread yet. Text the cart code, then answer: ${UPGRADE_PROMPT}`);
   }
 
   const loaded = input.loadCart(session.cartCode);
@@ -155,8 +163,8 @@ async function justifyTurn(session: Session, cart: Cart, input: ApplyInput): Pro
     return say(session, "This bag is a necessary buy. Checkout can proceed. Simmer will not click the button.", { cart });
   }
   const spoken = withoutCartLabel(input.text);
-  if (!spoken) {
-    return say(session, cart.explanation ?? UPGRADE_PROMPT, { cart });
+  if (!spoken || (cart.justificationGrade == null && keywordGrade(spoken).grade === 0 && !input.extract?.apiKey)) {
+    return say(session, justificationAsk(cart), { cart });
   }
   const useGrok = Boolean(input.extract?.apiKey);
   if (useGrok) {
@@ -170,6 +178,9 @@ async function justifyTurn(session: Session, cart: Cart, input: ApplyInput): Pro
     if (useGrok) {
       cart.reading = false;
     }
+  }
+  if (cart.justificationGrade == null && graded.grade === 0) {
+    return say(session, justificationAsk(cart), { cart });
   }
   const impulse = cart.userImpulseScore ?? personaFor(cart.userId).impulseScore;
   const scored = applyPurchaseScore(cart, graded, impulse, input.now, input.demoReminderMs);

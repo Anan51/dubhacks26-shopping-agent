@@ -32,6 +32,20 @@ export function checkoutPingText(cart: Cart): string {
   return `Simmer paused your ${formatUsd(cart.totalCents)} checkout. Cart ${cart.code}. ${UPGRADE_PROMPT}`;
 }
 
+/** Inbound ask. Names this bag so it is not the same line as every other cart. */
+export function justificationAsk(cart: Cart): string {
+  const name = cart.items[0]?.name ?? "Your bag";
+  return `${name} (${formatUsd(cart.totalCents)}) is marinating. ${UPGRADE_PROMPT}`;
+}
+
+/** Latest unnecessary bag for this thread. A necessary buy is not waiting on a reason. */
+export function cartForThread(carts: readonly Cart[], conversationId: string, userId: string | null): Cart | undefined {
+  const matches = carts.filter((cart) => cart.conversationId === conversationId || (userId !== null && cart.userId === userId));
+  const waiting = matches.filter((cart) => cart.necessity !== "necessary");
+  const pool = waiting.length > 0 ? waiting : matches;
+  return pool.sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+}
+
 export async function notifyCheckout(input: {
   store: Store;
   cart: Cart;
