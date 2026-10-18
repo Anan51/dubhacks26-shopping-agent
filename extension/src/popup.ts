@@ -1,7 +1,8 @@
 import { lockGlance, type GlanceItem } from "../../src/glance.js";
 import { pauseSentence, priceLine } from "../../src/overlay-copy.js";
-import { mountPopupAuth } from "./popup-auth.js";
-import { newestCart, plainCartLabel, presentBreakdown, type ReplyPing } from "./popup-cart.js";
+import { mountPopupAuth, type PopupAccount } from "./popup-auth.js";
+import { newestAccountCart, newestCart, plainCartLabel, presentBreakdown, type ReplyPing } from "./popup-cart.js";
+import { authorizedFetch } from "./popup-fetch.js";
 
 type CartPayload = {
   code: string;
@@ -27,26 +28,59 @@ type CartPayload = {
   replied?: boolean;
   advice?: string | null;
   lastPing?: ReplyPing;
+  authUserId?: string | null;
 };
+
+type CartScope =
+  | { kind: "device"; userId: string }
+  | { kind: "account"; account: PopupAccount };
 
 const state = document.getElementById("state");
 const list = document.getElementById("list");
 const empty = document.getElementById("empty");
 let openCode: string | null = null;
+let shown = 0;
 
-chrome.storage.local.get(["simmerOrigin", "simmerUserId", "simmerAuthOrigin"], (stored) => {
+chrome.storage.local.get(["simmerOrigin", "simmerUserId", "simmerAuthOrigin", "simmer_token"], (stored) => {
   const origin = allowedOrigin(stored.simmerOrigin) ?? "http://127.0.0.1:4321";
   const userId = typeof stored.simmerUserId === "string" ? stored.simmerUserId : "";
-  void load(origin, userId);
+  const token = typeof stored.simmer_token === "string" ? stored.simmer_token : "";
+  if (token.length === 0) {
+    void load(origin, { kind: "device", userId });
+  }
   if (typeof stored.simmerAuthOrigin === "string" && stored.simmerAuthOrigin.trim().length > 0) {
-    mountPopupAuth(document.body, stored.simmerAuthOrigin);
+    mountPopupAuth(document.body, stored.simmerAuthOrigin, {
+      onAuthChange(account) {
+        if (!account) {
+          clearVault();
+          return;
+        }
+        void load(origin, { kind: "account", account });
+      },
+    });
   }
 });
 
-async function load(origin: string, userId: string): Promise<void> {
-  const response = await fetch(`${origin}/api/carts`, { headers: { accept: "application/json" } });
+async function load(origin: string, scope: CartScope): Promise<void> {
+  const ticket = ++shown;
+  const response = await fetchCarts(origin, scope);
+  if (ticket !== shown || !response) {
+    return;
+  }
   const body = (await response.json()) as { carts?: CartPayload[] };
-  const current = newestCart(body.carts ?? [], userId);
+  if (ticket !== shown) {
+    return;
+  }
+  render(selectCart(body.carts ?? [], scope));
+}
+
+function clearVault(): void {
+  shown += 1;
+  openCode = null;
+  render(null);
+}
+
+function render(current: CartPayload | null): void {
   const items = current ? [toGlance(current)] : [];
   if (state) {
     state.textContent = lockGlance(items);
@@ -58,6 +92,34 @@ async function load(origin: string, userId: string): Promise<void> {
   empty.hidden = items.length > 0;
   for (const item of items) {
     list.append(card(item, current?.lastPing ?? null));
+  }
+}
+
+function selectCart(carts: readonly CartPayload[], scope: CartScope): CartPayload | null {
+  switch (scope.kind) {
+    case "device":
+      return newestCart(carts, scope.userId);
+    case "account":
+      return newestAccountCart(carts, scope.account.id);
+    default: {
+      const unreachable: never = scope;
+      return unreachable;
+    }
+  }
+}
+
+async function fetchCarts(origin: string, scope: CartScope): Promise<Response | null> {
+  switch (scope.kind) {
+    case "device":
+      return fetch(`${origin}/api/carts`, { headers: { accept: "application/json" } });
+    case "account":
+      return authorizedFetch(`${origin}/api/carts`, undefined, async () => scope.account.token, async () => {
+        clearVault();
+      });
+    default: {
+      const unreachable: never = scope;
+      return unreachable;
+    }
   }
 }
 

@@ -41,11 +41,27 @@ export function newestCart<T extends { userId: string | null; createdAt?: string
   carts: readonly T[],
   userId: string,
 ): T | null {
-  const id = userId.trim();
-  if (id.length === 0) {
+  return newestMatch(carts, userId, (cart) => cart.userId);
+}
+
+/** Signed-in vault: the newest cart owned by this account. Device ids are not used. */
+export function newestAccountCart<T extends { authUserId?: string | null; createdAt?: string }>(
+  carts: readonly T[],
+  accountId: string,
+): T | null {
+  return newestMatch(carts, accountId, (cart) => cart.authUserId);
+}
+
+function newestMatch<T extends { createdAt?: string }>(
+  carts: readonly T[],
+  id: string,
+  owner: (cart: T) => string | null | undefined,
+): T | null {
+  const wanted = id.trim();
+  if (wanted.length === 0) {
     return null;
   }
-  const mine = carts.filter((cart) => cart.userId === id);
+  const mine = carts.filter((cart) => owner(cart) === wanted);
   const first = mine[0];
   if (!first) {
     return null;

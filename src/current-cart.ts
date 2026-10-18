@@ -1,5 +1,39 @@
 import type { Cart } from "./types.js";
 
+/** Account owner. Absent on anonymous demo carts. Not part of Decision. */
+export function readAuthUserId(cart: Cart): string | undefined {
+  const value = (cart as Cart & { authUserId?: unknown }).authUserId;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+export function assignAuthUser(cart: Cart, authUserId: string): void {
+  (cart as Cart & { authUserId?: string }).authUserId = authUserId;
+}
+
+/**
+ * Signed-in lists are that account's carts. A mismatched ?userId is refused.
+ * With no account, anonymous carts keep the per-device list. Owned carts stay out.
+ */
+export function scopedCarts(
+  carts: readonly Cart[],
+  authUserId: string | null,
+  queryUserId: string | null,
+): { ok: true; carts: Cart[] } | { ok: false } {
+  if (authUserId) {
+    if (queryUserId && queryUserId !== authUserId) {
+      return { ok: false };
+    }
+    return { ok: true, carts: currentCarts(carts.filter((cart) => readAuthUserId(cart) === authUserId)) };
+  }
+  return {
+    ok: true,
+    carts: currentCarts(
+      carts.filter((cart) => readAuthUserId(cart) === undefined),
+      queryUserId,
+    ),
+  };
+}
+
 /**
  * One bag per shopper: the newest cart for that user.
  * Earlier sessions stay in the store but drop off the desk and the popup.

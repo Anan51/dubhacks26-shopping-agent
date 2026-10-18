@@ -5,7 +5,7 @@ import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 
 import { handleWebhook } from "../api/webhook.js";
-import { currentCarts } from "./current-cart.js";
+import { assignAuthUser, readAuthUserId, scopedCarts } from "./current-cart.js";
 import { demoReplyOpen, devRoutesOpen, manualUnlockOpen } from "./dev-access.js";
 import { offersSleep } from "./score-band.js";
 import {
@@ -231,8 +231,12 @@ export function createApp(deps: AppDeps): RunningApp {
 
   app.get("/api/carts", (req, res) => {
     const userId = typeof req.query.userId === "string" ? req.query.userId : null;
-    const carts = currentCarts(deps.store.listCarts(), userId);
-    res.json({ synthetic: true, readError: bagReadError, carts: carts.map((cart) => publicCart(cart, deps.agentHandle)) });
+    const scoped = scopedCarts(deps.store.listCarts(), req.user?.id ?? null, userId);
+    if (!scoped.ok) {
+      res.status(403).json({ error: "userId does not match the signed-in account." });
+      return;
+    }
+    res.json({ synthetic: true, readError: bagReadError, carts: scoped.carts.map((cart) => publicCart(cart, deps.agentHandle)) });
   });
 
   app.post("/api/carts", settle(async (req, res) => {
@@ -251,10 +255,17 @@ export function createApp(deps: AppDeps): RunningApp {
     bagReadError = null;
     const bagText = bag.itemNames.join("\n");
     const fingerprint = bagFingerprint(userId, bag.itemNames, bag.totalCents);
-    const existing = deps.store
+    const authUserId = req.user?.id;
+    const sameBag = deps.store
       .listCarts()
-      .find((cart) => cart.userId === userId && cart.fingerprint === fingerprint);
+      .filter((cart) => cart.userId === userId && cart.fingerprint === fingerprint);
+    const owned = sameBag.find((cart) => readAuthUserId(cart) === authUserId);
+    const unowned = authUserId ? sameBag.find((cart) => readAuthUserId(cart) === undefined) : undefined;
+    const existing = owned ?? unowned;
     if (existing) {
+      if (authUserId && readAuthUserId(existing) === undefined) {
+        assignAuthUser(existing, authUserId);
+      }
       if (existing.necessity == null) {
         const keyword = keywordNecessity(bagText);
         applyNecessity(existing, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason });
@@ -295,6 +306,9 @@ export function createApp(deps: AppDeps): RunningApp {
       await pingCart(cart, false);
     }
     await attachImpulse(cart, req.user?.id, "create");
+    if (req.user?.id) {
+      assignAuthUser(cart, req.user.id);
+    }
     deps.store.saveCart(cart);
     res.status(201).json(publicCart(cart, deps.agentHandle));
     refineNecessity(cart.code, bagText, req.user?.id);
@@ -754,11 +768,13 @@ function postedBag(body: Record<string, unknown>): { itemNames: string[]; totalC
 }
 
 function publicCart(cart: Cart, agentHandle: string | null) {
+  const authUserId = readAuthUserId(cart);
   return {
     ...cart,
     impulse: cart.impulse ?? null,
     hoursOfWork: cart.hoursOfWork ?? null,
     hoursOfWorkText: cart.hoursOfWorkText ?? null,
+    ...(authUserId ? { authUserId } : {}),
     synthetic: true as const,
     textMessage: prefilledText(cart.code),
     smsLink: textSimmerLink(agentHandle, cart.code),
