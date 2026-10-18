@@ -102,28 +102,57 @@ describe("necessity gate", () => {
     }
   });
 
-  it("uses Grok when the JSON is valid and keywords when the call fails", async () => {
+  it("lets Grok veto a keyword-necessary bag and keeps the keyword result when Grok fails", async () => {
     let calls = 0;
-    const grok = await classifyNecessity("Example phone", {
+    const veto = await classifyNecessity("USB-C charge cable\nMagSafe Charger", {
       apiKey: "test-key",
       fetchImpl: async () => {
         calls += 1;
         return Response.json({
-          choices: [{ message: { content: '{"necessary": false, "reason": "Upgrade."}' } }],
+          choices: [{ message: { content: '{"necessary": false, "reason": "Stocking up."}' } }],
         });
       },
     });
     assert.equal(calls, 1);
-    assert.equal(grok.source, "grok");
-    assert.equal(grok.necessary, false);
-    assert.equal(locksCheckout(grok), true);
+    assert.equal(veto.source, "grok");
+    assert.equal(veto.necessary, false);
+    assert.equal(locksCheckout(veto), true);
+
+    const singleVeto = await classifyNecessity("USB-C charge cable", {
+      apiKey: "test-key",
+      fetchImpl: async () => {
+        calls += 1;
+        return Response.json({
+          choices: [{ message: { content: '{"necessary": false, "reason": "Want."}' } }],
+        });
+      },
+    });
+    assert.equal(calls, 2);
+    assert.equal(singleVeto.source, "grok");
+    assert.equal(singleVeto.necessary, false);
 
     const broken = await classifyNecessity("USB-C charge cable", {
       apiKey: "test-key",
-      fetchImpl: async () => Response.json({ choices: [{ message: { content: "nope" } }] }),
+      fetchImpl: async () => {
+        calls += 1;
+        return Response.json({ choices: [{ message: { content: "nope" } }] });
+      },
     });
+    assert.equal(calls, 3);
     assert.equal(broken.source, "keywords");
     assert.equal(broken.necessary, true);
+
+    const failed = await classifyNecessity("USB-C charge cable", {
+      apiKey: "test-key",
+      fetchImpl: async () => {
+        calls += 1;
+        throw new Error("timeout");
+      },
+    });
+    assert.equal(calls, 4);
+    assert.equal(failed.source, "keywords");
+    assert.equal(failed.necessary, true);
+    assert.equal(locksCheckout(failed), false);
 
     let network = false;
     const offline = await classifyNecessity("USB-C charge cable", {
@@ -135,6 +164,31 @@ describe("necessity gate", () => {
     assert.equal(network, false);
     assert.equal(offline.source, "keywords");
     assert.equal(offline.necessary, true);
+  });
+
+  it("does not let a Grok true loosen a bag that fails the keyword check", async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = async () => {
+      calls += 1;
+      return Response.json({
+        choices: [{ message: { content: '{"necessary": true, "reason": "Yes."}' } }],
+      });
+    };
+    const mixed = await classifyNecessity("iPhone\nUSB-C cable", { apiKey: "test-key", fetchImpl });
+    const phone = await classifyNecessity("iPhone", { apiKey: "test-key", fetchImpl });
+    const phoneOnly = await classifyNecessity("Example phone", { apiKey: "test-key", fetchImpl });
+    assert.equal(calls, 0);
+    assert.equal(mixed.necessary, false);
+    assert.equal(mixed.source, "keywords");
+    assert.equal(locksCheckout(mixed), true);
+    assert.equal(phone.necessary, false);
+    assert.equal(phone.source, "keywords");
+    assert.equal(phoneOnly.necessary, false);
+    assert.equal(phoneOnly.source, "keywords");
+
+    const cable = await classifyNecessity("USB-C charge cable", {});
+    assert.equal(cable.necessary, true);
+    assert.equal(cable.source, "keywords");
   });
 });
 
@@ -734,6 +788,63 @@ describe("keyword necessity on the request path", () => {
       assert.equal(revised.necessity, "unnecessary");
       assert.equal(revised.status, "locked");
       assert.equal(revised.isUnlocked, false);
+    } finally {
+      running.scheduler.stop();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("does not unlock a mixed bag when Grok says necessary", async () => {
+    const store = createMemoryStore();
+    let calls = 0;
+    const running = createApp({
+      store,
+      origin: "http://127.0.0.1",
+      lockMs: 600_000,
+      demoReminderMs: 60_000,
+      demoDefault: true,
+      agentHandle: null,
+      photon: null,
+      xaiApiKey: "test-key",
+      xaiModel: "grok-4.20-0309-non-reasoning",
+      xaiTimeoutMs: 8_000,
+      fetchImpl: async () => {
+        calls += 1;
+        return Response.json({
+          choices: [{ message: { content: '{"necessary": true, "reason": "Cable."}' } }],
+        });
+      },
+      polish: async (template) => template,
+    });
+    const server = createServer(running.app);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${address.port}`;
+    try {
+      const created = await post(base, "/api/carts", postedItems("user-grok-mixed", ["iPhone", "USB-C cable"], 80_900));
+      assert.equal(created.status, 201);
+      const locked = created.body as CartSnap;
+      assert.equal(locked.necessity, "unnecessary");
+      assert.equal(locked.necessitySource, "keywords");
+      assert.equal(locked.status, "locked");
+      assert.equal(locked.isUnlocked, false);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const revised = (await get(base, `/api/carts/${locked.code}`)) as CartSnap;
+      assert.equal(calls, 0);
+      assert.equal(revised.necessity, "unnecessary");
+      assert.equal(revised.necessitySource, "keywords");
+      assert.equal(revised.status, "locked");
+      assert.equal(revised.isUnlocked, false);
+      const stored = store.getCart(locked.code);
+      assert.ok(stored);
+      assert.equal(stored.isUnlocked, false);
+      assert.equal(stored.status, "locked");
+      const pay = await post(base, "/api/pay", { code: locked.code });
+      assert.equal(pay.status, 423);
     } finally {
       running.scheduler.stop();
       await new Promise<void>((resolve, reject) => {

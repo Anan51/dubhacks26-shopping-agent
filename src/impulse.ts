@@ -84,13 +84,24 @@ function necessityForItem(text: string): Pick<NecessityRead, "necessary" | "reas
   return { necessary: false, reason: "Nothing in the bag reads as a necessary replacement." };
 }
 
+/**
+ * Keywords are the ceiling. Grok may veto a bag that every item already passes,
+ * and a failed Grok call keeps that keyword result. Grok cannot mark a bag necessary
+ * when any item fails the keyword check, including a single item.
+ */
 export async function classifyNecessity(bagText: string, options: ExtractOptions = {}): Promise<NecessityRead> {
   const keyword = keywordNecessity(bagText);
+  if (!keyword.necessary) {
+    return { necessary: false, source: "keywords", reason: keyword.reason };
+  }
   const grok = await grokNecessity(bagText, options);
   if (!grok) {
     return { necessary: keyword.necessary, source: "keywords", reason: keyword.reason };
   }
-  return { necessary: grok.necessary, source: "grok", reason: grok.reason };
+  if (!grok.necessary) {
+    return { necessary: false, source: "grok", reason: grok.reason };
+  }
+  return { necessary: true, source: "grok", reason: grok.reason };
 }
 
 /** Keyword grade from -3 (pure impulse) to +3 (clearly necessary). */
