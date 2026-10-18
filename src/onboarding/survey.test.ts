@@ -337,6 +337,13 @@ describe("onboarding survey", () => {
     const ada = await signup("ada-settings@example.com");
     const open = await fetch(`${base}/settings`);
     assert.equal(open.status, 401);
+    const blake = await signup("blake-settings-scope@example.com");
+    await patch("/settings", { weeklyBudget: 77 }, blake.token);
+    const scoped = await get(`/settings?userId=${blake.id}`, ada.token);
+    assert.equal(scoped.status, 400);
+    assert.equal(scoped.body.weeklyBudget, undefined);
+    assert.equal(String(scoped.body.error ?? "").includes("Survey"), false);
+    assert.deepEqual((await get("/settings", ada.token)).body, { hourlyRate: null, weeklyBudget: null });
     const forged = await fetch(`${base}/settings`, {
       method: "PATCH",
       headers: { "content-type": "application/json", authorization: "Bearer not-a-token" },

@@ -96,9 +96,10 @@ export function attachSettings(
       showError("Change hourly income or weekly budget before saving.");
       return;
     }
+    const id = ++loadId;
     try {
       const response = await authorizedFetch(`${origin}/settings`, { method: "PATCH", body: patch }, authorization, onUnauthorized);
-      if (!response) {
+      if (id !== loadId || !response) {
         return;
       }
       if (!response.ok) {
@@ -107,8 +108,20 @@ export function attachSettings(
         showError(message);
         return;
       }
-      hourlyBaseline = hourly.input.value;
-      weeklyBaseline = weekly.input.value;
+      const body = (await response.json().catch(() => null)) as unknown;
+      if (id !== loadId) {
+        return;
+      }
+      if (isRecord(body)) {
+        if ("hourlyRate" in body) {
+          hourly.input.value = moneyValue(body.hourlyRate);
+          hourlyBaseline = hourly.input.value;
+        }
+        if ("weeklyBudget" in body) {
+          weekly.input.value = moneyValue(body.weeklyBudget);
+          weeklyBaseline = weekly.input.value;
+        }
+      }
       saved.hidden = false;
     } catch {
       showError("Couldn't save settings.");

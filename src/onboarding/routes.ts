@@ -55,7 +55,7 @@ export function createSettingsRouter(deps: OnboardingDeps): Router {
       refuseAnyUserId(req);
       res.json(await readSettings(userId));
     } catch (error: unknown) {
-      sendSurveyError(res, error);
+      sendSettingsError(res, error, "Couldn't load settings.");
     }
   });
 
@@ -66,7 +66,7 @@ export function createSettingsRouter(deps: OnboardingDeps): Router {
       refuseAnyUserId(req);
       res.json(await updateSettings(userId, req.body, deps));
     } catch (error: unknown) {
-      sendSettingsError(res, error);
+      sendSettingsError(res, error, "Couldn't save settings.");
     }
   });
 
@@ -85,13 +85,13 @@ function refuseAnyUserId(req: Request): void {
   }
 }
 
-function sendSettingsError(res: Response, error: unknown): void {
+function sendSettingsError(res: Response, error: unknown, fallback: string): void {
   if (error instanceof SurveyError || error instanceof ScopeError) {
     res.status(error.status).json({ error: error.message });
     return;
   }
-  console.error(error instanceof Error ? error.message : "Couldn't save settings.");
-  res.status(500).json({ error: "Couldn't save settings." });
+  console.error(error instanceof Error ? error.message : fallback);
+  res.status(500).json({ error: fallback });
 }
 
 function sendSurveyError(res: Response, error: unknown): void {

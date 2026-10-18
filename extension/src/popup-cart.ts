@@ -1,6 +1,7 @@
 import { breakdownLines, oneLineVerdict, type BreakdownLine, type GlanceItem } from "../../src/glance.js";
 
 export const PAUSED_LABEL = "Paused — reply to Simmer's iMessage";
+export const HELD_LABEL = "Paused";
 export const OPTIONAL_PAUSE_LABEL = "Paused (optional)";
 export const VAULT_LABEL = "In the vault";
 export const OK_LABEL = "OK to buy";
@@ -64,6 +65,9 @@ export function plainCartLabel(item: GlanceItem & { lastPing?: ReplyPing }, nowM
   }
   if (item.scoreBucket === "free" || item.status === "unlocked") {
     return OK_LABEL;
+  }
+  if (item.status === "locked") {
+    return HELD_LABEL;
   }
   const decision = item.decision;
   if (!decision || decision.action === "unlock" || decision.savingsCents <= 0) {

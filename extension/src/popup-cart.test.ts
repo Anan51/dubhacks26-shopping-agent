@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import type { GlanceItem } from "../../src/glance.js";
-import { awaitingShopperReply, EXAMPLE_NOTE, NECESSARY_LABEL, newestCart, OK_LABEL, OPTIONAL_PAUSE_LABEL, PAUSED_LABEL, plainCartLabel, presentBreakdown, VAULT_LABEL } from "./popup-cart.js";
+import { awaitingShopperReply, EXAMPLE_NOTE, HELD_LABEL, NECESSARY_LABEL, newestCart, OK_LABEL, OPTIONAL_PAUSE_LABEL, PAUSED_LABEL, plainCartLabel, presentBreakdown, VAULT_LABEL } from "./popup-cart.js";
 
 const NOW = Date.parse("2026-10-18T12:00:00.000Z");
 
@@ -61,7 +61,7 @@ describe("popup current bag", () => {
       purchaseScore: null,
       scoreBucket: null,
     });
-    assert.equal(plainCartLabel(waiting, NOW), `Wait ~2 mo, save ~$557. ${EXAMPLE_NOTE}`);
+    assert.equal(plainCartLabel(waiting, NOW), HELD_LABEL);
     const detail = presentBreakdown(waiting, NOW);
     assert.equal(detail.exampleNote, EXAMPLE_NOTE);
     const text = detail.lines.map((line) => `${line.label} ${line.value}`).join("\n");
@@ -74,7 +74,32 @@ describe("popup current bag", () => {
     const plain = presentBreakdown(paused, NOW);
     assert.equal(plain.exampleNote, null);
     assert.equal(plain.lines.some((line) => line.value === PAUSED_LABEL), false);
-    assert.equal(plain.lines.some((line) => line.value === OK_LABEL), true);
+    assert.equal(plain.lines.some((line) => line.value === HELD_LABEL), true);
+    assert.equal(plain.lines.some((line) => line.value === OK_LABEL), false);
+  });
+
+  it("says a locked bag is paused unless it is free to buy", () => {
+    const unlock = item().decision;
+    assert.ok(unlock);
+    const noDecision = item({ necessity: null, status: "locked", scoreBucket: null, decision: null });
+    const unlockDecision = item({
+      necessity: null,
+      status: "locked",
+      scoreBucket: null,
+      decision: { ...unlock, action: "unlock", savingsCents: 500 },
+    });
+    const noSavings = item({
+      necessity: null,
+      status: "locked",
+      scoreBucket: null,
+      decision: { ...unlock, action: "sleep", savingsCents: 0 },
+    });
+    assert.equal(plainCartLabel(noDecision, NOW), HELD_LABEL);
+    assert.equal(plainCartLabel(unlockDecision, NOW), HELD_LABEL);
+    assert.equal(plainCartLabel(noSavings, NOW), HELD_LABEL);
+    assert.equal(plainCartLabel(noDecision, NOW).includes("OK to buy"), false);
+    assert.equal(plainCartLabel(item({ necessity: null, status: "unlocked", scoreBucket: null, decision: null }), NOW), OK_LABEL);
+    assert.equal(plainCartLabel(item({ necessity: null, status: "locked", scoreBucket: "free", purchaseScore: 5 }), NOW), OK_LABEL);
   });
 
   it("does not ship the always-on carrier-quote note", () => {
