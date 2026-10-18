@@ -298,7 +298,7 @@ describe("regret search scoring", { concurrency: false }, () => {
     const socks: ImpulseItem = { item: "wool socks", category: "other", price: 12, necessary: false };
     const mug: ImpulseItem = { item: "ceramic mug", category: "other", price: 18, necessary: false };
     const hikingSocks: ImpulseItem = { item: "wool hiking socks", category: "other", price: 16, necessary: false };
-    const macbook: ImpulseItem = { item: "MacBook Air", category: "computer", price: 999, necessary: false };
+    const macbook: ImpulseItem = { item: "MacBook Air", category: "computer", price: 40, necessary: false };
 
     const same = await computeImpulseScore(ada.id, phone, undefined, {
       backboardEnabled: true,
@@ -348,6 +348,7 @@ describe("regret search scoring", { concurrency: false }, () => {
       client: scriptedClient(async () => [laptopRegret]),
     });
     assert.ok(macbookRaised.score > 4.5);
+    assert.equal(macbookRaised.why, "You regretted a similar purchase before.");
 
     const macbookCross = await computeImpulseScore(ada.id, macbook, undefined, {
       backboardEnabled: true,
