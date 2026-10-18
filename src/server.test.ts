@@ -235,6 +235,31 @@ describe("apple bag lock", () => {
     assert.doesNotMatch(amazonHtml, /amazon\.com\/gp\/buy/);
   });
 
+  it("caps item names only after cleanup so a real title survives the screen-reader suffix", async () => {
+    const real = "Noise-cancelling headphones ".repeat(5).trim();
+    assert.ok(real.length <= 140);
+    assert.ok(`${real} Opens in a new tab.`.length > 140);
+    const kept = await post("/api/carts", {
+      userId: "user-title-suffix",
+      itemNames: [`  ${real}   Opens in a new tab.  `],
+      totalCents: 1_999,
+      parsed: true,
+      demo: true,
+    });
+    assert.equal(kept.status, 201);
+    assert.equal((kept.body as CartBody).items[0]?.name, real);
+
+    const capped = await post("/api/carts", {
+      userId: "user-title-cap",
+      itemNames: ["B".repeat(180)],
+      totalCents: 2_500,
+      parsed: true,
+      demo: true,
+    });
+    assert.equal(capped.status, 201);
+    assert.equal((capped.body as CartBody).items[0]?.name, "B".repeat(140));
+  });
+
   async function get(path: string): Promise<unknown> {
     const response = await fetch(`${base}${path}`);
     assert.equal(response.ok, true);

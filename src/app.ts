@@ -33,6 +33,7 @@ import { handleIncomingEvent } from "./handle-message.js";
 import { isPersonaId, PERSONAS, personaById, personaFor, type PersonaId } from "./history.js";
 import { decide, EXAMPLE_OWED_CENTS } from "./heuristic.js";
 import { applyPurchaseScore, classifyNecessity, keywordNecessity, syncFreeBandCopy } from "./impulse.js";
+import { capItemName } from "./item-name.js";
 import { EXAMPLE_OFFERS } from "./offers.js";
 import { deskChatUrl, linkPhoneSms, linkPhoneText, prefilledText, textSimmerLink } from "./links.js";
 import { isUserId, notifyCheckout } from "./phone-link.js";
@@ -731,7 +732,15 @@ function applyNecessity(
 
 function postedBag(body: Record<string, unknown>): { itemNames: string[]; totalCents: number; parsed: true } | null {
   const names = Array.isArray(body.itemNames)
-    ? body.itemNames.filter((name): name is string => typeof name === "string").slice(0, 12).map((name) => name.slice(0, 140))
+    ? body.itemNames
+        .flatMap((name) => {
+          if (typeof name !== "string") {
+            return [];
+          }
+          const cleaned = capItemName(name);
+          return cleaned ? [cleaned] : [];
+        })
+        .slice(0, 12)
     : [];
   const total = typeof body.totalCents === "number" && Number.isInteger(body.totalCents) ? body.totalCents : null;
   const parsed = body.parsed === true && total !== null && total > 0 && total <= 10_000_000 && names.length > 0;

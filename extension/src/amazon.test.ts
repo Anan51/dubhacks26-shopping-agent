@@ -96,6 +96,42 @@ describe("amazon store adapter", () => {
     });
   });
 
+  it("reads the full Amazon title once and drops the screen-reader suffix", () => {
+    const full = `Braided charging cable ${"model ".repeat(24)}`.replace(/\s+/g, " ").trim();
+    assert.ok(full.length > 140, `full length ${full.length}`);
+    const doc = page(
+      "https://www.amazon.com/gp/cart/view.html",
+      `<body><div id="sc-active-cart">
+        <div data-asin="B0TITLE" class="sc-list-item">
+          <span class="a-truncate sc-product-title" data-a-word-break="normal">
+            <span class="a-truncate-full a-offscreen">${full}</span>
+            <span class="a-truncate-cut" aria-hidden="true">${full}</span>
+            <span class="a-offscreen">Opens in a new tab.</span>
+          </span>
+          <span class="a-price"><span class="a-offscreen">$0.99</span></span>
+          <select name="quantity"><option value="1" selected>1</option></select>
+        </div>
+        <span id="sc-subtotal-amount-activecart"><span class="a-offscreen">$0.99</span></span>
+      </div></body>`,
+    );
+    const bag = amazonAdapter.readBag(doc);
+    assert.equal(bag?.items[0]?.item, full);
+    assert.equal(bag?.items[0]?.price, 99);
+    assert.equal(bag?.total, 99);
+
+    const plain = page(
+      "https://www.amazon.com/gp/cart/view.html",
+      `<body><div id="sc-active-cart">
+        <div data-asin="B0PLAIN" class="sc-list-item">
+          <span class="sc-product-title">  Phone   case <span class="a-offscreen">Opens in a new tab.</span><span hidden>hidden note</span></span>
+          <span class="a-price"><span class="a-offscreen">$12.00</span></span>
+        </div>
+        <span id="sc-subtotal-amount-activecart"><span class="a-offscreen">$12.00</span></span>
+      </div></body>`,
+    );
+    assert.equal(amazonAdapter.readBag(plain)?.items[0]?.item, "Phone case");
+  });
+
   it("returns null when any line has no parseable price", () => {
     const doc = page(
       "https://www.amazon.com/gp/cart/view.html",

@@ -1,5 +1,6 @@
 import { interpretBag, parsePriceCents, type InterpretedBag } from "../../src/apple-bag.js";
 import { formatUsd } from "../../src/format.js";
+import { normalizeItemName } from "../../src/item-name.js";
 import { AMAZON_BAG_ITEM, AMAZON_BAG_TOTAL } from "./stores/amazon.js";
 import { mutationIsOurs } from "./page-observer.js";
 
@@ -28,26 +29,53 @@ export function quantityTotalLabel(quantity: number, totalCents: number): string
 }
 
 /**
- * Identity of the bag we would post: first item, its quantity, and the bag total.
+ * Identity of the bag we would post: each line's quantity and cleaned name, plus the cents total.
  * Null when the page has no readable line, so a half-rendered update is not a new cart.
+ * A title rewrite that does not change those fields keeps the pending code.
  */
 export function bagContentKey(bag: PageBag): string | null {
-  if (!bag.parsed || bag.totalCents == null || bag.itemNames.length === 0) {
+  if (!bag.parsed) {
     return null;
   }
-  const name = bag.itemNames[0];
-  if (!name) {
-    return null;
-  }
-  return `${bag.quantity ?? ""}|${bag.totalCents}|${name}`;
+  return normalizedBagKey(bag);
 }
 
-/** Items and total, used to skip a re-render when a mutation did not change the bag. */
+/** Same identity as bagContentKey, used to skip a re-read when a mutation did not change the bag. */
 export function bagParseKey(bag: PageBag): string | null {
-  if (bag.totalCents == null || bag.itemNames.length === 0) {
+  return normalizedBagKey(bag);
+}
+
+function normalizedBagKey(bag: PageBag): string | null {
+  if (bag.totalCents == null) {
     return null;
   }
-  return `${bag.itemNames.join("\n")}|${bag.quantity ?? ""}|${bag.totalCents}`;
+  const lines = bagItemLines(bag);
+  const first = lines[0];
+  if (!first) {
+    return null;
+  }
+  const head = `${first.qty}|${bag.totalCents}|${first.name}`;
+  const rest = lines.slice(1).map((line) => `${line.qty}|${line.name}`);
+  return rest.length > 0 ? `${head}\n${rest.join("\n")}` : head;
+}
+
+function bagItemLines(bag: PageBag): { qty: number | ""; name: string }[] {
+  if (bag.items.length > 0) {
+    return bag.items.flatMap((item) => {
+      const name = normalizeItemName(item.name);
+      if (!name) {
+        return [];
+      }
+      return [{ qty: item.quantity ?? bag.quantity ?? "", name }];
+    });
+  }
+  return bag.itemNames.flatMap((name) => {
+    const cleaned = normalizeItemName(name);
+    if (!cleaned) {
+      return [];
+    }
+    return [{ qty: bag.quantity ?? "", name: cleaned }];
+  });
 }
 
 /** Post only when a re-read differs from the bag already on the server. */
