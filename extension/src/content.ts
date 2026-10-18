@@ -2,7 +2,7 @@ import css from "./overlay.css?inline";
 
 import { bagOrFallback, isBlockedControl, type BagControl } from "../../src/apple-bag.js";
 import { applePage, hostOptedOut, type ApplePage } from "../../src/sites.js";
-import { readPageBag, type PageBag } from "./bag-dom.js";
+import { bagContentKey, bagReadAction, readPageBag, type PageBag } from "./bag-dom.js";
 import { mountOverlay, type OverlayModel } from "./overlay.js";
 
 type Settings = {
@@ -40,6 +40,8 @@ async function start(kind: ApplePage): Promise<void> {
 
   let code = "";
   let posting = false;
+  let postedKey: string | null = null;
+  let watching = false;
   let quantity: number | null = null;
   let update = (_next: OverlayModel): void => undefined;
   let mounted = false;
@@ -74,8 +76,12 @@ async function start(kind: ApplePage): Promise<void> {
     if (!code || stopped) {
       return;
     }
-    const cart = await getJson(`/api/carts/${code}`);
-    const thread = await getJson(`/api/dev/messages?conversationId=${encodeURIComponent(`desk:cart-${code}`)}`);
+    const current = code;
+    const cart = await getJson(`/api/carts/${current}`);
+    const thread = await getJson(`/api/dev/messages?conversationId=${encodeURIComponent(`desk:cart-${current}`)}`);
+    if (current !== code || stopped) {
+      return;
+    }
     if (!isRecord(cart)) {
       show(emptyModel(settings, code, "Simmer can't reach the local server."));
       return;
@@ -99,7 +105,11 @@ async function start(kind: ApplePage): Promise<void> {
   };
 
   const publish = async (interpreted: PageBag) => {
-    if (code || posting) {
+    if (posting) {
+      return;
+    }
+    // A cart already exists. Post again only when the bag line itself changed.
+    if (code && bagReadAction(postedKey, interpreted) !== "post") {
       return;
     }
     posting = true;
@@ -125,22 +135,60 @@ async function start(kind: ApplePage): Promise<void> {
         pageHost: location.hostname,
       });
       if (!isRecord(created) || typeof created.code !== "string") {
-        show(emptyModel(settings, "------", "Simmer can't reach the local server."));
+        if (!code) {
+          show(emptyModel(settings, "------", "Simmer can't reach the local server."));
+        }
         return;
       }
+      const previous = code;
       code = created.code;
-      await rememberCart(code);
+      postedKey = bagContentKey(interpreted);
+      if (previous !== code) {
+        await rememberCart(code);
+      }
       if (created.isUnlocked === true && created.status === "unlocked") {
         gate.lift();
       } else {
         gate.paint();
       }
-      show(modelFrom(created, { turns: [] }, settings, null, quantity));
-      window.setInterval(() => {
-        void refresh();
-      }, 1000);
+      if (previous !== "" && previous === code) {
+        await refresh();
+      } else {
+        show(modelFrom(created, { turns: [] }, settings, null, quantity));
+      }
+      if (!watching) {
+        watching = true;
+        window.setInterval(() => {
+          void syncBag();
+        }, 1000);
+      }
     } finally {
       posting = false;
+    }
+  };
+
+  // Apple rewrites the bag in place. Re-read on the lock-refresh tick instead of
+  // parsing every mutation. The server's cart, not the DOM, still drives the gate.
+  const syncBag = async () => {
+    if (!document.body || stopped || posting) {
+      return;
+    }
+    const interpreted = readPageBag(document.body);
+    if (interpreted.quantity != null) {
+      quantity = interpreted.quantity;
+    }
+    const action = bagReadAction(postedKey, interpreted);
+    switch (action) {
+      case "post":
+        await publish(interpreted);
+        return;
+      case "keep":
+        await refresh();
+        return;
+      default: {
+        const unreachable: never = action;
+        return unreachable;
+      }
     }
   };
 

@@ -25,6 +25,30 @@ export function quantityTotalLabel(quantity: number, totalCents: number): string
   return `${quantity} · ${formatUsd(totalCents)}`;
 }
 
+/**
+ * Identity of the bag we would post: first item, its quantity, and the bag total.
+ * Null when the page has no readable line, so a half-rendered update is not a new cart.
+ */
+export function bagContentKey(bag: PageBag): string | null {
+  if (!bag.parsed || bag.totalCents == null || bag.itemNames.length === 0) {
+    return null;
+  }
+  const name = bag.itemNames[0];
+  if (!name) {
+    return null;
+  }
+  return `${bag.quantity ?? ""}|${bag.totalCents}|${name}`;
+}
+
+/** Post only when a re-read differs from the bag already on the server. */
+export function bagReadAction(postedKey: string | null, bag: PageBag): "post" | "keep" {
+  const key = bagContentKey(bag);
+  if (!key || key === postedKey) {
+    return "keep";
+  }
+  return "post";
+}
+
 /** Title, a bag heading, or the word "bag" must never be sent to the classifier. */
 export function isMisleadingProductName(name: string, root?: ParentNode): boolean {
   const normalized = normalizeBagText(name);

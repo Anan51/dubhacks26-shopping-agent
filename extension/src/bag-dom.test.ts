@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import { JSDOM } from "jsdom";
 
-import { quantityTotalLabel, readPageBag } from "./bag-dom.js";
+import { bagContentKey, bagReadAction, quantityTotalLabel, readPageBag } from "./bag-dom.js";
+
+const CABLE_FIXTURE = new URL("../fixtures/apple-bag-cable-row.html", import.meta.url);
 
 const CABLE_ROW = `<li class="rs-bag-item rs-iteminfo-wrap" data-autom="bag-item-1" role="listitem"><div class="rs-iteminfo row"><div class="rs-iteminfo-image column large-3 small-12"><picture><img data-autom="bag-item-image" alt="cable" src="https://store.storeimages.cdn-apple.com/x/MQKJ3"></picture></div><div class="rs-iteminfo-content column large-9 small-12"><div class="rs-iteminfo-details"><div class="rs-iteminfo-title-wrapper large-6 small-12"><h2 class="rs-iteminfo-title"><a href="/shop/product/mw493am/a/60w-usb-c-charge-cable-1-m" data-evar1="Cart||MW493AM/A" data-autom="bag-item-name">60W USB-C Charge Cable (1\u00a0m)</a></h2></div><div class="rs-iteminfo-quantity"><div class="rs-quantity"><div class="rs-quantity-selector"><div class="rs-quantity-wrapper form-dropdown"><label class="visuallyhidden">Quantity for 60W USB-C Charge Cable (1\u00a0m)</label><select class="rs-quantity-dropdown form-dropdown-select" data-autom="item-quantity-dropdown"><option value="1">1</option><option value="9">9</option><option value="10">10+</option></select><select aria-hidden="true" class="rs-quantity-hidden-select"><option>1</option></select></div></div></div></div><div class="rs-iteminfo-pricedetails large-last"><div data-autom="Monthly_price" class="rs-iteminfo-price"><p>$19.00</p></div></div></div></div></div></li>`;
 
@@ -78,5 +81,55 @@ describe("Apple bag DOM", () => {
     assert.equal(fallback.items[0]?.quantity, 1);
     assert.equal(fallback.items[0]?.linePriceCents, 1_900);
     assert.equal(fallback.totalCents, 1_900);
+  });
+});
+
+describe("apple.com cable row fixture", () => {
+  it("parses the product name, quantity, and bag total", () => {
+    const document = page(readFileSync(CABLE_FIXTURE, "utf8"));
+    const bag = readPageBag(document);
+    const item = bag.items[0];
+    assert.ok(item);
+    assert.equal(item.name, "60W USB-C Charge Cable (1 m)");
+    assert.equal(item.quantity, 2);
+    assert.equal(bag.quantity, 2);
+    assert.equal(bag.totalCents, 4_201);
+    assert.equal(bag.subtotalCents, 3_800);
+    assert.equal(bag.parsed, true);
+    assert.deepEqual(bag.itemNames, ["60W USB-C Charge Cable (1 m)"]);
+    assert.equal(quantityTotalLabel(bag.quantity ?? 0, bag.totalCents ?? 0), "2 · $42.01");
+    assert.equal(quantitySelect(document).value, "2");
+  });
+
+  it("re-reads an in-place quantity change and posts that bag once", () => {
+    const document = page(readFileSync(CABLE_FIXTURE, "utf8"));
+    const posted = readPageBag(document);
+    const postedKey = bagContentKey(posted);
+    assert.equal(postedKey, "2|4201|60W USB-C Charge Cable (1 m)");
+    assert.equal(bagReadAction(postedKey, posted), "keep");
+
+    const select = quantitySelect(document);
+    select.value = "1";
+    const total = document.querySelector('[data-autom="bagtotalvalue"]');
+    const subtotal = document.querySelector('[data-autom="bagrs-summary-subtotalvalue"]');
+    const line = document.querySelector('[data-autom="Monthly_price"] p');
+    assert.ok(total);
+    assert.ok(subtotal);
+    assert.ok(line);
+    total.textContent = "$21.00";
+    subtotal.textContent = "$19.00";
+    line.textContent = "$19.00";
+
+    const reread = readPageBag(document);
+    const hidden = document.querySelector("select.rs-quantity-hidden-select");
+    assert.equal(hidden?.textContent?.trim(), "2");
+    assert.equal(reread.items[0]?.name, "60W USB-C Charge Cable (1 m)");
+    assert.equal(reread.quantity, 1);
+    assert.equal(reread.items[0]?.quantity, 1);
+    assert.equal(reread.totalCents, 2_100);
+    assert.equal(quantityTotalLabel(reread.quantity ?? 0, reread.totalCents ?? 0), "1 · $21");
+    assert.equal(bagReadAction(postedKey, reread), "post");
+    assert.equal(bagReadAction(bagContentKey(reread), reread), "keep");
+    assert.equal(bagReadAction(null, reread), "post");
   });
 });
