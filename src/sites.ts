@@ -54,6 +54,16 @@ export function hostOptedOut(hostname: string, optedOutHosts: readonly string[])
   });
 }
 
+export function isFallbackBag(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  return isLocalFallback(parsed.hostname.toLowerCase(), parsed.pathname.toLowerCase());
+}
+
 function isLocalFallback(host: string, path: string): boolean {
   return (host === "127.0.0.1" || host === "localhost") && (path === "/fallback" || path.startsWith("/fallback/"));
 }

@@ -60,8 +60,8 @@ describe("Photon inbound replies", () => {
       agentSenderId: "pho_usr_agent",
     });
     assert.equal(sent.length, 1);
-    assert.match(sent[0] ?? "", /Example phone/);
-    assert.match(sent[0] ?? "", /What's making you want to upgrade\?/);
+    assert.match(sent[0] ?? "", /^(Buy|Wait|Skip)\./);
+    assert.equal(store.getCart("AB23CD")?.isUnlocked, false);
 
     await runtime.enqueue({
       id: "pho_msg_grade",
@@ -71,9 +71,10 @@ describe("Photon inbound replies", () => {
     });
     assert.equal(sent.length, 2);
     assert.notEqual(sent[0], sent[1]);
-    assert.match(sent[1] ?? "", /Purchase score 1/);
-    assert.match(sent[1] ?? "", /24 hours/);
+    assert.match(sent[1] ?? "", /^(Buy|Wait|Skip)\./);
     assert.equal(store.getCart("AB23CD")?.scoreBucket, "strict");
+    assert.equal(store.getCart("AB23CD")?.replied, true);
+    assert.equal(store.getCart("AB23CD")?.isUnlocked, false);
   });
 
   it("sends at most one outbound when the same inbound id is processed twice", async () => {
@@ -119,5 +120,54 @@ describe("Photon inbound replies", () => {
     await Promise.all([runtime.enqueue(inbound), runtime.enqueue(inbound)]);
     assert.equal(sent.length, 1);
     assert.equal(store.hasHandledInbound("pho_msg_once"), true);
+  });
+
+  it("keeps an unlock when the Photon send throws", async () => {
+    const store = createMemoryStore();
+    const cart = startLockedCart({
+      items: itemsForBag(["Example phone"], 120_000, true),
+      totalCents: 120_000,
+      parsedFromPage: true,
+      pageHost: "www.apple.com",
+      fingerprint: "user-impulsive|120000|example phone",
+      now: NOW,
+      demo: true,
+      lockMs: 600_000,
+      userId: "user-impulsive",
+      code: "EF56GH",
+    });
+    cart.necessity = "unnecessary";
+    cart.userImpulseScore = 2;
+    store.saveCart(cart);
+    store.savePhoneLink({
+      userId: "user-impulsive",
+      conversationId: SPACE,
+      linkedAt: NOW.toISOString(),
+    });
+    let repliedDuringSend: boolean | null = null;
+    const runtime = createRuntime({
+      store,
+      now: () => NOW,
+      demoReminderMs: 60_000,
+      send: async () => {
+        repliedDuringSend = store.getCart("EF56GH")?.replied === true;
+        throw new Error("photon down");
+      },
+      armReminder: () => undefined,
+      disarmReminder: () => undefined,
+      polish: async (template) => template,
+    });
+    await runtime.enqueue({
+      id: "pho_msg_save_first",
+      conversationId: SPACE,
+      text: "cracked screen, battery dies by 3pm, I need it for work tomorrow",
+    });
+    const saved = store.getCart("EF56GH");
+    assert.equal(repliedDuringSend, false);
+    assert.equal(saved?.replied, true);
+    assert.equal(saved?.isUnlocked, false);
+    assert.equal(saved?.status, "locked");
+    assert.match(saved?.advice ?? "", /^Buy\./);
+    assert.match(store.getSession(SPACE)?.turns.at(-1)?.text ?? "", /^Buy\./);
   });
 });

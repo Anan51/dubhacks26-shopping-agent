@@ -62,13 +62,6 @@ export function createRuntime(deps: {
       }
     }
 
-    await deps.send({
-      conversationId: message.conversationId,
-      text: reply,
-      agentSenderId: result.cart?.agentSenderId ?? message.agentSenderId,
-      parentMessageId: message.id,
-      idempotencyKey: `simmer:${message.id}`,
-    });
     deps.store.saveSession(result.session);
     if (result.cart) {
       deps.store.saveCart(result.cart);
@@ -78,6 +71,21 @@ export function createRuntime(deps: {
       if (result.disarmReminder) {
         deps.disarmReminder(result.cart.code);
       }
+    }
+    try {
+      await deps.send({
+        conversationId: message.conversationId,
+        text: reply,
+        agentSenderId: result.cart?.agentSenderId ?? message.agentSenderId,
+        parentMessageId: message.id,
+        idempotencyKey: `simmer:${message.id}`,
+      });
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : "Photon reply failed.");
+    }
+    if (result.markReplied && result.cart) {
+      result.cart.replied = true;
+      deps.store.saveCart(result.cart);
     }
   }
 

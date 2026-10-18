@@ -2,8 +2,8 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 
 import { formatUsd } from "../../src/format.js";
-import { breakdownLines, oneLineVerdict, type GlanceItem, type GlanceSignals, type GlanceSources } from "../../src/glance.js";
-import { UPGRADE_PROMPT } from "../../src/links.js";
+import { oneLineVerdict, type GlanceItem, type GlanceSignals, type GlanceSources } from "../../src/glance.js";
+import { pauseSentence, priceLine, simmerKicker } from "../../src/overlay-copy.js";
 import type { Decision } from "../../src/types.js";
 
 import { quantityTotalLabel } from "./bag-dom.js";
@@ -25,6 +25,9 @@ export type OverlayModel = {
   reading: boolean;
   userId: string;
   linkMessage: string | null;
+  fallbackPage: boolean;
+  replied: boolean;
+  advice: string | null;
   pingDelivered: boolean;
   pingReason: "unlinked" | "send_failed" | null;
   smsLink: string | null;
@@ -47,7 +50,7 @@ export type OverlayActions = {
   unlock: () => void;
   sleep: () => void;
   skipVault: () => void;
-  send: (text: string) => void;
+  demoReply?: () => void;
 };
 
 export function mountOverlay(
@@ -82,15 +85,16 @@ export function mountOverlay(
 function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActions }) {
   const [now, setNow] = useState(() => Date.now());
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState("");
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 500);
     return () => window.clearInterval(timer);
   }, []);
   const remaining = Math.max(0, new Date(model.lockEndsAt).getTime() - now);
   const glance = toGlance(model);
-  const title =
-    model.necessity === "necessary" && model.purchaseScore == null
+  const unreadable = model.error === "Couldn't read bag";
+  const title = unreadable
+    ? "Couldn't read bag"
+    : model.necessity === "necessary" && model.purchaseScore == null
       ? "Necessary buy"
       : model.status === "unlocked"
         ? "Unlocked"
@@ -105,23 +109,32 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
         : remaining > 0
           ? clockFrom(remaining)
           : "0:00";
-  const showLockControls = model.necessity !== "necessary";
+  const showLockControls = model.necessity !== "necessary" && !unreadable;
+  const unlinked = !model.pingDelivered && model.pingReason !== "send_failed" && model.linkMessage;
   return (
     <div className="panel">
       <section className="card" role="dialog" aria-labelledby="simmer-title">
-        <p className="kicker">Simmer · example data</p>
+        <p className="kicker">{simmerKicker(model.fallbackPage)}</p>
         <h1 id="simmer-title">{title}</h1>
-        {model.quantity != null && model.itemNames[0] ? <p>{model.itemNames[0]}</p> : null}
-        <p>
-          {model.quantity != null
-            ? quantityTotalLabel(model.quantity, model.totalCents)
-            : `${model.itemNames[0] ?? "Apple bag"} · ${formatUsd(model.totalCents)}`}
-        </p>
-        <p className="clock" aria-live="polite">
-          {clock}
-        </p>
+        {unreadable ? null : model.quantity != null && model.itemNames[0] ? <p>{model.itemNames[0]}</p> : null}
+        {unreadable ? null : (
+          <p>
+            {model.quantity != null
+              ? quantityTotalLabel(model.quantity, model.totalCents)
+              : `${model.itemNames[0] ?? "Apple bag"} · ${formatUsd(model.totalCents)}`}
+          </p>
+        )}
+        {model.fallbackPage ? <p className="fine">Example data.</p> : null}
+        {unreadable ? null : (
+          <p className="clock" aria-live="polite">
+            {clock}
+          </p>
+        )}
+        {showLockControls && !model.replied ? <p>Reply to Simmer's iMessage to unlock.</p> : null}
+        {showLockControls && model.replied && model.advice ? <p>{model.advice}</p> : null}
+        {showLockControls && unlinked ? <p>Text {model.linkMessage} to Simmer's iMessage number.</p> : null}
         <div className="row">
-          {showLockControls ? (
+          {showLockControls && model.replied ? (
             <button type="button" onClick={actions.unlock}>
               Unlock
             </button>
@@ -129,17 +142,16 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
           <button type="button" className="quiet" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
             Why
           </button>
+          {import.meta.env.VITE_SIMMER_DEMO === "1" && actions.demoReply ? (
+            <button type="button" className="quiet" data-simmer-demo-reply="simmer-demo-reply" onClick={actions.demoReply}>
+              Simulate reply
+            </button>
+          ) : null}
         </div>
         {open ? (
           <div>
-            <dl>
-              {breakdownLines(glance).map((line) => (
-                <div key={line.label}>
-                  <dt>{line.label}</dt>
-                  <dd>{line.value}</dd>
-                </div>
-              ))}
-            </dl>
+            <p>{unreadable ? "The Apple bag could not be read." : pauseSentence(glance)}</p>
+            {unreadable ? null : <p>{priceLine(model.totalCents, { cents: glance.decision?.costLaterCents ?? 0, example: true })}</p>}
             <div className="row">
               {showLockControls ? (
                 <button type="button" className="quiet" onClick={actions.sleep}>
@@ -152,22 +164,6 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
                 </button>
               ) : null}
             </div>
-            <p className="fine">{UPGRADE_PROMPT}</p>
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                const text = draft.trim();
-                if (!text) {
-                  return;
-                }
-                setDraft("");
-                actions.send(text);
-              }}
-            >
-              <textarea value={draft} onChange={(event) => setDraft(event.target.value)} aria-label="Message Simmer" />
-              <button type="submit">Send</button>
-            </form>
-            {!model.pingDelivered && model.smsLink ? <p><a href={model.smsLink}>sms: link</a></p> : null}
           </div>
         ) : null}
         {model.error ? <p role="alert">{model.error}</p> : null}

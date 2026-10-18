@@ -72,13 +72,11 @@ describe("apple bag lock", () => {
     assert.equal(config.fallbackTotalCents, 120_000);
 
     const fallback = await post("/api/carts", { userId: "user-fallback", parsed: false, demo: true });
-    assert.equal(fallback.status, 201);
-    const example = fallback.body as CartBody;
-    assert.equal(example.parsedFromPage, false);
-    assert.equal(example.totalCents, 120_000);
-    assert.equal(example.items[0]?.name, "Example phone");
-    assert.equal(example.lastPing?.delivered, false);
-    assert.match(example.lastPing?.qrDataUrl ?? "", /^data:image\/png;base64,/);
+    assert.equal(fallback.status, 422);
+    assert.equal((fallback.body as { error: string }).error, "Couldn't read bag");
+    const unread = (await get("/api/carts")) as { carts: CartBody[]; readError: string | null };
+    assert.equal(unread.readError, "Couldn't read bag");
+    assert.equal(unread.carts.some((item) => item.items[0]?.name === "Example phone"), false);
 
     const created = await post("/api/carts", {
       userId: "user-demo1",
@@ -112,14 +110,11 @@ describe("apple bag lock", () => {
     assert.equal((blocked.body as GateBody).reason, "locked");
     assert.equal((blocked.body as GateBody).isUnlocked, false);
 
-    const unlocked = await post(`/api/carts/${cart.code}/unlock`, {});
-    assert.equal(unlocked.status, 200);
-    assert.equal((unlocked.body as CartBody).status, "unlocked");
-    const open = await post("/api/pay", { code: cart.code });
-    assert.equal(open.status, 200);
-    assert.equal((open.body as GateBody).ok, true);
-    const still = (await get(`/api/carts/${cart.code}`)) as CartBody;
-    assert.equal(still.status, "unlocked");
+    const denied = await post(`/api/carts/${cart.code}/unlock`, {});
+    assert.equal(denied.status, 403);
+    assert.equal(((await get(`/api/carts/${cart.code}`)) as CartBody).status, "locked");
+    const stillBlocked = await post("/api/pay", { code: cart.code });
+    assert.equal(stillBlocked.status, 423);
   });
 
   it("vaults the bag for 24 hours, skips in demo, and pings a linked desk thread", async () => {
@@ -136,19 +131,19 @@ describe("apple bag lock", () => {
     const refusedSleep = await post(`/api/carts/${cart.code}/sleep`, {});
     assert.equal(refusedSleep.status, 409);
     assert.equal(((await get(`/api/carts/${cart.code}`)) as CartBody).status, "locked");
+    const beforeReply = await post(`/api/carts/${cart.code}/unlock`, {});
+    assert.equal(beforeReply.status, 403);
     await post("/api/dev/messages", { conversationId, text: "the new color looks nice" });
-    const vault = (await get(`/api/carts/${cart.code}`)) as CartBody;
-    assert.equal(vault.status, "vault");
-    assert.equal(new Date(vault.vaultUntil ?? "").getTime() - Date.now() > 23 * 60 * 60 * 1000, true);
+    const advised = (await get(`/api/carts/${cart.code}`)) as CartBody & { replied?: boolean; advice?: string | null };
+    assert.equal(advised.status, "locked");
+    assert.equal(advised.isUnlocked, false);
+    assert.equal(advised.replied, true);
+    assert.match(advised.advice ?? "", /^Skip\./);
     const held = await post("/api/pay", { code: cart.code });
-    assert.equal((held.body as GateBody).reason, "vault");
-    const refused = await post(`/api/carts/${cart.code}/unlock`, {});
-    assert.equal(refused.status, 423);
-
-    const skipped = await post(`/api/carts/${cart.code}/skip-vault`, {});
-    assert.equal((skipped.body as CartBody).status, "locked");
-    const relocked = await post("/api/pay", { code: cart.code });
-    assert.equal((relocked.body as GateBody).reason, "locked");
+    assert.equal((held.body as GateBody).reason, "locked");
+    const released = await post(`/api/carts/${cart.code}/unlock`, {});
+    assert.equal(released.status, 200);
+    assert.equal((released.body as CartBody).isUnlocked, true);
 
     const linked = await post("/api/dev/link", { userId: "user-vault1", conversationId });
     assert.equal(linked.status, 200);
@@ -171,10 +166,10 @@ describe("apple bag lock", () => {
     assert.match(after.explanation ?? "", /Purchase score 4/);
     assert.match(after.explanation ?? "", /keywords/);
 
-    await post("/api/dev/messages", { conversationId, text: "sleep" });
-    await delay(200);
-    const reminded = (await get(`/api/dev/messages?conversationId=${conversationId}`)) as Transcript;
-    assert.match(reminded.turns.map((turn) => turn.text).join("\n"), /Desk:/);
+    const threadAfter = (await get(`/api/dev/messages?conversationId=${conversationId}`)) as Transcript;
+    const spoken = threadAfter.turns.map((turn) => turn.text).join("\n");
+    assert.doesNotMatch(spoken, /\/dev/);
+    assert.doesNotMatch(spoken, /sms:/);
 
     const plain = await post("/api/dev/messages", {
       conversationId,
@@ -188,6 +183,36 @@ describe("apple bag lock", () => {
     assert.equal(needed.decision?.action, "unlock");
     assert.equal(needed.decision?.signalEffect, "need_unlock");
     assert.equal(needed.motiveSources?.needVsWant, "keywords");
+
+    const older = await post("/api/carts", {
+      userId: "user-current",
+      itemNames: ["iPhone 16 Pro"],
+      totalCents: 119_900,
+      parsed: true,
+      demo: true,
+    });
+    await delay(5);
+    const newer = await post("/api/carts", {
+      userId: "user-current",
+      itemNames: ["AirPods"],
+      totalCents: 17_900,
+      parsed: true,
+      demo: true,
+    });
+    const listed = (await get("/api/carts?userId=user-current")) as { carts: CartBody[] };
+    assert.equal(listed.carts.length, 1);
+    assert.equal(listed.carts[0]?.code, (newer.body as CartBody).code);
+    assert.notEqual(listed.carts[0]?.code, (older.body as CartBody).code);
+    const gone = await fetch(`${base}/api/carts/${(older.body as CartBody).code}`);
+    assert.equal(gone.status, 200);
+
+    const reset = await post("/api/dev/reset", {});
+    assert.equal(reset.status, 200);
+    const afterReset = await fetch(`${base}/api/carts/${(newer.body as CartBody).code}`);
+    assert.equal(afterReset.status, 404);
+    const empty = (await get("/api/carts")) as { carts: CartBody[]; readError: string | null };
+    assert.equal(empty.carts.length, 0);
+    assert.equal(empty.readError, null);
 
     const fallback = await fetch(`${base}/fallback`);
     assert.equal(fallback.status, 200);

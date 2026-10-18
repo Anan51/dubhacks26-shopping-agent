@@ -24,7 +24,7 @@ export const DELIBERATE_USER_ID = "user-deliberate";
 
 export const IMPULSIVE: Persona = {
   id: "impulsive",
-  label: "Impulsive",
+  label: "Example history: frequent buyer",
   userId: IMPULSIVE_USER_ID,
   impulseScore: 2,
   history: [

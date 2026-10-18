@@ -9,10 +9,13 @@ import { defineConfig, type Plugin } from "vite";
 const root = path.dirname(fileURLToPath(import.meta.url));
 
 function copyStatic(): Plugin {
+  let dist = path.join(root, "dist");
   return {
     name: "copy-simmer-extension",
+    configResolved(config) {
+      dist = config.build.outDir;
+    },
     async closeBundle() {
-      const dist = path.join(root, "dist");
       for (const file of ["manifest.json", "background.js", "options.html", "options.js", "popup.html"]) {
         copyFileSync(path.join(root, file), path.join(dist, file));
       }

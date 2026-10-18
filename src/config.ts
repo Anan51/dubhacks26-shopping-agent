@@ -43,6 +43,8 @@ export type AppConfig = {
   xaiModel: string;
   xaiTimeoutMs: number;
   agentHandle: string | null;
+  /** Demo/test iMessage recipient. Empty unless PHOTON_TEST_NUMBER is set. */
+  testNumber: string | null;
 };
 
 export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -62,6 +64,7 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     xaiModel: xaiModelFrom(env),
     xaiTimeoutMs: xaiTimeoutFrom(env),
     agentHandle: env.PHOTON_AGENT_HANDLE?.trim() || null,
+    testNumber: env.PHOTON_TEST_NUMBER?.trim() || null,
   };
 }
 

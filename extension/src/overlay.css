@@ -4,18 +4,35 @@
 
 .panel {
   position: fixed;
-  right: 1rem;
-  bottom: 1rem;
+  top: auto;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  left: auto;
+  margin-left: auto;
   z-index: 2147483646;
-  width: min(22rem, calc(100vw - 2rem));
+  box-sizing: border-box;
+  width: min(380px, calc(100vw - 32px));
+  max-width: min(380px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
   font-family: Georgia, "Iowan Old Style", serif;
   color: #3a2416;
 }
 
+.panel,
+.panel * {
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+}
+
 .card {
-  width: min(28rem, calc(100vw - 2rem));
-  max-height: min(70vh, 28rem);
-  overflow: auto;
+  width: 100%;
+  max-width: min(380px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-x: hidden;
+  overflow-y: auto;
   background: #f6efe4;
   border-radius: 1.4rem;
   padding: 1.3rem 1.3rem 1.1rem;

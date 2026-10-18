@@ -1,4 +1,5 @@
-import { breakdownLines, lockGlance, oneLineVerdict, type GlanceItem } from "../../src/glance.js";
+import { lockGlance, oneLineVerdict, type GlanceItem } from "../../src/glance.js";
+import { pauseSentence, priceLine } from "../../src/overlay-copy.js";
 
 type CartPayload = {
   code: string;
@@ -82,7 +83,11 @@ function card(item: GlanceItem): HTMLLIElement {
 
 function breakdown(item: GlanceItem): HTMLDListElement {
   const dl = document.createElement("dl");
-  for (const line of breakdownLines(item)) {
+  const lines = [
+    { label: "Why", value: pauseSentence(item) },
+    { label: "Price", value: priceLine(item.priceCents, { cents: item.decision?.costLaterCents ?? 0, example: true }) },
+  ];
+  for (const line of lines) {
     const term = document.createElement("dt");
     term.textContent = line.label;
     const value = document.createElement("dd");

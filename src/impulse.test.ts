@@ -260,11 +260,10 @@ describe("impulse flow on the server", () => {
       assert.equal(strict.purchaseScore, 1);
       assert.equal(strict.scoreBucket, "strict");
       assert.equal(strict.gradeSource, "keywords");
-      assert.equal(strict.status, "vault");
+      assert.equal(strict.status, "locked");
+      assert.equal(strict.isUnlocked, false);
       const held = await post(base, "/api/pay", { code: locked.code });
       assert.equal(held.status, 423);
-      const refused = await post(base, `/api/carts/${locked.code}/unlock`, {});
-      assert.equal(refused.status, 423);
 
       await post(base, "/api/dev/persona", { userId: "user-impulsive", persona: "deliberate" });
       const lifted = (await get(base, `/api/carts/${locked.code}`)) as CartSnap;
@@ -279,6 +278,7 @@ describe("impulse flow on the server", () => {
       assert.equal(optional.vaultMode, "soft");
       const released = await post(base, `/api/carts/${locked.code}/unlock`, {});
       assert.equal(released.status, 200);
+      assert.equal((released.body as CartSnap).isUnlocked, true);
 
       await post(base, "/api/dev/messages", {
         conversationId,
@@ -287,7 +287,8 @@ describe("impulse flow on the server", () => {
       const freed = (await get(base, `/api/carts/${locked.code}`)) as CartSnap;
       assert.equal(freed.purchaseScore, 5);
       assert.equal(freed.scoreBucket, "free");
-      assert.equal(freed.status, "unlocked");
+      assert.equal(freed.status, "locked");
+      assert.equal(freed.isUnlocked, false);
       assert.match(freed.explanation ?? "", /will not click it/);
     } finally {
       running.scheduler.stop();

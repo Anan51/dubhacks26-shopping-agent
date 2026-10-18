@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
-import { bagOrFallback, FALLBACK_TOTAL_CENTS, interpretBag, isBlockedControl } from "./apple-bag.js";
+import { FALLBACK_ITEM_NAME, interpretBag, isBlockedControl, readableBag } from "./apple-bag.js";
 
 const SNAPSHOT = new URL("../extension/fixtures/apple-bag-snapshot.txt", import.meta.url);
 
@@ -13,7 +13,8 @@ describe("Apple bag snapshot", () => {
     assert.equal(bag.parsed, true);
     assert.equal(bag.totalCents, 119_900);
     assert.deepEqual(bag.itemNames, ["iPhone 16 Pro"]);
-    const ready = bagOrFallback(bag);
+    const ready = readableBag(bag);
+    assert.ok(ready);
     assert.equal(ready.parsed, true);
     assert.equal(ready.totalCents, 119_900);
   });
@@ -71,11 +72,10 @@ describe("Apple bag snapshot", () => {
     assert.deepEqual(bag.itemNames, ["Example phone"]);
   });
 
-  it("falls back to the example phone when the total is missing", () => {
-    const ready = bagOrFallback(interpretBag(["Shopping Bag", "Check Out"]));
-    assert.equal(ready.parsed, false);
-    assert.equal(ready.totalCents, FALLBACK_TOTAL_CENTS);
-    assert.deepEqual(ready.itemNames, ["Example phone"]);
+  it("does not invent an example phone when the bag cannot be read", () => {
+    const ready = readableBag(interpretBag(["Shopping Bag", "Check Out"]));
+    assert.equal(ready, null);
+    assert.notEqual(FALLBACK_ITEM_NAME, "iPhone 16 Pro");
   });
 });
 
@@ -95,5 +95,11 @@ describe("checkout controls", () => {
       false,
     );
     assert.equal(isBlockedControl(pay, "checkout"), true);
+    assert.equal(isBlockedControl({ tag: "a", text: "Apple Pay", ariaLabel: "" }, "bag"), false);
+    assert.equal(isBlockedControl({ tag: "button", text: "Pay with Apple Card", ariaLabel: "" }, "bag"), true);
+    assert.equal(
+      isBlockedControl({ tag: "a", text: "Learn more about Apple Card Monthly Installments", ariaLabel: "" }, "bag"),
+      false,
+    );
   });
 });

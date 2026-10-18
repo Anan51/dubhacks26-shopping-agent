@@ -120,9 +120,13 @@ export async function getConfig(): Promise<PublicConfig> {
   return request<PublicConfig>("/api/config");
 }
 
-export async function listCarts(): Promise<CartResponse[]> {
-  const body = await request<{ carts: CartResponse[] }>("/api/carts");
-  return body.carts;
+export async function listCarts(): Promise<{ carts: CartResponse[]; readError: string | null }> {
+  const body = await request<{ carts: CartResponse[]; readError?: string | null }>("/api/carts");
+  return { carts: body.carts, readError: body.readError ?? null };
+}
+
+export async function resetDemo(): Promise<void> {
+  await request("/api/dev/reset", { method: "POST", body: "{}" });
 }
 
 export async function getCart(code: string): Promise<CartResponse> {

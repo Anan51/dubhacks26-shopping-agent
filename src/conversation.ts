@@ -1,14 +1,15 @@
-import { isEnforcedVault, sleepCart, unlockCart, VAULT_MS, withCartFacts } from "./carts.js";
+import { holdForUnlock, withCartFacts } from "./carts.js";
 import { extractCartCode, extractSignals, pickShopperSignals, type ExtractOptions } from "./extract-signals.js";
-import { formatLongDate } from "./format.js";
 import { personaFor } from "./history.js";
 import { decide } from "./heuristic.js";
-import { applyPurchaseScore, gradeJustification, keywordGrade } from "./impulse.js";
+import { applyPurchaseScore, gradeJustification } from "./impulse.js";
 import { UPGRADE_PROMPT } from "./links.js";
-import { justificationAsk, parseLinkCommand, threadUserId } from "./phone-link.js";
+import { adviceMessage } from "./overlay-copy.js";
+import { parseLinkCommand, threadUserId } from "./phone-link.js";
 import { phraseDecision } from "./phrase.js";
 import type { PhoneLink } from "./store.js";
-import { assertNever, type Cart, type ConversationContext, type Session } from "./types.js";
+import type { Cart, ConversationContext, Session } from "./types.js";
+import type { GlanceItem } from "./glance.js";
 
 export type ApplyInput = {
   session: Session | null;
@@ -33,10 +34,10 @@ export type ApplyResult = {
   duplicate: boolean;
   armReminder: boolean;
   disarmReminder: boolean;
+  /** Set replied only after the advice text has been handed to the channel. */
+  markReplied: boolean;
   phoneLink?: PhoneLink;
 };
-
-type Intent = "unlock" | "sleep" | null;
 
 export async function applyTurn(input: ApplyInput): Promise<ApplyResult> {
   if (input.session?.lastInboundId === input.messageId) {
@@ -46,6 +47,7 @@ export async function applyTurn(input: ApplyInput): Promise<ApplyResult> {
       duplicate: true,
       armReminder: false,
       disarmReminder: false,
+      markReplied: false,
     };
   }
 
@@ -72,6 +74,9 @@ export async function applyTurn(input: ApplyInput): Promise<ApplyResult> {
   session.turns.push({ role: "shopper", text: input.text });
 
   const link = parseLinkCommand(input.text);
+  if (/^link\b/i.test(input.text.trim()) && !link) {
+    return say(session, "link <userId>");
+  }
   const phoneLink = link
     ? {
         userId: link.userId ?? threadUserId(input.conversationId),
@@ -118,42 +123,7 @@ export async function applyTurn(input: ApplyInput): Promise<ApplyResult> {
   }
   cart.lastInboundMessageId = input.messageId;
 
-  const intent = readIntent(withoutCartLabel(input.text));
-  switch (intent) {
-    case "unlock":
-      return unlockTurn(session, cart, input.now);
-    case "sleep":
-      return sleepTurn(session, cart, input);
-    case null:
-      return justifyTurn(session, cart, input);
-    default:
-      return assertNever(intent);
-  }
-}
-
-function unlockTurn(session: Session, cart: Cart, now: Date): ApplyResult {
-  if (isEnforcedVault(cart, now)) {
-    const until = cart.vaultUntil ? formatLongDate(cart.vaultUntil) : "the saved time";
-    return say(session, `This bag keeps marinating in the Vault until ${until}. Unlock stays on the overlay and waits until then.`, { cart });
-  }
-  unlockCart(cart, now);
-  session.step = "confirm";
-  return say(session, "Unlock — Apple's own button works again. Simmer will not click it or place the order.", {
-    cart,
-    disarmReminder: true,
-  });
-}
-
-async function sleepTurn(session: Session, cart: Cart, input: ApplyInput): Promise<ApplyResult> {
-  await fillDecision(session, cart, input);
-  sleepCart(cart, input.now, VAULT_MS, input.demoReminderMs);
-  session.step = "confirm";
-  const until = cart.vaultUntil ? formatLongDate(cart.vaultUntil) : "tomorrow";
-  const lead = cart.explanation ?? "Sleep on it.";
-  return say(session, `${lead}\n\nYour Apple bag is covered in the Vault until ${until}. Unlock stays available there.`, {
-    cart,
-    armReminder: true,
-  });
+  return justifyTurn(session, cart, input);
 }
 
 async function justifyTurn(session: Session, cart: Cart, input: ApplyInput): Promise<ApplyResult> {
@@ -162,10 +132,7 @@ async function justifyTurn(session: Session, cart: Cart, input: ApplyInput): Pro
   if (cart.necessity === "necessary") {
     return say(session, "This bag is a necessary buy. Checkout can proceed. Simmer will not click the button.", { cart });
   }
-  const spoken = withoutCartLabel(input.text);
-  if (!spoken || (cart.justificationGrade == null && keywordGrade(spoken).grade === 0 && !input.extract?.apiKey)) {
-    return say(session, justificationAsk(cart), { cart });
-  }
+  const spoken = withoutCartLabel(input.text) || input.text.trim();
   const useGrok = Boolean(input.extract?.apiKey);
   if (useGrok) {
     cart.reading = true;
@@ -179,16 +146,15 @@ async function justifyTurn(session: Session, cart: Cart, input: ApplyInput): Pro
       cart.reading = false;
     }
   }
-  if (cart.justificationGrade == null && graded.grade === 0) {
-    return say(session, justificationAsk(cart), { cart });
+  if (spoken && graded.grade !== 0) {
+    const impulse = cart.userImpulseScore ?? personaFor(cart.userId).impulseScore;
+    applyPurchaseScore(cart, graded, impulse, input.now, input.demoReminderMs);
   }
-  const impulse = cart.userImpulseScore ?? personaFor(cart.userId).impulseScore;
-  const scored = applyPurchaseScore(cart, graded, impulse, input.now, input.demoReminderMs);
-  return say(session, scored.reply, {
-    cart,
-    armReminder: scored.bucket === "strict",
-    disarmReminder: scored.bucket === "free",
-  });
+  holdForUnlock(cart);
+  const advice = adviceMessage(glanceFromCart(cart));
+  cart.advice = advice;
+  cart.replied = false;
+  return say(session, advice, { cart, markReplied: true, disarmReminder: true });
 }
 
 async function fillDecision(session: Session, cart: Cart, input: ApplyInput): Promise<void> {
@@ -222,19 +188,31 @@ async function fillDecision(session: Session, cart: Cart, input: ApplyInput): Pr
   session.signals = signals;
 }
 
-function withoutCartLabel(text: string): string {
-  return text.replace(/\bcart\s+[A-HJ-NP-Z2-9]{6}\b/gi, " ").replace(/\s+/g, " ").trim();
+function glanceFromCart(cart: Cart): GlanceItem {
+  return {
+    code: cart.code,
+    name: cart.items[0]?.name ?? "Apple bag",
+    priceCents: cart.totalCents,
+    status: cart.status === "vault" || cart.status === "unlocked" ? cart.status : "locked",
+    vaultUntil: cart.vaultUntil,
+    decision: cart.decision,
+    signals: cart.signals,
+    motiveSources: cart.motiveSources,
+    necessity: cart.necessity,
+    necessitySource: cart.necessitySource,
+    necessityReason: cart.necessityReason,
+    userImpulseScore: cart.userImpulseScore,
+    justificationGrade: cart.justificationGrade,
+    gradeSource: cart.gradeSource,
+    gradeReason: cart.gradeReason,
+    purchaseScore: cart.purchaseScore,
+    scoreBucket: cart.scoreBucket,
+    scoreReason: cart.scoreReason,
+  };
 }
 
-function readIntent(text: string): Intent {
-  const normalized = text.trim().toLowerCase().replace(/[.!]+$/, "");
-  if (normalized === "unlock" || normalized === "i've decided" || normalized === "ive decided") {
-    return "unlock";
-  }
-  if (normalized === "sleep" || normalized === "sleep on it" || normalized === "wait") {
-    return "sleep";
-  }
-  return null;
+function withoutCartLabel(text: string): string {
+  return text.replace(/\bcart\s+[A-HJ-NP-Z2-9]{6}\b/gi, " ").replace(/\s+/g, " ").trim();
 }
 
 function mergeSignals(base: Session["signals"], patch: Session["signals"]): Session["signals"] {
@@ -248,7 +226,7 @@ function mergeSignals(base: Session["signals"], patch: Session["signals"]): Sess
 function say(
   session: Session,
   reply: string,
-  extra: { cart?: Cart; armReminder?: boolean; disarmReminder?: boolean; phoneLink?: PhoneLink } = {},
+  extra: { cart?: Cart; armReminder?: boolean; disarmReminder?: boolean; markReplied?: boolean; phoneLink?: PhoneLink } = {},
 ): ApplyResult {
   session.turns.push({ role: "agent", text: reply });
   session.updatedAt = new Date().toISOString();
@@ -258,6 +236,7 @@ function say(
     duplicate: false,
     armReminder: extra.armReminder === true,
     disarmReminder: extra.disarmReminder === true,
+    markReplied: extra.markReplied === true,
     ...(extra.cart ? { cart: extra.cart } : {}),
     ...(extra.phoneLink ? { phoneLink: extra.phoneLink } : {}),
   };

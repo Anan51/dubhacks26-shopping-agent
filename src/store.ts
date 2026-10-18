@@ -27,6 +27,8 @@ export type Store = {
   /** True when this inbound id already produced an outbound reply. */
   hasHandledInbound(messageId: string): boolean;
   rememberInbound(messageId: string): void;
+  /** Clears carts, sessions, phone links, and remembered inbound messages. */
+  reset(): void;
 };
 
 type Snapshot = {
@@ -100,6 +102,13 @@ class MemoryStore implements Store {
   rememberInbound(messageId: string): void {
     this.handledInboundIds = rememberId(this.handledInboundIds, messageId);
   }
+
+  reset(): void {
+    this.carts.clear();
+    this.sessions.clear();
+    this.phoneLinks.clear();
+    this.handledInboundIds = [];
+  }
 }
 
 class FileStore implements Store {
@@ -166,6 +175,11 @@ class FileStore implements Store {
 
   rememberInbound(messageId: string): void {
     this.snapshot.handledInboundIds = rememberId(this.snapshot.handledInboundIds ?? [], messageId);
+    this.persist();
+  }
+
+  reset(): void {
+    this.snapshot = { carts: {}, sessions: {}, phoneLinks: {}, handledInboundIds: [] };
     this.persist();
   }
 

@@ -12,9 +12,17 @@ npm test
 npm run dev
 ```
 
-Open the desk at [http://127.0.0.1:4321/dev](http://127.0.0.1:4321/dev). Leave Photon blank. The desk is the stub phone.
+Leave Photon blank until you connect an iMessage line. Replies that unlock a bag are graded iMessage texts.
 
 `npm run typecheck` and `npm run build` compile the server, the desk, and the extension.
+
+## Demo mode
+
+Demo mode is off unless you opt in.
+
+- `npm run dev:demo` starts the server with `WAITMATE_DEMO=1` and without `NODE_ENV=production`. That allows `POST /api/dev/reply`, which simulates an iMessage reply for a cart. With the flag unset, or in production, that route returns 403.
+- `npm run build:demo` builds the extension with `VITE_SIMMER_DEMO=1`. That build shows a Simulate reply control. The default `npm run build` does not set the flag, and the control is left out of `extension/dist`.
+- `PHOTON_TEST_NUMBER` is the demo recipient (E.164). `.env.example` uses the placeholder `+15555550100`. Do not commit a real number.
 
 ## Load the extension
 
@@ -28,10 +36,10 @@ The manifest matches the Apple bag (`/shop/bag`, including regional paths), `sec
 ## Demo
 
 1. Stay signed out of Apple. Do not enter a card. Do not go past the checkout entry.
-2. Add one item and open the bag. Simmer covers the page with **Marinating**, steam rings, and a 10-minute timer. Unlock stays visible. It only re-enables Apple's own button.
-3. The overlay shows the product name and total. If the page cannot be read, Simmer uses an example $1,200 phone.
-4. Reply in the overlay, or text `link <id>` once so a later checkout can ping that thread. With no Photon key, the desk simulates a linked ping and a failed send (sms link plus QR).
-5. **Sleep on it** covers the bag for 24 hours. The Vault still shows **Unlock**. Unlock does not lift the Vault early. **Demo: skip 24 hours** does, for the table.
+2. Add one item and open the bag. Simmer covers the page with **Marinating**, steam rings, and a 10-minute timer. Reply to Simmer's iMessage to unlock. Simmer does not click Apple's button.
+3. The overlay shows the product name and total. If the page cannot be read, it says **Couldn't read bag**.
+4. Text `link <userId>` once so a later checkout can reach that iMessage thread.
+5. **Sleep on it** is an optional pause. **Demo: skip 24 hours** ends a vault and leaves the bag locked. Neither one unlocks checkout. A graded reply with a score of 4 or 5 does.
 6. If apple.com will not load, open [http://127.0.0.1:4321/fallback](http://127.0.0.1:4321/fallback). That page is example data and the same extension path. It is not the main demo.
 
 `/api/pay` only reports the lock for the desk. It does not charge anyone.

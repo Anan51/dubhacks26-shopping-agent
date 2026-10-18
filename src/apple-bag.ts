@@ -31,22 +31,33 @@ export function interpretBag(lines: readonly string[]): InterpretedBag {
   };
 }
 
-export function bagOrFallback(interpreted: InterpretedBag): { itemNames: string[]; totalCents: number; parsed: boolean } {
-  if (!interpreted.parsed || interpreted.totalCents === null) {
-    return { itemNames: [FALLBACK_ITEM_NAME], totalCents: FALLBACK_TOTAL_CENTS, parsed: false };
+/** A readable bag. An unreadable page does not become the example phone. */
+export function readableBag(interpreted: InterpretedBag): { itemNames: string[]; totalCents: number; parsed: true } | null {
+  if (!interpreted.parsed || interpreted.totalCents == null || interpreted.totalCents <= 0 || interpreted.itemNames.length === 0) {
+    return null;
   }
-  return {
-    itemNames: interpreted.itemNames.length > 0 ? interpreted.itemNames : ["Apple bag"],
-    totalCents: interpreted.totalCents,
-    parsed: true,
-  };
+  return { itemNames: interpreted.itemNames, totalCents: interpreted.totalCents, parsed: true };
 }
 
 export function isApplePayControl(control: BagControl): boolean {
-  if (control.tag.toLowerCase() === "apple-pay-button") {
+  const tag = control.tag.toLowerCase();
+  if (tag === "apple-pay-button") {
     return true;
   }
+  // A footer "Apple Pay" link is an anchor, not the checkout button.
+  if (tag === "a") {
+    return false;
+  }
   return /apple\s*pay\b|\s*pay\b/i.test(controlBlob(control));
+}
+
+/** Apple Card on a checkout control. Informational links stay open. */
+export function isAppleCardCheckout(control: BagControl): boolean {
+  if (control.tag.toLowerCase() === "a") {
+    return false;
+  }
+  const blob = controlBlob(control);
+  return /\bapple\s*card\b/i.test(blob) && /\b(check\s*out|pay)\b/i.test(blob);
 }
 
 export function isCheckOutControl(control: BagControl): boolean {
@@ -60,7 +71,7 @@ export function isCheckOutControl(control: BagControl): boolean {
 
 /** Checkout and Apple Pay on the bag. On the checkout host, also the pay and continue controls. */
 export function isBlockedControl(control: BagControl, page: ApplePage): boolean {
-  if (isApplePayControl(control) || isCheckOutControl(control)) {
+  if (isApplePayControl(control) || isCheckOutControl(control) || isAppleCardCheckout(control)) {
     return true;
   }
   if (page !== "checkout") {
