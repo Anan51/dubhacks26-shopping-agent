@@ -35,7 +35,7 @@ Demo mode is off unless you opt in.
 3. Choose `extension/dist`
 4. Options: local server `http://127.0.0.1:4321`. apple.com is on until you add it to the off list.
 
-The manifest matches the Apple bag (`/shop/bag`, including regional paths), `secure*.store.apple.com` checkout URLs, and `http://127.0.0.1:4321/fallback` plus localhost. It does not match the rest of apple.com.
+The manifest matches the Apple bag (`/shop/bag`, including regional paths), `secure*.store.apple.com` checkout URLs, Amazon cart and checkout (`/gp/cart`, `/cart`, `/checkout`, `/gp/buy`), and `http://127.0.0.1:4321/fallback` plus `http://127.0.0.1:4321/amazon` (and localhost). It does not match the rest of apple.com or amazon.com.
 
 ## Demo
 

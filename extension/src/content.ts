@@ -1,7 +1,7 @@
 import css from "./overlay.css?inline";
 
 import { applePage, hostOptedOut, isFallbackBag } from "../../src/sites.js";
-import { bagContentKey, bagParseKey, bagReadAction, readPageBag, watchBagDom, type BagWatch, type PageBag } from "./bag-dom.js";
+import { bagContentKey, bagParseKey, bagReadAction, watchBagDom, type BagWatch, type PageBag } from "./bag-dom.js";
 import { bindCheckoutClicks } from "./checkout-record.js";
 import { deliverExtensionMessage, extensionContextAlive } from "./extension-context.js";
 import { installGate } from "./gate.js";
@@ -9,6 +9,7 @@ import { buttonsToBlock } from "./overlay/block.js";
 import { mountSimmerCard } from "./overlay/mount.js";
 import { watchPage, type PageWatch } from "./page-observer.js";
 import type { OverlayModel } from "./overlay.js";
+import { readActiveBag } from "./store-bag.js";
 import { adapterFor } from "./stores/index.js";
 import type { StoreAdapter } from "./stores/adapter.js";
 
@@ -256,10 +257,10 @@ async function start(site: StoreAdapter): Promise<void> {
 
   // One initial read, then only when the bag area itself changes. The 1s timer polls lock state.
   const readBagNow = () => {
-    if (!document.body || stopped || posting) {
+    if (!document.body || stopped || posting || site.isOrderConfirmation(document)) {
       return;
     }
-    const interpreted = readPageBag(document.body);
+    const interpreted = readActiveBag(site, document);
     if (interpreted.quantity != null) {
       quantity = interpreted.quantity;
     }
@@ -314,9 +315,9 @@ async function start(site: StoreAdapter): Promise<void> {
     readBagNow();
   });
   fallbackTimer = window.setTimeout(() => {
-    if (!code && !stopped) {
-      const interpreted = document.body ? readPageBag(document.body) : null;
-      if (interpreted && interpreted.parsed && interpreted.itemNames.length > 0) {
+    if (!code && !stopped && !site.isOrderConfirmation(document)) {
+      const interpreted = readActiveBag(site, document);
+      if (interpreted.parsed && interpreted.itemNames.length > 0) {
         void publish(interpreted);
         return;
       }

@@ -61,11 +61,28 @@ export function isFallbackBag(url: string): boolean {
   } catch {
     return false;
   }
-  return isLocalFallback(parsed.hostname.toLowerCase(), parsed.pathname.toLowerCase());
+  const host = parsed.hostname.toLowerCase();
+  const path = parsed.pathname.toLowerCase();
+  return isLocalFallback(host, path) || isLocalAmazonPath(host, path);
+}
+
+/** Local Amazon cart fixture. Not an Apple bag, and not a live amazon.com page. */
+export function isLocalAmazonFixture(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  return isLocalAmazonPath(parsed.hostname.toLowerCase(), parsed.pathname.toLowerCase());
 }
 
 function isLocalFallback(host: string, path: string): boolean {
   return (host === "127.0.0.1" || host === "localhost") && (path === "/fallback" || path.startsWith("/fallback/"));
+}
+
+function isLocalAmazonPath(host: string, path: string): boolean {
+  return (host === "127.0.0.1" || host === "localhost") && (path === "/amazon" || path.startsWith("/amazon/"));
 }
 
 function isCheckoutHost(host: string): boolean {
