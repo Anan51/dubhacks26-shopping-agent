@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json && tsc --noEmit -p extension/tsconfig.json",
     "build": "tsc && vite build --config web/vite.config.ts && vite build --config extension/vite.config.ts",
     "build:demo": "node scripts/build-demo.mjs",
-    "test": "tsx --test src/*.test.ts src/auth/*.test.ts src/memory/*.test.ts src/purchases/*.test.ts extension/src/*.test.ts",
+    "test": "tsx --test src/*.test.ts src/auth/*.test.ts src/memory/*.test.ts src/purchases/*.test.ts src/onboarding/*.test.ts extension/src/*.test.ts",
     "smoke:grok": "tsx src/smoke-grok.ts",
     "check:mongo": "tsx src/check-mongo.ts"
   },
@@ -38,6 +38,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "esbuild": "^0.28.2",
     "jsdom": "^29.1.1",
     "mongodb-memory-server": "^11.3.0",
     "tsx": "^4.20.6",

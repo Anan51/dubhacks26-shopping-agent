@@ -6,7 +6,7 @@ const purchaseSchema = new Schema(
     item: { type: String, required: true, maxlength: 200 },
     category: { type: String, required: true, maxlength: 40 },
     price: { type: Number, required: true },
-    verdict: { type: String, required: true, maxlength: 40 },
+    verdict: { type: String, default: null, maxlength: 40 },
     feedback: { type: String, enum: ["regretted", "kept"], default: null },
     isExample: { type: Boolean, required: true, default: false },
     ratedAt: { type: Date, default: null },
