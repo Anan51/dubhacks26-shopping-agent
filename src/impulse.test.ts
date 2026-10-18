@@ -283,6 +283,31 @@ describe("score routing", () => {
     assert.match(opened.reply, /OK to buy/);
   });
 
+  it("does not vault an under-floor bag when the justification is strict", () => {
+    const grade = { grade: -2, source: "keywords" as const, reason: "Look." };
+    const cheap = pricedCart(["Apple AirTag"], 3_200);
+    cheap.decision = decide(withCartFacts({}, cheap.totalCents));
+    const skipped = applyPurchaseScore(cheap, grade, 2, NOW, 60_000);
+    assert.equal(skipped.bucket, "strict");
+    assert.equal(cheap.purchaseScore, 1);
+    assert.equal(cheap.scoreBucket, "strict");
+    assert.equal(cheap.status, "locked");
+    assert.equal(cheap.isUnlocked, false);
+    assert.equal(cheap.vaultUntil, null);
+    assert.equal(cheap.vaultMode, null);
+
+    const pricey = pricedCart(["iPad Pro 11"], 99_900);
+    pricey.decision = decide(withCartFacts({}, pricey.totalCents));
+    const held = applyPurchaseScore(pricey, grade, 2, NOW, 60_000);
+    assert.equal(held.bucket, "strict");
+    assert.equal(pricey.purchaseScore, 1);
+    assert.equal(pricey.scoreBucket, "strict");
+    assert.equal(pricey.status, "vault");
+    assert.equal(pricey.vaultMode, "enforced");
+    assert.equal(pricey.isUnlocked, false);
+    assert.notEqual(pricey.vaultUntil, null);
+  });
+
   it("says a free score can be unlocked, and that Apple's button works only after Unlock", () => {
     const free = cart();
     free.decision = decide(withCartFacts({}, free.totalCents));
@@ -1018,12 +1043,16 @@ describe("keyword necessity on the request path", () => {
 });
 
 function cart() {
+  return pricedCart(["Example phone"], 120_000);
+}
+
+function pricedCart(names: string[], totalCents: number) {
   return startLockedCart({
-    items: itemsForBag(["Example phone"], 120_000, false),
-    totalCents: 120_000,
+    items: itemsForBag(names, totalCents, false),
+    totalCents,
     parsedFromPage: false,
     pageHost: "127.0.0.1",
-    fingerprint: "user|120000|example phone",
+    fingerprint: `user|${totalCents}|${names.join("|").toLowerCase()}`,
     now: NOW,
     demo: true,
     lockMs: 600_000,

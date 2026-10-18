@@ -1,4 +1,4 @@
-import { liftCart, sleepCart, VAULT_MS } from "./carts.js";
+import { liftCart, PAUSE_FLOOR_CENTS, sleepCart, VAULT_MS } from "./carts.js";
 import type { ExtractOptions } from "./extract-signals.js";
 import { unwrapJsonFence } from "./extract-signals.js";
 import { formatUsd } from "./format.js";
@@ -213,7 +213,8 @@ export function scoreReply(input: {
 
 /**
  * Writes the score onto the cart and moves the lock.
- * Score 1 pauses checkout until the hold ends. Score 2–3 stays locked until the shopper chooses sleep.
+ * Score 1 pauses checkout until the hold ends. A bag under `PAUSE_FLOOR_CENTS` is not vaulted.
+ * Score 2–3 stays locked until the shopper chooses sleep.
  * Score 4+ lifts the lock and any vault.
  */
 export function applyPurchaseScore(
@@ -260,6 +261,9 @@ export function applyPurchaseScore(
       }
       return { bucket, reply };
     case "strict":
+      if (cart.totalCents < PAUSE_FLOOR_CENTS) {
+        return { bucket, reply };
+      }
       sleepCart(cart, now, VAULT_MS, demoReminderMs, "enforced");
       return { bucket, reply };
     default:
