@@ -53,6 +53,13 @@ export type AppDeps = {
   polish?: (template: string, action: Decision["action"]) => Promise<string>;
   /** Test override. Request handlers read this instead of process.env when set. */
   env?: NodeJS.ProcessEnv;
+  /** When set, a valid JWT cookie or bearer token fills req.user and does not block anonymous demo calls. */
+  readSession?: (req: Request) => Promise<{ id: string; email: string } | null>;
+  /**
+   * Optional verdict personalization. Callers must pass the Mongo user id from req.user.
+   * Omitted unless Backboard is configured, so demo copy stays the same.
+   */
+  personalizeNudge?: (text: string, authenticatedUserId: string) => Promise<string>;
 };
 
 export type RunningApp = {
@@ -116,6 +123,7 @@ export function createApp(deps: AppDeps): RunningApp {
       deps.polish ??
       ((template, action) => polishPhrase(template, action, deps.xaiApiKey, fetch, deps.xaiModel, deps.xaiTimeoutMs)),
     extract: extractOptions,
+    ...(deps.personalizeNudge ? { personalizeNudge: deps.personalizeNudge } : {}),
   });
 
   if (deps.photon) {
@@ -129,6 +137,19 @@ export function createApp(deps: AppDeps): RunningApp {
 
   const app = express();
   app.disable("x-powered-by");
+  if (deps.readSession) {
+    const readSession = deps.readSession;
+    app.use((req, _res, next) => {
+      readSession(req).then((user) => {
+        if (user) {
+          req.user = user;
+        }
+        next();
+      }).catch(() => {
+        next();
+      });
+    });
+  }
   app.post("/api/webhook", (req, res) => {
     void handleWebhook(req, res, runtime);
   });
@@ -220,6 +241,9 @@ export function createApp(deps: AppDeps): RunningApp {
       taken: (code) => deps.store.getCart(code) !== undefined,
     });
     seedDecision(cart);
+    if (deps.personalizeNudge && req.user?.id && cart.explanation) {
+      cart.explanation = await deps.personalizeNudge(cart.explanation, req.user.id);
+    }
     const persona = personaFor(userId, assignedPersonas);
     cart.personaId = persona.id;
     cart.userImpulseScore = persona.impulseScore;
@@ -462,6 +486,7 @@ export function createApp(deps: AppDeps): RunningApp {
       id: `desk-${randomUUID()}`,
       conversationId,
       text: textForAgent,
+      ...(req.user?.id ? { authUserId: req.user.id } : {}),
     });
     const session = deps.store.getSession(conversationId);
     res.json({ turns: session?.turns ?? [], reading: false });

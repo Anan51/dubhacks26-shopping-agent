@@ -50,3 +50,4 @@ The manifest matches the Apple bag (`/shop/bag`, including regional paths), `sec
 - Grok runs when `XAI_API_KEY` is set (`XAI_MODEL` empty uses `grok-4.20-0309-non-reasoning`, timeout `XAI_TIMEOUT_MS` or 8 seconds). No key means keywords. `npm run smoke:grok` calls the API once and prints signals, never the key.
 - Trade-in values and the $35 financing balance are example data, labeled on screen.
 - The store is in memory unless `WAITMATE_STORE_PATH` is set.
+- Email login and Backboard memory stay off until `MONGODB_URI`, `JWT_SECRET`, and `BACKBOARD_API_KEY` are set. See [AUTH.md](AUTH.md).

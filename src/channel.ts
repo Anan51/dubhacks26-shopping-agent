@@ -3,6 +3,8 @@ export type InboundMessage = {
   conversationId: string;
   text: string;
   agentSenderId?: string;
+  /** Mongo _id from a verified session. Demo and Photon messages leave this unset. */
+  authUserId?: string;
 };
 
 export type OutboundMessage = {
