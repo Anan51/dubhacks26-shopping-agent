@@ -52,19 +52,19 @@ export function categoryForItem(name: string): string {
   if (/\b(case|cover)\b/.test(text)) {
     return "case";
   }
-  if (/\b(airpods|headphones|earbuds)\b/.test(text)) {
+  if (/\b(airpods|headphones|earbuds|buds)\b/.test(text)) {
     return "audio";
   }
   if (/\bwatch\b/.test(text)) {
     return "watch";
   }
-  if (/\b(ipad|tablet)\b/.test(text)) {
+  if (/\b(ipad|tablet|tab)\b/.test(text)) {
     return "tablet";
   }
-  if (/\b(macbook|mac|laptop)\b/.test(text)) {
+  if (/\b(macbook|mac|laptop|galaxy book|chromebook)\b/.test(text)) {
     return "computer";
   }
-  if (/\b(phone|iphone|pixel|galaxy|smartphone|android phone)\b/.test(text)) {
+  if (/\b(phone|iphone|pixel|galaxy|smartphone)\b/.test(text)) {
     return "phone";
   }
   return "other";

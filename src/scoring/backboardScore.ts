@@ -213,7 +213,42 @@ export async function computeImpulseScore(
   );
 }
 
-const NAME_STOPWORDS = new Set(["a", "an", "the", "and", "or", "of", "for", "to", "in", "on", "with", "from", "by", "at"]);
+const NAME_STOPWORDS = new Set([
+  "a",
+  "an",
+  "the",
+  "and",
+  "or",
+  "of",
+  "for",
+  "to",
+  "in",
+  "on",
+  "with",
+  "from",
+  "by",
+  "at",
+  "black",
+  "white",
+  "blue",
+  "red",
+  "green",
+  "silver",
+  "gold",
+  "gray",
+  "grey",
+  "pro",
+  "max",
+  "plus",
+  "mini",
+  "ultra",
+  "air",
+  "se",
+  "lite",
+  "gb",
+  "tb",
+  "inch",
+]);
 
 /**
  * Sum of closeness for regret hits that match this bag.
