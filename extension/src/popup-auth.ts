@@ -1,5 +1,6 @@
 import { isRecord } from "../../src/record.js";
 import { authOriginFromStorage } from "./auth-flag.js";
+import { attachPurchaseHistory } from "./popup-purchases.js";
 
 const LOGIN_ERROR = "Invalid email or password.";
 const SIGNUP_ERROR = "Could not sign up.";
@@ -48,6 +49,7 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
   signed.append(who, logout);
 
   section.append(form, signed);
+  const history = attachPurchaseHistory(section, origin);
   parent.prepend(style, section);
 
   signup.addEventListener("click", () => {
@@ -121,12 +123,14 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
     form.hidden = true;
     signed.hidden = false;
     who.textContent = address;
+    history.show();
   }
 
   function showSignedOut(): void {
     form.hidden = false;
     signed.hidden = true;
     who.textContent = "";
+    history.hide();
   }
 
   function showError(message: string): void {

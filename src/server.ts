@@ -7,13 +7,15 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 
 import { readAccountConfig } from "./auth/config.js";
-import { connectMongo } from "./auth/db.js";
+import { connectMongo, mongoState } from "./auth/db.js";
 import { provisionAssistant, attachAccounts } from "./auth/routes.js";
-import { readOptionalUser } from "./auth/session.js";
+import { readOptionalUser, requireUser } from "./auth/session.js";
 import { createApp } from "./app.js";
 import { PhotonChannel } from "./channels/photon.js";
 import { photonConfigured, readAppConfig, readConfig } from "./config.js";
 import { createMemoryRuntime } from "./memory/runtime.js";
+import { createPurchaseRouter } from "./purchases/routes.js";
+import { recordUnlockedPurchase } from "./purchases/service.js";
 import { createDefaultStore } from "./store.js";
 
 const webRoot = path.join(process.cwd(), "web");
@@ -87,6 +89,7 @@ export async function startServer(): Promise<void> {
     ...(accountConfig.backboardEnabled
       ? { personalizeNudge: (text: string, userId: string) => memory.personalize(text, userId) }
       : {}),
+    ...(jwtSecret && mongoState() === "ready" ? { recordPurchase: recordUnlockedPurchase } : {}),
   });
   attachAccounts(running.app, {
     jwtSecret,
@@ -94,6 +97,17 @@ export async function startServer(): Promise<void> {
     memory,
     ...(accountConfig.backboardEnabled ? { provision: provisionAssistant(memory.client, memory.directory) } : {}),
   });
+  if (jwtSecret && mongoState() === "ready") {
+    running.app.use(
+      "/purchases",
+      createPurchaseRouter({
+        authenticate: requireUser(jwtSecret),
+        directory: memory.directory,
+        client: memory.client,
+        remote: memory.remote,
+      }),
+    );
+  }
 
   await attachClient(running.app);
   if (photon) {

@@ -60,6 +60,8 @@ export type AppDeps = {
    * Omitted unless Backboard is configured, so demo copy stays the same.
    */
   personalizeNudge?: (text: string, authenticatedUserId: string) => Promise<string>;
+  /** Present only when Mongo auth is configured. Omitted on the demo path. */
+  recordPurchase?: (authUserId: string, cart: Cart) => Promise<void>;
 };
 
 export type RunningApp = {
@@ -80,7 +82,7 @@ export function createApp(deps: AppDeps): RunningApp {
     ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
   };
 
-  function refineNecessity(code: string, bagText: string): void {
+  function refineNecessity(code: string, bagText: string, authUserId?: string): void {
     void classifyNecessity(bagText, extractOptions)
       .then((necessity) => {
         if (necessity.source !== "grok") {
@@ -90,10 +92,23 @@ export function createApp(deps: AppDeps): RunningApp {
         if (!current) {
           return;
         }
+        const wasUnlocked = current.isUnlocked;
         applyNecessity(current, necessity);
         deps.store.saveCart(current);
+        if (authUserId && !wasUnlocked && current.isUnlocked) {
+          void notePurchase(authUserId, current);
+        }
       })
       .catch(() => undefined);
+  }
+
+  function notePurchase(authUserId: string, cart: Cart): Promise<void> {
+    if (!deps.recordPurchase) {
+      return Promise.resolve();
+    }
+    return deps.recordPurchase(authUserId, cart).catch((error: unknown) => {
+      console.error(error instanceof Error ? error.message : "Purchase was not recorded.");
+    });
   }
 
   async function routeSend(message: OutboundMessage): Promise<void> {
@@ -253,8 +268,11 @@ export function createApp(deps: AppDeps): RunningApp {
       await pingCart(cart, false);
     }
     deps.store.saveCart(cart);
+    if (req.user?.id && cart.isUnlocked) {
+      await notePurchase(req.user.id, cart);
+    }
     res.status(201).json(publicCart(cart, deps.agentHandle));
-    refineNecessity(cart.code, bagText);
+    refineNecessity(cart.code, bagText, req.user?.id);
   }));
 
   app.get("/api/carts/:code", (req, res) => {
@@ -278,7 +296,7 @@ export function createApp(deps: AppDeps): RunningApp {
     res.status(gate.httpStatus).json({ ...gate, code: cart.code, synthetic: true });
   });
 
-  app.post("/api/carts/:code/unlock", (req, res) => {
+  app.post("/api/carts/:code/unlock", settle(async (req, res) => {
     const cart = loadCart(req.params.code);
     if (!cart) {
       res.status(404).json({ error: "Cart not found." });
@@ -298,11 +316,15 @@ export function createApp(deps: AppDeps): RunningApp {
         return;
       }
     }
+    const wasUnlocked = cart.isUnlocked;
     unlockCart(cart, now());
     deps.store.saveCart(cart);
     scheduler.disarm(cart.code);
+    if (!wasUnlocked && cart.isUnlocked && req.user?.id) {
+      await notePurchase(req.user.id, cart);
+    }
     res.json(publicCart(cart, deps.agentHandle));
-  });
+  }));
 
   app.post("/api/carts/:code/sleep", (req, res) => {
     const cart = loadCart(req.params.code);
