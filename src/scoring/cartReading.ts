@@ -91,19 +91,53 @@ export function readingForCart(
 
 /**
  * The line whose name drives the impulse category.
- * Prefer the priciest item `keywordNecessity` does not call necessary.
- * When every priced item is necessary, or no name has a per-item read, use the priciest.
- * Missing integer cent prices keep the first line.
+ * Two or more positive cent prices are real per-item prices: the priciest item
+ * `keywordNecessity` does not call necessary, or the priciest line when every
+ * priced item is necessary.
+ * One positive price is the itemsForBag shape (the bag total sits on a single
+ * line and the rest are 0). Missing prices use that same path. Choose by name:
+ * the first non-blank item `keywordNecessity` does not call necessary. A phone
+ * in that set wins, so a later iPhone is scored instead of the line that
+ * happens to hold the total. The last resort is the first line.
  */
 function scoredItemName(cart: Cart): string {
   const fallback = cart.items[0]?.name ?? "Apple bag";
-  const priced = cart.items.filter((item) => integerCents(item.priceCents) != null);
+  if (positivePriceCount(cart.items) >= 2) {
+    return pricedScoreName(cart.items) ?? fallback;
+  }
+  return namedScoreName(cart.items) ?? fallback;
+}
+
+function positivePriceCount(items: readonly CartItem[]): number {
+  let count = 0;
+  for (const item of items) {
+    const cents = integerCents(item.priceCents);
+    if (cents != null && cents > 0) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+/** Priciest unnecessary line, or the priciest line when every priced item is necessary. */
+function pricedScoreName(items: readonly CartItem[]): string | null {
+  const priced = items.filter((item) => integerCents(item.priceCents) != null);
   if (priced.length === 0) {
-    return fallback;
+    return null;
   }
   const unnecessary = priced.filter((item) => necessityOf(item.name) === false);
-  const chosen = priciest(unnecessary.length > 0 ? unnecessary : priced);
-  return chosen?.name ?? fallback;
+  return priciest(unnecessary.length > 0 ? unnecessary : priced)?.name ?? null;
+}
+
+/**
+ * First unnecessary phone, otherwise the first unnecessary non-blank name.
+ * Prices are ignored: a 0 line is not cheaper, and the line carrying the bag
+ * total is not the purchase.
+ */
+function namedScoreName(items: readonly CartItem[]): string | null {
+  const unnecessary = items.filter((item) => necessityOf(item.name) === false);
+  const phone = unnecessary.find((item) => categoryForItem(item.name) === "phone");
+  return (phone ?? unnecessary[0])?.name ?? null;
 }
 
 /** Null when the name is blank, so there is nothing for the keyword check to read. */
