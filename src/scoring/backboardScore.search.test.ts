@@ -143,11 +143,11 @@ describe("regret search scoring", { concurrency: false }, () => {
       return hits;
     });
     hits = [hit("regretted purchase: AirPods (audio, $179)", 0.55)];
-    const weak = await computeImpulseScore(ada.id, buds, undefined, { backboardEnabled: true, client });
-    hits = [hit("regretted purchase: AirPods (audio, $179)", 0.95)];
-    const close = await computeImpulseScore(ada.id, buds, undefined, { backboardEnabled: true, client });
-    assert.ok(weak.score > 4.5);
-    assert.ok(close.score > weak.score);
+    const farther = await computeImpulseScore(ada.id, buds, undefined, { backboardEnabled: true, client });
+    hits = [hit("regretted purchase: AirPods (audio, $179)", 0.1)];
+    const closer = await computeImpulseScore(ada.id, buds, undefined, { backboardEnabled: true, client });
+    assert.ok(farther.score > 4.5);
+    assert.ok(closer.score > farther.score);
     const last = seen.at(-1);
     assert.equal(last?.assistantId, "asst-close");
     assert.equal(last?.query, regretSearchQuery("AirPods", "audio"));
@@ -247,7 +247,7 @@ describe("regret search scoring", { concurrency: false }, () => {
     assert.equal(hits.filter((hit) => hit.content.includes("regretted purchase:")).length, 1);
   });
 
-  it("ignores a regret hit below the score floor and counts one on the floor", async () => {
+  it("ignores a regret hit past the max distance and counts one on it", async () => {
     const ada = await User.create({
       email: "search-floor@example.com",
       passwordHash: HASH,
@@ -255,32 +255,36 @@ describe("regret search scoring", { concurrency: false }, () => {
       weeklyBudget: 500,
       backboardAssistantId: "asst-floor",
     });
-    const previous = process.env.REGRET_SEARCH_MIN_SCORE;
-    delete process.env.REGRET_SEARCH_MIN_SCORE;
+    const previous = process.env.REGRET_SEARCH_MAX_DISTANCE;
+    delete process.env.REGRET_SEARCH_MAX_DISTANCE;
     try {
-      const below = scriptedClient(async () => [hit("regretted purchase: AirPods (audio, $179)", 0.49)]);
-      const ignored = await computeImpulseScore(ada.id, buds, undefined, { backboardEnabled: true, client: below });
+      const past = scriptedClient(async () => [hit("regretted purchase: AirPods (audio, $179)", 0.9)]);
+      const ignored = await computeImpulseScore(ada.id, buds, undefined, { backboardEnabled: true, client: past });
       assert.equal(ignored.score, 4.5);
       assert.equal(ignored.why, null);
 
-      const onFloor = scriptedClient(async () => [hit("regretted purchase: AirPods (audio, $179)", 0.5)]);
-      const counted = await computeImpulseScore(ada.id, buds, undefined, { backboardEnabled: true, client: onFloor });
+      const onMax = scriptedClient(async () => [hit("regretted purchase: AirPods (audio, $179)", 0.6)]);
+      const counted = await computeImpulseScore(ada.id, buds, undefined, { backboardEnabled: true, client: onMax });
       assert.ok(counted.score > 4.5);
 
-      process.env.REGRET_SEARCH_MIN_SCORE = "0.7";
-      const underKnob = scriptedClient(async () => [hit("regretted purchase: AirPods (audio, $179)", 0.615)]);
-      const raised = await computeImpulseScore(ada.id, buds, undefined, { backboardEnabled: true, client: underKnob });
-      assert.equal(raised.score, 4.5);
+      const near = scriptedClient(async () => [hit("regretted purchase: AirPods (audio, $179)", 0.44)]);
+      const raised = await computeImpulseScore(ada.id, buds, undefined, { backboardEnabled: true, client: near });
+      assert.ok(raised.score > counted.score);
+
+      process.env.REGRET_SEARCH_MAX_DISTANCE = "0.4";
+      const pastKnob = scriptedClient(async () => [hit("regretted purchase: AirPods (audio, $179)", 0.44)]);
+      const held = await computeImpulseScore(ada.id, buds, undefined, { backboardEnabled: true, client: pastKnob });
+      assert.equal(held.score, 4.5);
     } finally {
       if (previous === undefined) {
-        delete process.env.REGRET_SEARCH_MIN_SCORE;
+        delete process.env.REGRET_SEARCH_MAX_DISTANCE;
       } else {
-        process.env.REGRET_SEARCH_MIN_SCORE = previous;
+        process.env.REGRET_SEARCH_MAX_DISTANCE = previous;
       }
     }
   });
 
-  it("raises a same-category regret and ignores a cross-category hit above 0.9", async () => {
+  it("raises a close same-category regret and ignores a far or cross-category hit", async () => {
     const ada = await User.create({
       email: "search-category@example.com",
       passwordHash: HASH,
@@ -288,30 +292,68 @@ describe("regret search scoring", { concurrency: false }, () => {
       weeklyBudget: 500,
       backboardAssistantId: "asst-category",
     });
-    const phoneRegret = hit("regretted purchase: iPhone (phone, $999)", 0.905);
+    const phoneNear = hit("regretted purchase: iPhone (phone, $999)", 0.44);
+    const phoneFar = hit("regretted purchase: iPhone (phone, $999)", 0.905);
     const phone: ImpulseItem = { item: "iPhone", category: "phone", price: 40, necessary: false };
     const socks: ImpulseItem = { item: "wool socks", category: "other", price: 12, necessary: false };
+    const mug: ImpulseItem = { item: "ceramic mug", category: "other", price: 18, necessary: false };
+    const hikingSocks: ImpulseItem = { item: "wool hiking socks", category: "other", price: 16, necessary: false };
+    const macbook: ImpulseItem = { item: "MacBook Air", category: "computer", price: 999, necessary: false };
 
     const same = await computeImpulseScore(ada.id, phone, undefined, {
       backboardEnabled: true,
-      client: scriptedClient(async () => [phoneRegret]),
+      client: scriptedClient(async () => [phoneNear]),
     });
     assert.ok(same.score > 4.5);
     assert.equal(same.why, "You regretted a similar purchase before.");
 
+    const far = await computeImpulseScore(ada.id, phone, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [phoneFar]),
+    });
+    assert.equal(far.score, 4.5);
+    assert.equal(far.why, null);
+
     const cross = await computeImpulseScore(ada.id, socks, undefined, {
       backboardEnabled: true,
-      client: scriptedClient(async () => [phoneRegret]),
+      client: scriptedClient(async () => [phoneNear]),
     });
     assert.equal(cross.score, 4.5);
     assert.equal(cross.why, null);
 
-    const socksRegret = hit("regretted purchase: wool socks (other, $12)", 0.95);
-    const socksRaised = await computeImpulseScore(ada.id, socks, undefined, {
+    const socksRegret = hit("regretted purchase: wool socks (other, $12)", 0.2);
+    const unrelatedOther = await computeImpulseScore(ada.id, mug, undefined, {
       backboardEnabled: true,
       client: scriptedClient(async () => [socksRegret]),
     });
-    assert.ok(socksRaised.score > 4.5);
+    assert.equal(unrelatedOther.score, 4.5);
+    assert.equal(unrelatedOther.why, null);
+
+    const overlappingOther = await computeImpulseScore(ada.id, hikingSocks, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [socksRegret]),
+    });
+    assert.ok(overlappingOther.score > 4.5);
+    assert.equal(overlappingOther.why, "You regretted a similar purchase before.");
+
+    const sameSocks = await computeImpulseScore(ada.id, socks, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [hit("regretted purchase: wool socks (other, $12)", 0.44)]),
+    });
+    assert.ok(sameSocks.score > 4.5);
+
+    const laptopRegret = hit("regretted purchase: laptop (computer, $1299)", 0.44);
+    const macbookRaised = await computeImpulseScore(ada.id, macbook, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [laptopRegret]),
+    });
+    assert.ok(macbookRaised.score > 4.5);
+
+    const macbookCross = await computeImpulseScore(ada.id, macbook, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [socksRegret]),
+    });
+    assert.equal(macbookCross.score, 4.5);
   });
 
   it("falls back to 4.5 when the regret search times out", async () => {

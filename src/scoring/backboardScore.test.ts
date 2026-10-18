@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { decide } from "../heuristic.js";
 import { withCartFacts } from "../carts.js";
 import { annotateDecision } from "./cartReading.js";
-import { EMPTY_IMPULSE_SIGNALS, regretSearchMinScore, scoreFromSignals, type ImpulseItem, type ImpulseSignals } from "./backboardScore.js";
+import { EMPTY_IMPULSE_SIGNALS, regretSearchMaxDistance, scoreFromSignals, type ImpulseItem, type ImpulseSignals } from "./backboardScore.js";
 import { clampImpulseScale, formatImpulseScore, impulseBand, legacyImpulseBase } from "./lockBand.js";
 
 const phone: ImpulseItem = { item: "Example phone", category: "phone", price: 40, necessary: false };
@@ -129,16 +129,16 @@ describe("impulse signals", () => {
   });
 });
 
-describe("regret search floor", () => {
-  it("defaults to 0.5 and rejects values outside 0..1", () => {
-    assert.equal(regretSearchMinScore({}), 0.5);
-    assert.equal(regretSearchMinScore({ REGRET_SEARCH_MIN_SCORE: "" }), 0.5);
-    assert.equal(regretSearchMinScore({ REGRET_SEARCH_MIN_SCORE: "0.615" }), 0.615);
-    assert.equal(regretSearchMinScore({ REGRET_SEARCH_MIN_SCORE: "0" }), 0);
-    assert.equal(regretSearchMinScore({ REGRET_SEARCH_MIN_SCORE: "1" }), 1);
-    assert.equal(regretSearchMinScore({ REGRET_SEARCH_MIN_SCORE: "1.2" }), 0.5);
-    assert.equal(regretSearchMinScore({ REGRET_SEARCH_MIN_SCORE: "-0.1" }), 0.5);
-    assert.equal(regretSearchMinScore({ REGRET_SEARCH_MIN_SCORE: "nope" }), 0.5);
+describe("regret search distance", () => {
+  it("defaults to 0.6 and rejects values outside 0..1", () => {
+    assert.equal(regretSearchMaxDistance({}), 0.6);
+    assert.equal(regretSearchMaxDistance({ REGRET_SEARCH_MAX_DISTANCE: "" }), 0.6);
+    assert.equal(regretSearchMaxDistance({ REGRET_SEARCH_MAX_DISTANCE: "0.578" }), 0.578);
+    assert.equal(regretSearchMaxDistance({ REGRET_SEARCH_MAX_DISTANCE: "0" }), 0);
+    assert.equal(regretSearchMaxDistance({ REGRET_SEARCH_MAX_DISTANCE: "1" }), 1);
+    assert.equal(regretSearchMaxDistance({ REGRET_SEARCH_MAX_DISTANCE: "1.2" }), 0.6);
+    assert.equal(regretSearchMaxDistance({ REGRET_SEARCH_MAX_DISTANCE: "-0.1" }), 0.6);
+    assert.equal(regretSearchMaxDistance({ REGRET_SEARCH_MAX_DISTANCE: "nope" }), 0.6);
   });
 });
 
