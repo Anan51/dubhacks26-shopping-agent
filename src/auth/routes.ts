@@ -97,37 +97,38 @@ function createAuthRouter(deps: AuthRouteDeps): Router {
   });
 
   router.post("/logout", (_req, res) => {
+    const secret = openAuth(deps, res);
+    if (!secret) {
+      return;
+    }
     clearSessionCookie(res);
     res.json({ ok: true });
   });
 
-  if (deps.jwtSecret) {
-    const jwtSecret = deps.jwtSecret;
-    router.get("/me", async (req, res) => {
-      if (!deps.ready()) {
-        res.status(503).json({ error: deps.unavailableMessage() });
-        return;
-      }
-      const token = tokenFromRequest(req);
-      const session = token ? await readSession(token, jwtSecret) : null;
-      if (!session) {
+  router.get("/me", async (req, res) => {
+    const secret = openAuth(deps, res);
+    if (!secret) {
+      return;
+    }
+    const token = tokenFromRequest(req);
+    const session = token ? await readSession(token, secret) : null;
+    if (!session) {
+      res.status(401).json({ error: "Authentication required." });
+      return;
+    }
+    req.user = session;
+    try {
+      refuseClientScope(req, authenticatedUserId(req));
+      const user = await deps.directory.findById(session.id);
+      if (!user) {
         res.status(401).json({ error: "Authentication required." });
         return;
       }
-      req.user = session;
-      try {
-        refuseClientScope(req, authenticatedUserId(req));
-        const user = await deps.directory.findById(session.id);
-        if (!user) {
-          res.status(401).json({ error: "Authentication required." });
-          return;
-        }
-        res.json({ user: publicUser(user) });
-      } catch (error: unknown) {
-        sendScopeError(res, error);
-      }
-    });
-  }
+      res.json({ user: publicUser(user) });
+    } catch (error: unknown) {
+      sendScopeError(res, error);
+    }
+  });
 
   return router;
 }

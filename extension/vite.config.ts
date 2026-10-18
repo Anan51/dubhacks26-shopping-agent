@@ -40,7 +40,7 @@ export default defineConfig({
       input: path.join(root, "src", "content.ts"),
       output: {
         format: "iife",
-        inlineDynamicImports: true,
+        codeSplitting: false,
         entryFileNames: "content.js",
       },
     },

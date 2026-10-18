@@ -101,6 +101,12 @@ describe("auth http", () => {
     assert.equal(await User.countDocuments({ email: "ada@example.com" }), 1);
   });
 
+  it("logs out with 200 while auth is on", async () => {
+    const loggedOut = await post("/auth/logout", {});
+    assert.equal(loggedOut.status, 200);
+    assert.deepEqual(loggedOut.body, { ok: true });
+  });
+
   it("logs in with the right password", async () => {
     await post("/auth/signup", { email: "login@example.com", password: PASSWORD });
     const loggedIn = await post("/auth/login", { email: "Login@Example.com", password: PASSWORD });
