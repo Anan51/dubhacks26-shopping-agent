@@ -1,3 +1,5 @@
+import { apiPathAllowed, apiRequestInit } from "./api-auth.mjs";
+
 const DEFAULT_ORIGIN = "http://127.0.0.1:4321";
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -26,21 +28,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if (message.action === "api") {
-    chrome.storage.local.get(["simmerOrigin"], (items) => {
+    chrome.storage.local.get(["simmerOrigin", "simmer_token"], (items) => {
       const origin = allowedOrigin(items.simmerOrigin) ?? DEFAULT_ORIGIN;
       const path = typeof message.path === "string" ? message.path : "";
-      if (!path.startsWith("/api/")) {
+      if (!apiPathAllowed(path)) {
         sendResponse({ ok: false, error: "Bad path." });
         return;
       }
-      fetch(`${origin}${path}`, {
-        method: message.method === "POST" ? "POST" : "GET",
-        headers: {
-          accept: "application/json",
-          ...(message.body ? { "content-type": "application/json" } : {}),
-        },
-        body: message.body ? JSON.stringify(message.body) : undefined,
-      })
+      const token = typeof items.simmer_token === "string" ? items.simmer_token : "";
+      fetch(`${origin}${path}`, apiRequestInit(message.method, token, message.body))
         .then(async (response) => {
           const body = await response.json();
           sendResponse({ ok: response.ok, status: response.status, body });

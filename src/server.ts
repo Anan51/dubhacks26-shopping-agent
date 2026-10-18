@@ -17,7 +17,6 @@ import { photonConfigured, readAppConfig, readConfig } from "./config.js";
 import { createMemoryRuntime } from "./memory/runtime.js";
 import { createOnboardingRouter, createSettingsRouter } from "./onboarding/routes.js";
 import { createPurchaseRouter } from "./purchases/routes.js";
-import { recordUnlockedPurchase } from "./purchases/service.js";
 import { createDefaultStore } from "./store.js";
 
 const webRoot = path.join(process.cwd(), "web");
@@ -76,8 +75,9 @@ export async function startServer(): Promise<void> {
   }
 
   const photon = wantPhoton ? new PhotonChannel(readConfig()) : null;
+  const store = createDefaultStore(appConfig.storePath ? path.resolve(appConfig.storePath) : null);
   const running = createApp({
-    store: createDefaultStore(appConfig.storePath ? path.resolve(appConfig.storePath) : null),
+    store,
     origin: appConfig.origin,
     lockMs: appConfig.lockMs,
     demoReminderMs: appConfig.demoReminderMs,
@@ -91,7 +91,6 @@ export async function startServer(): Promise<void> {
     ...(accountConfig.backboardEnabled
       ? { personalizeNudge: (text: string, userId: string) => memory.personalize(text, userId) }
       : {}),
-    ...(jwtSecret && mongoState() === "ready" ? { recordPurchase: recordUnlockedPurchase } : {}),
     ...(jwtSecret && mongoState() === "ready"
       ? {
           checkIns: {
@@ -115,7 +114,7 @@ export async function startServer(): Promise<void> {
       client: memory.client,
       remote: memory.remote,
     };
-    running.app.use("/purchases", createPurchaseRouter(accountRoutes));
+    running.app.use("/purchases", createPurchaseRouter({ ...accountRoutes, loadCart: (code) => store.getCart(code) }));
     running.app.use("/onboarding", createOnboardingRouter(accountRoutes));
     running.app.use("/settings", createSettingsRouter(accountRoutes));
   }
