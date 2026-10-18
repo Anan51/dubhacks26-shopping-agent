@@ -255,10 +255,17 @@ export function createApp(deps: AppDeps): RunningApp {
     bagReadError = null;
     const bagText = bag.itemNames.join("\n");
     const fingerprint = bagFingerprint(userId, bag.itemNames, bag.totalCents);
-    const existing = deps.store
+    const authUserId = req.user?.id;
+    const sameBag = deps.store
       .listCarts()
-      .find((cart) => cart.userId === userId && cart.fingerprint === fingerprint);
+      .filter((cart) => cart.userId === userId && cart.fingerprint === fingerprint);
+    const owned = sameBag.find((cart) => readAuthUserId(cart) === authUserId);
+    const unowned = authUserId ? sameBag.find((cart) => readAuthUserId(cart) === undefined) : undefined;
+    const existing = owned ?? unowned;
     if (existing) {
+      if (authUserId && readAuthUserId(existing) === undefined) {
+        assignAuthUser(existing, authUserId);
+      }
       if (existing.necessity == null) {
         const keyword = keywordNecessity(bagText);
         applyNecessity(existing, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason });

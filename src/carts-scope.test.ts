@@ -111,6 +111,72 @@ describe("cart account scope", () => {
       [anonCart.code],
     );
   });
+
+  it("does not reuse another account's cart when the same device posts the same bag", async () => {
+    const bag = {
+      userId: "user-device-share",
+      itemNames: ["MacBook Pro"],
+      totalCents: 199_900,
+      parsed: true,
+      pageHost: "www.apple.com",
+      demo: true,
+    };
+    const created = await post("/api/carts", bag, tokenA);
+    assert.equal(created.status, 201);
+    const cartA = created.body as ListedCart;
+    assert.equal(cartA.authUserId, "account-a");
+
+    const reused = await post("/api/carts", bag, tokenB);
+    assert.equal(reused.status, 201);
+    const cartB = reused.body as ListedCart;
+    assert.notEqual(cartB.code, cartA.code);
+    assert.equal(cartB.authUserId, "account-b");
+    assert.equal(cartB.userId, "user-device-share");
+
+    const stillA = (await get(`/api/carts/${cartA.code}`)).body as unknown as ListedCart;
+    assert.equal(stillA.authUserId, "account-a");
+    assert.equal(stillA.code, cartA.code);
+
+    const listA = await get("/api/carts", tokenA);
+    const listB = await get("/api/carts", tokenB);
+    assert.equal((listA.body.carts as ListedCart[]).some((item) => item.code === cartA.code), true);
+    assert.equal((listA.body.carts as ListedCart[]).some((item) => item.code === cartB.code), false);
+    assert.equal((listB.body.carts as ListedCart[]).some((item) => item.code === cartB.code), true);
+    assert.equal((listB.body.carts as ListedCart[]).some((item) => item.code === cartA.code), false);
+
+    const again = await post("/api/carts", bag, tokenA);
+    assert.equal(again.status, 200);
+    assert.equal((again.body as ListedCart).code, cartA.code);
+    assert.equal((again.body as ListedCart).authUserId, "account-a");
+  });
+
+  it("claims an anonymous cart when that bag is posted again after sign-in", async () => {
+    const bag = {
+      userId: "user-device-claim",
+      itemNames: ["AirPods Pro"],
+      totalCents: 24_900,
+      parsed: true,
+      pageHost: "www.apple.com",
+      demo: true,
+    };
+    const anon = await post("/api/carts", bag);
+    assert.equal(anon.status, 201);
+    const anonCart = anon.body as ListedCart;
+    assert.equal(anonCart.authUserId, undefined);
+    assert.equal(anonCart.userId, "user-device-claim");
+
+    const claimed = await post("/api/carts", bag, tokenA);
+    assert.equal(claimed.status, 200);
+    const cart = claimed.body as ListedCart;
+    assert.equal(cart.code, anonCart.code);
+    assert.equal(cart.authUserId, "account-a");
+    assert.equal(cart.userId, "user-device-claim");
+
+    const list = await get("/api/carts", tokenA);
+    assert.equal((list.body.carts as ListedCart[]).some((item) => item.code === cart.code && item.authUserId === "account-a"), true);
+    const loggedOut = await get("/api/carts?userId=user-device-claim");
+    assert.deepEqual(loggedOut.body.carts, []);
+  });
 });
 
 async function post(path: string, body: unknown, token?: string): Promise<{ status: number; body: Record<string, unknown> }> {
