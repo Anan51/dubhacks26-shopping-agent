@@ -5,14 +5,16 @@ import type { AccountDirectory } from "../auth/accounts.js";
 import { authenticatedUserId, refuseClientScope, ScopeError } from "../memory/service.js";
 import type { BackboardClient } from "../memory/backboard.js";
 import { isRecord } from "../record.js";
-import { readSurvey, submitSurvey, SurveyError } from "./service.js";
+import { readSettings, readSurvey, submitSurvey, SurveyError, updateSettings } from "./service.js";
 
-export function createOnboardingRouter(deps: {
+type OnboardingDeps = {
   authenticate: RequestHandler;
   directory: AccountDirectory;
   client: BackboardClient;
   remote: boolean;
-}): Router {
+};
+
+export function createOnboardingRouter(deps: OnboardingDeps): Router {
   const router = express.Router();
   router.use(deps.authenticate);
 
@@ -42,6 +44,35 @@ export function createOnboardingRouter(deps: {
   return router;
 }
 
+export function createSettingsRouter(deps: OnboardingDeps): Router {
+  const router = express.Router();
+  router.use(deps.authenticate);
+
+  router.get("/", async (req, res) => {
+    try {
+      const userId = authenticatedUserId(req);
+      refuseClientScope(req, userId);
+      refuseAnyUserId(req);
+      res.json(await readSettings(userId));
+    } catch (error: unknown) {
+      sendSettingsError(res, error, "Couldn't load settings.");
+    }
+  });
+
+  router.patch("/", async (req, res) => {
+    try {
+      const userId = authenticatedUserId(req);
+      refuseClientScope(req, userId);
+      refuseAnyUserId(req);
+      res.json(await updateSettings(userId, req.body, deps));
+    } catch (error: unknown) {
+      sendSettingsError(res, error, "Couldn't save settings.");
+    }
+  });
+
+  return router;
+}
+
 function refuseAnyUserId(req: Request): void {
   const sources: unknown[] = [req.query, req.body, req.params];
   for (const source of sources) {
@@ -52,6 +83,15 @@ function refuseAnyUserId(req: Request): void {
       throw new ScopeError(400, "Refusing a client-supplied user id.");
     }
   }
+}
+
+function sendSettingsError(res: Response, error: unknown, fallback: string): void {
+  if (error instanceof SurveyError || error instanceof ScopeError) {
+    res.status(error.status).json({ error: error.message });
+    return;
+  }
+  console.error(error instanceof Error ? error.message : fallback);
+  res.status(500).json({ error: fallback });
 }
 
 function sendSurveyError(res: Response, error: unknown): void {

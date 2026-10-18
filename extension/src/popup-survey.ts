@@ -1,4 +1,5 @@
 import { isRecord } from "../../src/record.js";
+import { authorizedFetch } from "./popup-fetch.js";
 
 export type SurveyState = {
   completed: boolean;
@@ -11,7 +12,8 @@ export function attachSurvey(
   origin: string,
   authorization: () => Promise<string | null>,
   onComplete: () => void,
-): { refresh(): Promise<boolean>; hide(): void } {
+  onUnauthorized: (token: string | null) => Promise<void>,
+): { refresh(): Promise<boolean | "unauthorized">; hide(): void } {
   const style = document.createElement("style");
   style.textContent = [
     "#simmer-survey { display: flex; flex-direction: column; gap: 0.35rem; padding-bottom: 0.4rem; }",
@@ -55,7 +57,10 @@ export function attachSurvey(
   return {
     async refresh() {
       error.hidden = true;
-      const state = await loadSurvey(origin, authorization);
+      const state = await loadSurvey(origin, authorization, onUnauthorized);
+      if (state === "unauthorized") {
+        return "unauthorized";
+      }
       const completed = state?.completed === true;
       section.hidden = completed;
       return completed;
@@ -80,11 +85,22 @@ export function attachSurvey(
       return [{ item, price: Number.isFinite(price) ? price : Number.NaN, regretted: row.regretted.checked }];
     });
     try {
-      const response = await surveyFetch(origin, "/onboarding/survey", authorization, {
-        hourlyRate: readOptionalMoney(hourly.input.value),
-        weeklyBudget: readOptionalMoney(weekly.input.value),
-        recentPurchases,
-      });
+      const response = await authorizedFetch(
+        `${origin}/onboarding/survey`,
+        {
+          method: "POST",
+          body: {
+            hourlyRate: readOptionalMoney(hourly.input.value),
+            weeklyBudget: readOptionalMoney(weekly.input.value),
+            recentPurchases,
+          },
+        },
+        authorization,
+        onUnauthorized,
+      );
+      if (!response) {
+        return;
+      }
       if (!response.ok) {
         error.hidden = false;
         error.textContent = "Could not save the survey.";
@@ -147,8 +163,15 @@ function readOptionalMoney(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-async function loadSurvey(origin: string, authorization: () => Promise<string | null>): Promise<SurveyState | null> {
-  const response = await surveyFetch(origin, "/onboarding/survey", authorization);
+async function loadSurvey(
+  origin: string,
+  authorization: () => Promise<string | null>,
+  onUnauthorized: (token: string | null) => Promise<void>,
+): Promise<SurveyState | "unauthorized" | null> {
+  const response = await authorizedFetch(`${origin}/onboarding/survey`, undefined, authorization, onUnauthorized);
+  if (!response) {
+    return "unauthorized";
+  }
   if (!response.ok) {
     return null;
   }
@@ -163,21 +186,3 @@ async function loadSurvey(origin: string, authorization: () => Promise<string | 
   };
 }
 
-async function surveyFetch(
-  origin: string,
-  path: string,
-  authorization: () => Promise<string | null>,
-  body?: unknown,
-): Promise<Response> {
-  const token = await authorization();
-  return fetch(`${origin}${path}`, {
-    method: body === undefined ? "GET" : "POST",
-    credentials: "include",
-    headers: {
-      accept: "application/json",
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...(body === undefined ? {} : { "content-type": "application/json" }),
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-}

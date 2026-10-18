@@ -9,6 +9,8 @@ const purchaseSchema = new Schema(
     verdict: { type: String, default: null, maxlength: 40 },
     feedback: { type: String, enum: ["regretted", "kept"], default: null },
     isExample: { type: Boolean, required: true, default: false },
+    /** Survey entries are the shopper's own recent purchases, even if an older row was marked as an example. */
+    source: { type: String, enum: ["survey", "checkout"], default: "checkout" },
     ratedAt: { type: Date, default: null },
     cartCode: { type: String, default: null },
   },

@@ -1,10 +1,12 @@
-import { lockGlance, oneLineVerdict, type GlanceItem } from "../../src/glance.js";
+import { lockGlance, type GlanceItem } from "../../src/glance.js";
 import { pauseSentence, priceLine } from "../../src/overlay-copy.js";
 import { mountPopupAuth } from "./popup-auth.js";
+import { newestCart, plainCartLabel, presentBreakdown, type ReplyPing } from "./popup-cart.js";
 
 type CartPayload = {
   code: string;
   userId: string | null;
+  createdAt?: string;
   status: GlanceItem["status"];
   totalCents: number;
   vaultUntil: string | null;
@@ -22,6 +24,7 @@ type CartPayload = {
   purchaseScore?: GlanceItem["purchaseScore"];
   scoreBucket?: GlanceItem["scoreBucket"];
   scoreReason?: GlanceItem["scoreReason"];
+  lastPing?: ReplyPing;
 };
 
 const state = document.getElementById("state");
@@ -41,8 +44,8 @@ chrome.storage.local.get(["simmerOrigin", "simmerUserId", "simmerAuthOrigin"], (
 async function load(origin: string, userId: string): Promise<void> {
   const response = await fetch(`${origin}/api/carts`, { headers: { accept: "application/json" } });
   const body = (await response.json()) as { carts?: CartPayload[] };
-  const carts = (body.carts ?? []).filter((cart) => !userId || cart.userId === userId);
-  const items = carts.map(toGlance);
+  const current = newestCart(body.carts ?? [], userId);
+  const items = current ? [toGlance(current)] : [];
   if (state) {
     state.textContent = lockGlance(items);
   }
@@ -52,11 +55,11 @@ async function load(origin: string, userId: string): Promise<void> {
   list.replaceChildren();
   empty.hidden = items.length > 0;
   for (const item of items) {
-    list.append(card(item));
+    list.append(card(item, current?.lastPing ?? null));
   }
 }
 
-function card(item: GlanceItem): HTMLLIElement {
+function card(item: GlanceItem, lastPing: ReplyPing): HTMLLIElement {
   const row = document.createElement("li");
   const button = document.createElement("button");
   button.type = "button";
@@ -68,7 +71,7 @@ function card(item: GlanceItem): HTMLLIElement {
   price.textContent = ` · ${dollars(item.priceCents)}`;
   const line = document.createElement("div");
   line.className = "line";
-  line.textContent = oneLineVerdict(item, Date.now());
+  line.textContent = plainCartLabel({ ...item, lastPing }, Date.now());
   button.append(title, price, line);
   const detail = document.createElement("div");
   detail.hidden = true;
@@ -85,11 +88,14 @@ function card(item: GlanceItem): HTMLLIElement {
   return row;
 }
 
-function breakdown(item: GlanceItem): HTMLDListElement {
+function breakdown(item: GlanceItem): HTMLDivElement {
+  const wrap = document.createElement("div");
+  const detail = presentBreakdown(item, Date.now());
   const dl = document.createElement("dl");
+  const price = priceLine(item.priceCents, { cents: item.decision?.costLaterCents ?? 0, example: true });
   const lines = [
     { label: "Why", value: pauseSentence(item) },
-    { label: "Price", value: priceLine(item.priceCents, { cents: item.decision?.costLaterCents ?? 0, example: true }) },
+    { label: "Price", value: price },
   ];
   for (const line of lines) {
     const term = document.createElement("dt");
@@ -98,7 +104,14 @@ function breakdown(item: GlanceItem): HTMLDListElement {
     value.textContent = line.value;
     dl.append(term, value);
   }
-  return dl;
+  wrap.append(dl);
+  if (detail.exampleNote && /example|If you wait/i.test(price)) {
+    const note = document.createElement("p");
+    note.className = "fine";
+    note.textContent = detail.exampleNote;
+    wrap.append(note);
+  }
+  return wrap;
 }
 
 function toGlance(cart: CartPayload): GlanceItem {
