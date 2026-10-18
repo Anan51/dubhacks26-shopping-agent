@@ -220,9 +220,9 @@ const NAME_STOPWORDS = new Set(["a", "an", "the", "and", "or", "of", "for", "to"
  * Callers pass the bag category. The cart path passes `categoryForItem(item)`.
  * A blank category falls back to that same mapping. It does not override the
  * name with a category the cart never stored.
- * A regret counts when the saved vote category equals the bag category, or
- * `categoryForItem` of the memory subject equals the bag category, or the bag
- * category is "other" and the names share a token.
+ * A real category matches when the saved vote category or `categoryForItem`
+ * of the memory subject equals the bag category. "other" is not a category
+ * match. An "other" bag counts only when the names share a token.
  * The score is a distance, so it is only a second guard: a hit counts when
  * the distance is at most the maximum. A cross-category hit can still be close.
  * A missing score counts as one hit. Closeness is 1 minus the distance, so a
@@ -253,18 +253,17 @@ function similarRegretWeight(
 }
 
 /**
- * Saved category, name-derived category, or a shared token on an "other" bag.
- * The cart's bag category is the keyword category. A Pixel 9 bag keywords to
- * phone, so it lines up with an iPhone regret. A MacBook saved as "apple"
- * still matches because the subject keywords to "computer". A name that
- * keywords to "other" still matches that bag when the names share a token.
+ * "other" is the catch-all, so it is not a category match. Two unrecognized
+ * names count only when they share a token. A real category matches when the
+ * saved vote category or `categoryForItem` of the subject equals the bag.
+ * A Pixel 9 bag keywords to phone, so it lines up with an iPhone regret.
  */
 function regretMatchesBag(bagCategory: string, bagItem: string, content: string): boolean {
   const subject = memorySubject(content);
-  if (categoryOfMemory(content) === bagCategory || categoryForItem(subject) === bagCategory) {
-    return true;
+  if (bagCategory === "other") {
+    return itemNamesOverlap(bagItem, subject);
   }
-  return bagCategory === "other" && itemNamesOverlap(bagItem, subject);
+  return categoryOfMemory(content) === bagCategory || categoryForItem(subject) === bagCategory;
 }
 
 /**

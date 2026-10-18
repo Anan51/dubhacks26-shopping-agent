@@ -328,9 +328,8 @@ describe("regret search scoring", { concurrency: false }, () => {
       backboardEnabled: true,
       client: scriptedClient(async () => [socksRegret]),
     });
-    // Both names keyword to "other", so the name-derived categories are equal.
-    assert.ok(unrelatedOther.score > 4.5);
-    assert.equal(unrelatedOther.why, "You regretted a similar purchase before.");
+    assert.equal(unrelatedOther.score, 4.5);
+    assert.equal(unrelatedOther.why, null);
 
     const overlappingOther = await computeImpulseScore(ada.id, hikingSocks, undefined, {
       backboardEnabled: true,
@@ -390,6 +389,11 @@ describe("regret search scoring", { concurrency: false }, () => {
     const flat = await scoreReadCart(ada.id, "MacBook Air", [socks]);
     assert.equal(flat.impulse.score1to8, 4.5);
     assert.equal(flat.impulse.why, null);
+
+    const computerRegret = hit("regretted purchase: MacBook Air (computer, $999.00)", 0.44);
+    const socksBag = await scoreReadCart(ada.id, "wool socks", [computerRegret]);
+    assert.equal(socksBag.impulse.score1to8, 4.5);
+    assert.equal(socksBag.impulse.why, null);
   });
 
   it("scores a Pixel 9 cart from a phone regret whose name keywords to phone", async () => {
