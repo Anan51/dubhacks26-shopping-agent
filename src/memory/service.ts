@@ -3,7 +3,7 @@ import type { Request } from "express";
 import type { AccountDirectory, AccountUser } from "../auth/accounts.js";
 import { MemoryNote } from "../auth/user.js";
 import { isRecord } from "../record.js";
-import { regretSearchMaxDistance, withinMaxDistance } from "../scoring/searchDistance.js";
+import { regretSearchMaxDistance, withinMaxDistance } from "../scoring/backboardScore.js";
 import {
   waitForMemoryWrite,
   type BackboardClient,

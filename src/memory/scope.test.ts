@@ -387,6 +387,25 @@ describe("memory scope", () => {
       );
       assert.deepEqual(found, []);
     }
+
+    const phone = record(USER, "regret", "Bought noise-cancelling headphones for a flight", "bb-phone");
+    const socks = await searchWithDistance("0.7", () =>
+      searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "socks" } }), {
+        directory: directoryOfUsers([account(USER, "asst-ada"), account(OTHER, "asst-other")]),
+        client: searchClient([
+          {
+            id: "bb-phone",
+            content: "Regret: Bought noise-cancelling headphones for a flight",
+            score: 0.9,
+            createdAt: null,
+          },
+          { id: "bb-other", content: "Regret: wool socks for winter", score: 0.05, createdAt: null },
+        ]),
+        index: listing([other, phone]),
+        remote: true,
+      }),
+    );
+    assert.deepEqual(socks, []);
   });
 
   it("returns only the in-cutoff row when another hit is farther", async () => {
