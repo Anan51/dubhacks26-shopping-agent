@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import { DEMO_REPLY_PRESETS } from "../../src/demo-reply-presets.js";
 import { formatUsd } from "../../src/format.js";
-import { cartItemLines } from "../../src/item-name.js";
+import { cartItemLines, readHiddenItemCount } from "../../src/item-name.js";
 import { overlayClockText, type GlanceItem, type GlanceSignals, type GlanceSources } from "../../src/glance.js";
 import { offersSleep } from "../../src/score-band.js";
 import { pauseSentence, priceLine, simmerKicker } from "../../src/overlay-copy.js";
@@ -20,6 +20,8 @@ export type OverlayModel = {
   totalCents: number;
   parsedFromPage: boolean;
   itemNames: string[];
+  /** Distinct titles omitted from itemNames. The list prints "+k more". */
+  hiddenItemCount?: number;
   quantity: number | null;
   explanation: string | null;
   decision: Decision | null;
@@ -108,6 +110,7 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
   const showLockControls = model.necessity !== "necessary" && !unreadable;
   const unlinked = !model.pingDelivered && model.pingReason !== "send_failed" && model.linkMessage;
   const lines = cartItemLines(model.itemNames);
+  const more = Math.max(lines.more, readHiddenItemCount(model.hiddenItemCount));
   const showItems = !unreadable && model.quantity != null && lines.shown.length > 0;
   return (
     <div className="panel">
@@ -119,7 +122,7 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
             {lines.shown.map((name, index) => (
               <li key={`${index}:${name}`}>{name}</li>
             ))}
-            {lines.more > 0 ? <li className="fine">+{lines.more} more</li> : null}
+            {more > 0 ? <li className="fine">+{more} more</li> : null}
           </ul>
         ) : null}
         {unreadable ? null : (

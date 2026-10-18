@@ -48,3 +48,11 @@ export function cartItemLines(names: readonly string[], limit = POSTED_ITEM_LIMI
   }
   return { shown: all.slice(0, limit), more: all.length - limit };
 }
+
+/** Distinct titles the cart did not store. Missing or junk values count as none. */
+export function readHiddenItemCount(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 10_000) {
+    return 0;
+  }
+  return value;
+}
