@@ -1,4 +1,4 @@
-import { copyFileSync } from "node:fs";
+import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -18,6 +18,11 @@ function copyStatic(): Plugin {
     async closeBundle() {
       for (const file of ["manifest.json", "background.js", "api-auth.mjs", "page-match.mjs", "options.html", "options.js", "popup.html"]) {
         copyFileSync(path.join(root, file), path.join(dist, file));
+      }
+      const iconsDir = path.join(dist, "icons");
+      mkdirSync(iconsDir, { recursive: true });
+      for (const file of ["icon-16.png", "icon-32.png", "icon-48.png", "icon-128.png"]) {
+        copyFileSync(path.join(root, "icons", file), path.join(iconsDir, file));
       }
       await build({
         absWorkingDir: root,
