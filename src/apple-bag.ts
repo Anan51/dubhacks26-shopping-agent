@@ -65,8 +65,13 @@ function normalizePayLabel(value: string): string {
   return value.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
+/**
+ * Whole label only, after whitespace is collapsed.
+ * checkout, check out, check out now, and the same labels with Apple Pay.
+ * "Learn about checkout" and "Checkout tips" stay open.
+ */
 function isExactCheckOutLabel(value: string): boolean {
-  return value === "check out" || value === "check out now";
+  return /^check\s*out(?: now)?(?: with (?:apple pay|\s*pay))?$/.test(value);
 }
 
 export function isCheckOutControl(control: BagControl): boolean {

@@ -107,4 +107,21 @@ describe("checkout controls", () => {
     assert.equal(isBlockedControl({ tag: "a", text: "Check Out Now", ariaLabel: "" }, "bag"), true);
     assert.equal(isBlockedControl({ tag: "a", text: "Check out our new iPhone deals", ariaLabel: "" }, "bag"), false);
   });
+
+  it("gates Checkout and Check Out with Apple Pay on buttons and anchors, and leaves promo copy open", () => {
+    for (const tag of ["button", "a"]) {
+      assert.equal(isBlockedControl({ tag, text: "Checkout", ariaLabel: "" }, "bag"), true, tag);
+      assert.equal(isBlockedControl({ tag, text: "CHECKOUT", ariaLabel: "" }, "bag"), true, tag);
+      assert.equal(isBlockedControl({ tag, text: "  check\nout ", ariaLabel: "" }, "bag"), true, tag);
+      assert.equal(isBlockedControl({ tag, text: "Check Out with Apple Pay", ariaLabel: "" }, "bag"), true, tag);
+      assert.equal(isBlockedControl({ tag, text: "Checkout with Apple Pay", ariaLabel: "" }, "bag"), true, tag);
+      assert.equal(isBlockedControl({ tag, text: "Check Out Now with Apple Pay", ariaLabel: "" }, "bag"), true, tag);
+      assert.equal(isBlockedControl({ tag, text: "Check out now", ariaLabel: "" }, "bag"), true, tag);
+      assert.equal(isBlockedControl({ tag, text: "", ariaLabel: "Checkout" }, "bag"), true, tag);
+    }
+    assert.equal(isBlockedControl({ tag: "a", text: "Check Out with Pay", ariaLabel: "" }, "bag"), true);
+    assert.equal(isBlockedControl({ tag: "a", text: "Learn about checkout", ariaLabel: "" }, "bag"), false);
+    assert.equal(isBlockedControl({ tag: "button", text: "Checkout tips", ariaLabel: "" }, "bag"), false);
+    assert.equal(isBlockedControl({ tag: "a", text: "Checkout tips", ariaLabel: "" }, "bag"), false);
+  });
 });

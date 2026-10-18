@@ -7,6 +7,7 @@ import { JSDOM } from "jsdom";
 import { readPageBag } from "./bag-dom.js";
 import { installGate } from "./gate.js";
 import { watchPage } from "./page-observer.js";
+import { amazonAdapter } from "./stores/amazon.js";
 import { appleAdapter } from "./stores/apple.js";
 
 const FALLBACK_HTML = new URL("../../web/fallback.html", import.meta.url);
@@ -169,20 +170,100 @@ describe("locked bag observer", () => {
     watch.disconnect();
   });
 
-  it("does not re-gate when mute() inserts a Check Out button", async () => {
-    const document = new JSDOM("<!doctype html><html><body></body></html>").window.document;
+  it("gates a pay control the page inserts during our write, and our own writes do not storm", async () => {
+    const document = new JSDOM(`<!doctype html><html><body>
+      <button type="button" id="checkout">Check Out</button>
+    </body></html>`, { url: "https://www.apple.com/shop/bag" }).window.document;
+    const gate = installGate(document, () => appleAdapter.checkoutButtons(document));
     let paints = 0;
     const watch = watchPage(document, () => {
       paints += 1;
+      if (paints > 6) {
+        watch.disconnect();
+        return;
+      }
+      watch.mute(() => gate.paint());
     });
-    watch.mute(() => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.textContent = "Check Out";
-      document.body.append(button);
-    });
+
+    watch.mute(() => gate.paint());
     await flush();
-    assert.equal(paints, 0);
+    assert.equal(paints, 0, "our own paint scheduled another pass");
+    assert.equal(document.querySelector("#checkout")?.getAttribute("data-simmer-blocked"), "1");
+
+    const wrap = document.createElement("div");
+    const inserted = document.createElement("button");
+    inserted.type = "button";
+    inserted.id = "page-checkout";
+    inserted.textContent = "Checkout";
+    wrap.append(inserted);
+    const applePayLink = document.createElement("a");
+    applePayLink.id = "page-apple-pay";
+    applePayLink.href = "/shop/bagx/checkout_now";
+    applePayLink.textContent = "Check Out with Apple Pay";
+    const promo = document.createElement("a");
+    promo.id = "page-promo";
+    promo.href = "/learn";
+    promo.textContent = "Learn about checkout";
+    const applePay = document.createElement("button");
+    applePay.type = "button";
+    applePay.id = "page-apple";
+    applePay.textContent = "Apple Pay";
+
+    watch.mute(() => {
+      gate.paint();
+      document.body.append(wrap, applePayLink, applePay, promo);
+    });
+
+    assert.equal(inserted.getAttribute("data-simmer-blocked"), "1");
+    assert.equal(applePayLink.getAttribute("data-simmer-blocked"), "1");
+    assert.equal(applePay.getAttribute("data-simmer-blocked"), "1");
+    assert.equal(promo.hasAttribute("data-simmer-blocked"), false);
+    const afterInsert = paints;
+    assert.ok(afterInsert >= 1, "page pay control was left until a later refresh");
+    await flush();
+    assert.equal(paints, afterInsert, `writes kept scheduling paints: ${paints}`);
+    assert.ok(paints <= 3, `mutation storm: ${paints}`);
+    watch.disconnect();
+  });
+
+  it("gates Proceed and Buy Now inserted during our write without waiting", async () => {
+    const document = new JSDOM("<!doctype html><html><body></body></html>", {
+      url: "http://127.0.0.1/amazon",
+    }).window.document;
+    const gate = installGate(document, () => amazonAdapter.checkoutButtons(document));
+    let paints = 0;
+    const watch = watchPage(document, () => {
+      paints += 1;
+      if (paints > 6) {
+        watch.disconnect();
+        return;
+      }
+      watch.mute(() => gate.paint());
+    });
+
+    const proceed = document.createElement("input");
+    proceed.type = "button";
+    proceed.id = "proceed";
+    proceed.value = "Proceed to checkout";
+    const buyNow = document.createElement("button");
+    buyNow.type = "button";
+    buyNow.id = "buy-now";
+    buyNow.textContent = "Buy Now";
+
+    watch.mute(() => {
+      const badge = document.createElement("span");
+      badge.setAttribute("data-simmer-badge", "1");
+      badge.textContent = "Marinating";
+      document.body.append(badge);
+      document.body.append(proceed, buyNow);
+    });
+
+    assert.equal(proceed.getAttribute("data-simmer-blocked"), "1");
+    assert.equal(buyNow.getAttribute("data-simmer-blocked"), "1");
+    const afterInsert = paints;
+    assert.ok(afterInsert >= 1);
+    await flush();
+    assert.equal(paints, afterInsert, `writes kept scheduling paints: ${paints}`);
     watch.disconnect();
   });
 });

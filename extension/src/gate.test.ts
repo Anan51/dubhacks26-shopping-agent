@@ -129,18 +129,25 @@ describe("checkout gate", () => {
       <a id="check-break" href="/shop/bagx/checkout_now">  Check\n Out </a>
       <a id="check-upper" href="/shop/bagx/checkout_now">CHECK OUT</a>
       <a id="check-spans" href="/shop/bagx/checkout_now"><span>Check</span> <span>Out</span></a>
+      <button type="button" id="checkout-word">Checkout</button>
+      <a id="checkout-word-link" href="/shop/bagx/checkout_now">Checkout</a>
+      <a id="aria-checkout" href="/shop/bagx/checkout_now" aria-label="Checkout"></a>
+      <a id="apple-pay-checkout" href="/shop/bagx/checkout_now">Check Out with Apple Pay</a>
+      <a id="apple-pay-spans" href="/shop/bagx/checkout_now"><span>Check Out</span> <span>with Apple Pay</span></a>
       <a id="promo" href="/shop/buy-iphone">Check out our new iPhone deals</a>
+      <a id="learn-checkout" href="/shop/buy-iphone">Learn about checkout</a>
+      <a id="checkout-tips" href="/shop/buy-iphone">Checkout tips</a>
       <a id="learn" href="/apple-card/">Learn more about Apple Card Monthly Installments</a>
     </body></html>`).window.document;
     const gate = installGate(document, "bag");
     gate.paint();
-    for (const id of ["footer-link", "nav-link", "header-link", "footer-checkout", "learn", "promo"]) {
+    for (const id of ["footer-link", "nav-link", "header-link", "footer-checkout", "learn", "promo", "learn-checkout", "checkout-tips"]) {
       const node = document.querySelector(`#${id}`);
       assert.ok(node);
       assert.equal(node.hasAttribute("data-simmer-blocked"), false, id);
       assert.equal(click(node).defaultPrevented, false, id);
     }
-    for (const id of ["checkout", "apple", "pay", "card", "plain-checkout", "check-lower", "check-break", "check-upper", "check-spans"]) {
+    for (const id of ["checkout", "apple", "pay", "card", "plain-checkout", "check-lower", "check-break", "check-upper", "check-spans", "checkout-word", "checkout-word-link", "aria-checkout", "apple-pay-checkout", "apple-pay-spans"]) {
       const node = document.querySelector(`#${id}`);
       assert.ok(node);
       assert.equal(node.getAttribute("data-simmer-blocked"), "1", id);
