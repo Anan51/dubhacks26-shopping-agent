@@ -17,6 +17,7 @@ export async function sendPhotonMessage(config: AgentConfig, message: OutboundMe
     body: {
       spaceId: message.conversationId,
       senderId: message.agentSenderId,
+      // ...(message.parentMessageId ? { parentMessageId: message.parentMessageId } : {}),
       content: { type: "text", format: "plain", text: message.text },
     },
   });
