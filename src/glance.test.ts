@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { breakdownLines, lockGlance, oneLineVerdict, type GlanceItem } from "./glance.js";
+import { breakdownLines, lockGlance, oneLineVerdict, overlayClockText, type GlanceItem } from "./glance.js";
 
 const NOW = Date.parse("2026-10-18T12:00:00.000Z");
 
@@ -71,11 +71,71 @@ describe("glance", () => {
     assert.equal(soft, "Worth a pause before buying.");
     assert.equal(strict, "This one can wait.");
     assert.equal(waiting, "Reply and say why you want this.");
-    for (const line of [free, soft, strict, waiting]) {
+    const answered = oneLineVerdict(
+      item({
+        userImpulseScore: 2,
+        purchaseScore: null,
+        status: "locked",
+        replied: true,
+        advice: "Wait. Your current phone is broken.",
+      }),
+      NOW,
+    );
+    assert.equal(answered, "Got your reply. Wait: your current phone is broken.");
+    assert.equal(answered.includes("Reply and say why"), false);
+    for (const line of [free, soft, strict, waiting, answered]) {
       assert.equal(line.includes("\n"), false);
       assert.doesNotMatch(line, /\b(Score|Impulse|Vault)\b/);
       assert.doesNotMatch(line, /\d/);
     }
+  });
+
+  it("replaces the ask-for-a-reply line after each preset grade", () => {
+    const ask = "Reply and say why you want this.";
+    const cracked = overlayClockText(
+      item({
+        userImpulseScore: 2,
+        purchaseScore: null,
+        scoreBucket: null,
+        status: "locked",
+        replied: true,
+        advice: "Wait. Your current phone is broken.",
+      }),
+      NOW,
+      600_000,
+    );
+    const color = overlayClockText(
+      item({
+        userImpulseScore: 2,
+        purchaseScore: 1,
+        scoreBucket: "strict",
+        status: "locked",
+        replied: true,
+        advice: "Skip. This looks like a want, not a need.",
+      }),
+      NOW,
+      600_000,
+    );
+    const work = overlayClockText(
+      item({
+        userImpulseScore: 2,
+        purchaseScore: 4,
+        scoreBucket: "free",
+        status: "locked",
+        replied: true,
+        advice: "Buy. This looks like a need.",
+      }),
+      NOW,
+      600_000,
+    );
+    assert.equal(cracked, "Got your reply. Wait: your current phone is broken.");
+    assert.equal(color, "This one can wait.");
+    assert.equal(work, "Looks fine to buy.");
+    for (const line of [cracked, color, work]) {
+      assert.equal(line.includes(ask), false, line);
+    }
+    const stillWaiting = overlayClockText(item({ userImpulseScore: 2, purchaseScore: null, status: "locked" }), NOW, 90_000);
+    assert.equal(stillWaiting, "1:30");
   });
 
   it("hides the example offer unless waiting for it saves money", () => {

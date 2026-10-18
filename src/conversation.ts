@@ -2,7 +2,7 @@ import { holdForUnlock, withCartFacts } from "./carts.js";
 import { extractCartCode, extractSignals, pickShopperSignals, type ExtractOptions } from "./extract-signals.js";
 import { personaFor } from "./history.js";
 import { decide } from "./heuristic.js";
-import { applyPurchaseScore, gradeJustification } from "./impulse.js";
+import { applyPurchaseScore, gradeJustification, syncFreeBandCopy } from "./impulse.js";
 import { UPGRADE_PROMPT } from "./links.js";
 import { adviceMessage } from "./overlay-copy.js";
 import { parseLinkCommand, threadUserId } from "./phone-link.js";
@@ -151,6 +151,7 @@ async function justifyTurn(session: Session, cart: Cart, input: ApplyInput): Pro
     applyPurchaseScore(cart, graded, impulse, input.now, input.demoReminderMs);
   }
   holdForUnlock(cart);
+  syncFreeBandCopy(cart);
   const advice = adviceMessage(glanceFromCart(cart));
   cart.advice = advice;
   cart.replied = false;

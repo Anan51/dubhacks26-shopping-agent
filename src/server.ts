@@ -126,7 +126,7 @@ export async function startServer(): Promise<void> {
   running.scheduler.armPending();
 
   const server = createServer(running.app);
-  server.listen(appConfig.port, () => {
+  server.listen(appConfig.port, appConfig.host, () => {
     console.log(`Simmer listening on ${appConfig.origin}`);
     console.log(photon ? "Photon live connection is starting." : "Photon is not configured. Replies stay on iMessage when a line is connected.");
   });

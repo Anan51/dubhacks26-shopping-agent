@@ -1,5 +1,6 @@
 import { interpretBag, parsePriceCents, type InterpretedBag } from "../../src/apple-bag.js";
 import { formatUsd } from "../../src/format.js";
+import { mutationIsOurs } from "./page-observer.js";
 
 export type BagLineItem = {
   position: number | null;
@@ -38,6 +39,14 @@ export function bagContentKey(bag: PageBag): string | null {
     return null;
   }
   return `${bag.quantity ?? ""}|${bag.totalCents}|${name}`;
+}
+
+/** Items and total, used to skip a re-render when a mutation did not change the bag. */
+export function bagParseKey(bag: PageBag): string | null {
+  if (bag.totalCents == null || bag.itemNames.length === 0) {
+    return null;
+  }
+  return `${bag.itemNames.join("\n")}|${bag.totalCents}`;
 }
 
 /** Post only when a re-read differs from the bag already on the server. */
@@ -336,7 +345,12 @@ export function watchBagDom(doc: Document, onChange: () => void, timer?: BagTime
       return true;
     }
     disconnectObserver();
-    observer = new ObserverCtor(() => kick());
+    observer = new ObserverCtor((records) => {
+      if (records.every(mutationIsOurs)) {
+        return;
+      }
+      kick();
+    });
     targets = next;
     for (const target of next) {
       observer.observe(target, BAG_OBSERVE);

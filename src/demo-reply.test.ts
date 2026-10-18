@@ -7,6 +7,7 @@ import type { OutboundMessage } from "./channel.js";
 import type { PhotonChannel } from "./channels/photon.js";
 import { createApp } from "./app.js";
 import { DEMO_REPLY_PRESETS, type DemoReplyPreset } from "./demo-reply-presets.js";
+import { overlayClockText, type GlanceItem } from "./glance.js";
 import { createMemoryStore, type Store } from "./store.js";
 
 const PHOTON_SPACE = "pho_spc_00000000000000000000000000";
@@ -36,6 +37,7 @@ type ExpectedReply = {
   scoreBucket: string | null;
   advice: string;
   impulsivenessLine: boolean;
+  statusLine: string;
 };
 
 const EXPECTED: Record<DemoReplyPreset, ExpectedReply> = {
@@ -45,6 +47,7 @@ const EXPECTED: Record<DemoReplyPreset, ExpectedReply> = {
     scoreBucket: "strict",
     advice: "Skip. This looks like a want, not a need.",
     impulsivenessLine: true,
+    statusLine: "This one can wait.",
   },
   "cracked screen": {
     justificationGrade: null,
@@ -52,6 +55,7 @@ const EXPECTED: Record<DemoReplyPreset, ExpectedReply> = {
     scoreBucket: null,
     advice: "Wait. Your current phone is broken.",
     impulsivenessLine: false,
+    statusLine: "Got your reply. Wait: your current phone is broken.",
   },
   "I need it for work tomorrow": {
     justificationGrade: 2,
@@ -59,6 +63,7 @@ const EXPECTED: Record<DemoReplyPreset, ExpectedReply> = {
     scoreBucket: "free",
     advice: "Buy. This looks like a need.",
     impulsivenessLine: true,
+    statusLine: "Looks fine to buy.",
   },
 };
 
@@ -94,6 +99,27 @@ async function listen(input: {
         server.close((error) => (error ? reject(error) : resolve()));
       }),
   };
+}
+
+function presetStatus(body: ReplyCart): string {
+  const glance: GlanceItem = {
+    code: body.code,
+    name: "Example phone",
+    priceCents: body.totalCents,
+    status: body.status === "vault" || body.status === "unlocked" ? body.status : "locked",
+    vaultUntil: body.vaultUntil,
+    decision: null,
+    signals: {},
+    motiveSources: null,
+    necessity: body.necessity === "necessary" || body.necessity === "unnecessary" ? body.necessity : null,
+    userImpulseScore: body.userImpulseScore,
+    justificationGrade: body.justificationGrade,
+    purchaseScore: body.purchaseScore,
+    scoreBucket: body.scoreBucket === "free" || body.scoreBucket === "soft" || body.scoreBucket === "strict" ? body.scoreBucket : null,
+    replied: body.replied,
+    advice: body.advice,
+  };
+  return overlayClockText(glance, Date.now(), 600_000);
 }
 
 async function post(base: string, path: string, body: unknown): Promise<{ status: number; body: ReplyCart & { error?: string } }> {
@@ -187,10 +213,27 @@ describe("simulated reply", () => {
         assert.equal(body.impulse?.score1to8, 4.5, preset);
         assert.equal(body.impulse?.band, "soft", preset);
         assert.equal((body.explanation ?? "").includes("Impulsiveness 4.5 of 8"), want.impulsivenessLine, preset);
+        assert.equal(presetStatus(body), want.statusLine, preset);
+        assert.equal(presetStatus(body).includes("Reply and say why you want this"), false, preset);
         assert.equal(Number.isInteger(body.totalCents), true);
         const pay = await post(demo.base, "/api/pay", { code: body.code });
         assert.equal(pay.status, 423, preset);
       }
+
+      const need = results.get("I need it for work tomorrow");
+      assert.ok(need);
+      const beforeUnlock = need.explanation ?? "";
+      assert.match(beforeUnlock, /Score 4 means this can be unlocked\. Press Unlock to get Apple's button back\./);
+      assert.match(beforeUnlock, /This stays Paused\./);
+      assert.equal(beforeUnlock.includes("Apple's button works again"), false);
+      assert.equal(beforeUnlock.includes("unlocks the bag"), false);
+      const unlocked = await post(demo.base, `/api/carts/${need.code}/unlock`, {});
+      assert.equal(unlocked.status, 200);
+      assert.equal(unlocked.body.isUnlocked, true);
+      const afterUnlock = unlocked.body.explanation ?? "";
+      assert.match(afterUnlock, /OK to buy\. Apple's button works again\./);
+      assert.equal(afterUnlock.includes("Press Unlock"), false);
+      assert.equal(afterUnlock.includes("Paused"), false);
 
       const typed = await post(demo.base, "/api/carts", { ...phone, userId: "user-typed" });
       const typedReply = await post(demo.base, "/api/dev/reply", { code: typed.body.code, text: "I need it for work" });

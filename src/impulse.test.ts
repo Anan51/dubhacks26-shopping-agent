@@ -9,13 +9,14 @@ import mongoose from "mongoose";
 import { connectMongo } from "./auth/db.js";
 import { createApp } from "./app.js";
 import { PurchaseRecord } from "./purchases/model.js";
-import { isEnforcedVault, itemsForBag, liftCart, sleepCart, startLockedCart, unlockCart, withCartFacts } from "./carts.js";
+import { holdForUnlock, isEnforcedVault, itemsForBag, liftCart, sleepCart, startLockedCart, unlockCart, withCartFacts } from "./carts.js";
 import { createMemoryStore } from "./store.js";
 import { decide } from "./heuristic.js";
 import { DELIBERATE, IMPULSIVE, personaFor } from "./history.js";
 import {
   applyPurchaseScore,
   classifyNecessity,
+  syncFreeBandCopy,
   clampGrade,
   gradeJustification,
   keywordGrade,
@@ -198,6 +199,30 @@ describe("score routing", () => {
     assert.equal(free.isUnlocked, true);
     assert.equal(free.vaultUntil, null);
     assert.match(opened.reply, /will not click it/);
+    assert.match(opened.reply, /OK to buy/);
+  });
+
+  it("says a free score can be unlocked, and that Apple's button works only after Unlock", () => {
+    const free = cart();
+    free.decision = decide(withCartFacts({}, free.totalCents));
+    applyPurchaseScore(free, { grade: 2, source: "keywords", reason: "A need." }, 2, NOW, 60_000);
+    holdForUnlock(free);
+    syncFreeBandCopy(free);
+    assert.equal(free.purchaseScore, 4);
+    assert.equal(free.isUnlocked, false);
+    assert.equal(free.status, "locked");
+    const before = free.explanation ?? "";
+    assert.match(before, /Score 4 means this can be unlocked\. Press Unlock to get Apple's button back\./);
+    assert.match(before, /This stays Paused\./);
+    assert.equal(before.includes("Apple's button works again"), false);
+    assert.equal(before.includes("unlocks the bag"), false);
+    unlockCart(free, NOW);
+    syncFreeBandCopy(free);
+    assert.equal(free.isUnlocked, true);
+    const after = free.explanation ?? "";
+    assert.match(after, /OK to buy\. Apple's button works again\./);
+    assert.equal(after.includes("Press Unlock"), false);
+    assert.equal(after.includes("Paused"), false);
   });
 });
 
@@ -312,7 +337,13 @@ describe("impulse flow on the server", () => {
       assert.equal(freed.scoreBucket, "free");
       assert.equal(freed.status, "locked");
       assert.equal(freed.isUnlocked, false);
-      assert.match(freed.explanation ?? "", /will not click it/);
+      assert.match(freed.explanation ?? "", /Score 5 means this can be unlocked\. Press Unlock to get Apple's button back\./);
+      assert.equal((freed.explanation ?? "").includes("Apple's button works again"), false);
+      const openedBag = await post(base, `/api/carts/${locked.code}/unlock`, {});
+      assert.equal(openedBag.status, 200);
+      const bought = openedBag.body as CartSnap;
+      assert.equal(bought.isUnlocked, true);
+      assert.match(bought.explanation ?? "", /OK to buy\. Apple's button works again\./);
     } finally {
       running.scheduler.stop();
       await new Promise<void>((resolve, reject) => {
