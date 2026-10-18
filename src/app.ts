@@ -19,8 +19,12 @@ import {
   unlockCart,
   withCartFacts,
 } from "./carts.js";
-import type { OutboundMessage } from "./channel.js";
+import type { AccountDirectory } from "./auth/accounts.js";
+import type { InboundMessage, OutboundMessage } from "./channel.js";
 import type { PhotonChannel } from "./channels/photon.js";
+import { demoCheckInsAllowed } from "./checkins/demo.js";
+import { fireCheckInNow, takeCheckInReply } from "./checkins/service.js";
+import { startCheckInLoop } from "./checkins/scheduler.js";
 import { readConfig } from "./config.js";
 import { handleIncomingEvent } from "./handle-message.js";
 import { isPersonaId, PERSONAS, personaById, personaFor, type PersonaId } from "./history.js";
@@ -29,9 +33,11 @@ import { applyPurchaseScore, classifyNecessity, keywordNecessity } from "./impul
 import { EXAMPLE_OFFERS } from "./offers.js";
 import { deskChatUrl, linkPhoneSms, linkPhoneText, prefilledText, textSimmerLink } from "./links.js";
 import { isUserId, notifyCheckout } from "./phone-link.js";
+import type { BackboardClient } from "./memory/backboard.js";
 import { phraseDecision, polishPhrase } from "./phrase.js";
 import { ReminderScheduler } from "./reminders.js";
 import { createRuntime, type Runtime } from "./runtime.js";
+import { applyImpulseReading, readingForCart } from "./scoring/cartReading.js";
 import type { PhoneLink, Store } from "./store.js";
 import type { Cart, Decision, Session } from "./types.js";
 
@@ -62,12 +68,20 @@ export type AppDeps = {
   personalizeNudge?: (text: string, authenticatedUserId: string) => Promise<string>;
   /** Present only when Mongo auth is configured. Omitted on the demo path. */
   recordPurchase?: (authUserId: string, cart: Cart) => Promise<void>;
+  /** Present when Mongo is up. Check-in replies and the hourly sender use it. */
+  checkIns?: {
+    directory: AccountDirectory;
+    client: BackboardClient;
+    remote: boolean;
+    intervalMs?: number;
+  };
 };
 
 export type RunningApp = {
   app: express.Express;
   runtime: Runtime;
   scheduler: ReminderScheduler;
+  stopCheckIns: () => void;
 };
 
 export function createApp(deps: AppDeps): RunningApp {
@@ -84,7 +98,7 @@ export function createApp(deps: AppDeps): RunningApp {
 
   function refineNecessity(code: string, bagText: string, authUserId?: string): void {
     void classifyNecessity(bagText, extractOptions)
-      .then((necessity) => {
+      .then(async (necessity) => {
         if (necessity.source !== "grok") {
           return;
         }
@@ -94,6 +108,7 @@ export function createApp(deps: AppDeps): RunningApp {
         }
         const wasUnlocked = current.isUnlocked;
         applyNecessity(current, necessity);
+        await attachImpulse(current, authUserId);
         deps.store.saveCart(current);
         if (authUserId && !wasUnlocked && current.isUnlocked) {
           void notePurchase(authUserId, current);
@@ -127,7 +142,7 @@ export function createApp(deps: AppDeps): RunningApp {
     now,
     send: (message) => routeSend(message),
   });
-  const runtime = createRuntime({
+  const innerRuntime = createRuntime({
     store: deps.store,
     now,
     demoReminderMs: deps.demoReminderMs,
@@ -140,6 +155,16 @@ export function createApp(deps: AppDeps): RunningApp {
     extract: extractOptions,
     ...(deps.personalizeNudge ? { personalizeNudge: deps.personalizeNudge } : {}),
   });
+  const runtime: Runtime = {
+    async enqueue(message) {
+      if (await acceptCheckIn(message)) {
+        deps.store.rememberInbound(message.id);
+        return;
+      }
+      await innerRuntime.enqueue(message);
+    },
+  };
+  let stopCheckIns = (): void => undefined;
 
   if (deps.photon) {
     deps.photon.onDelivery(async (event) => {
@@ -238,6 +263,8 @@ export function createApp(deps: AppDeps): RunningApp {
         await pingCart(existing, false);
         deps.store.saveCart(existing);
       }
+      await attachImpulse(existing, req.user?.id);
+      deps.store.saveCart(existing);
       res.json(publicCart(existing, deps.agentHandle));
       return;
     }
@@ -261,10 +288,10 @@ export function createApp(deps: AppDeps): RunningApp {
     }
     const persona = personaFor(userId, assignedPersonas);
     cart.personaId = persona.id;
-    cart.userImpulseScore = persona.impulseScore;
     const keyword = keywordNecessity(bagText);
     applyNecessity(cart, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason });
-    if (!keyword.necessary) {
+    await attachImpulse(cart, req.user?.id);
+    if (!cart.isUnlocked) {
       await pingCart(cart, false);
     }
     deps.store.saveCart(cart);
@@ -518,6 +545,24 @@ export function createApp(deps: AppDeps): RunningApp {
     res.json({ turns: session?.turns ?? [], reading: false });
   }));
 
+  app.post("/api/dev/checkins/:purchaseId/fire", settle(async (req, res) => {
+    if (!demoCheckInsAllowed()) {
+      res.status(403).json({ error: "Demo check-ins are off." });
+      return;
+    }
+    if (!deps.checkIns) {
+      res.status(503).json({ error: "Check-ins are not running." });
+      return;
+    }
+    const purchaseId = req.params.purchaseId ?? "";
+    const result = await fireCheckInNow(purchaseId, {
+      now: now(),
+      linkFor: linkForUser,
+      send: (message) => deliver(message),
+    });
+    res.status(result.status).json(result.body);
+  }));
+
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "Not found." });
   });
@@ -530,7 +575,17 @@ export function createApp(deps: AppDeps): RunningApp {
     next(error);
   });
 
-  return { app, runtime, scheduler };
+  if (deps.checkIns) {
+    const loop = startCheckInLoop({
+      now,
+      linkFor: linkForUser,
+      send: (message) => deliver(message),
+      ...(deps.checkIns.intervalMs !== undefined ? { intervalMs: deps.checkIns.intervalMs } : {}),
+    });
+    stopCheckIns = () => loop.stop();
+  }
+
+  return { app, runtime, scheduler, stopCheckIns };
 
   async function pingCart(cart: Cart, fail: boolean): Promise<void> {
     cart.lastPing = await notifyCheckout({
@@ -578,6 +633,42 @@ export function createApp(deps: AppDeps): RunningApp {
     }
     res.status(403).json({ error: "Not available." });
     return true;
+  }
+
+  async function acceptCheckIn(message: InboundMessage): Promise<boolean> {
+    if (!deps.checkIns) {
+      return false;
+    }
+    const link = deps.store.findPhoneLinkByConversation(message.conversationId);
+    return takeCheckInReply(link?.userId ?? null, message.text, deps.checkIns, now());
+  }
+
+  function linkForUser(userId: string): { conversationId: string; agentSenderId?: string } | null {
+    const link = deps.store.getPhoneLink(userId);
+    if (!link) {
+      return null;
+    }
+    return {
+      conversationId: link.conversationId,
+      ...(link.agentSenderId ? { agentSenderId: link.agentSenderId } : {}),
+    };
+  }
+
+  async function deliver(message: OutboundMessage): Promise<void> {
+    if (message.conversationId.startsWith("desk:")) {
+      appendDesk(message.conversationId, message.text, "");
+      return;
+    }
+    await routeSend(message);
+  }
+
+  async function attachImpulse(cart: Cart, authUserId?: string): Promise<void> {
+    const wasVault = cart.status === "vault";
+    const reading = await readingForCart(authUserId ?? cart.userId, cart);
+    applyImpulseReading(cart, reading, now(), deps.demoReminderMs);
+    if (!wasVault && cart.status === "vault") {
+      scheduler.arm(cart);
+    }
   }
 
   function loadCart(code: string | undefined): Cart | undefined {
@@ -641,6 +732,9 @@ function postedBag(body: Record<string, unknown>): { itemNames: string[]; totalC
 function publicCart(cart: Cart, agentHandle: string | null) {
   return {
     ...cart,
+    impulse: cart.impulse ?? null,
+    hoursOfWork: cart.hoursOfWork ?? null,
+    hoursOfWorkText: cart.hoursOfWorkText ?? null,
     synthetic: true as const,
     textMessage: prefilledText(cart.code),
     smsLink: textSimmerLink(agentHandle, cart.code),

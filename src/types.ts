@@ -139,8 +139,22 @@ export type Cart = {
   necessityReason: string | null;
   /** Mock history persona. Unknown shoppers use the impulsive seed. */
   personaId: PersonaId | null;
-  /** 1–5 from the mock history, before the justification grade. */
+  /**
+   * 1–5 base passed into the existing purchase-score math.
+   * New carts take this from the 1–8 band (`legacyImpulseBase`), not from the Impulsive persona.
+   * The dev persona switch can still overwrite it.
+   */
   userImpulseScore: number | null;
+  /** 1–8 impulsiveness. Null on carts saved before this field existed. */
+  impulse?: {
+    score1to8: number;
+    band: ScoreBucket;
+    why: string | null;
+  } | null;
+  /** Set only when the price is more than 8 hours at the shopper's rate. */
+  hoursOfWork?: { hours: number; hourlyRate: number } | null;
+  /** `This is about N hours of work at $R/hr.` or null when hours are hidden. */
+  hoursOfWorkText?: string | null;
   /** -3..3. Null until the shopper replies. */
   justificationGrade: number | null;
   gradeSource: SignalSource | null;

@@ -166,6 +166,15 @@ export async function hasRegrettedPurchase(userId: string, category: string): Pr
   return found != null;
 }
 
+/**
+ * Recent real purchases for the impulsiveness score.
+ * Uses the same isExample:false filter as popup history, so survey rows count and seeded examples do not.
+ */
+export async function getPurchaseHistory(userId: string, limit: number): Promise<PurchaseView[]> {
+  const capped = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 50) : 50;
+  return listPurchases(userId, capped);
+}
+
 /** Real purchases only. Survey rows the shopper entered are already isExample false. Example rows stay hidden. */
 export async function listPurchases(userId: string, limit: number): Promise<PurchaseView[]> {
   const docs = await PurchaseRecord.find({ userId, isExample: false }).sort({ createdAt: -1 }).limit(limit);

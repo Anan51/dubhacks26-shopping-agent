@@ -7,7 +7,7 @@ import { createApp } from "./app.js";
 import { isEnforcedVault, itemsForBag, liftCart, sleepCart, startLockedCart, unlockCart, withCartFacts } from "./carts.js";
 import { createMemoryStore } from "./store.js";
 import { decide } from "./heuristic.js";
-import { IMPULSIVE, personaFor } from "./history.js";
+import { DELIBERATE, IMPULSIVE, personaFor } from "./history.js";
 import {
   applyPurchaseScore,
   classifyNecessity,
@@ -247,9 +247,25 @@ describe("impulse flow on the server", () => {
       });
       const locked = phone.body as CartSnap;
       assert.equal(locked.necessity, "unnecessary");
-      assert.equal(locked.userImpulseScore, IMPULSIVE.impulseScore);
+      assert.equal(locked.impulse?.score1to8, 4.5);
+      assert.equal(locked.impulse?.band, "soft");
+      assert.equal(locked.impulse?.why, null);
+      assert.equal(locked.hoursOfWork, null);
+      assert.equal(locked.userImpulseScore, 2);
       assert.equal(locked.status, "locked");
-      assert.equal(personaFor("user-someone-else").impulseScore, 2);
+      assert.equal(personaFor("user-someone-else").impulseScore, IMPULSIVE.impulseScore);
+
+      const deliberate = await post(base, "/api/carts", {
+        userId: "user-deliberate",
+        itemNames: ["Example phone"],
+        totalCents: 80_000,
+        parsed: true,
+        demo: true,
+      });
+      const fresh = deliberate.body as CartSnap;
+      assert.equal(fresh.impulse?.score1to8, 4.5);
+      assert.equal(fresh.userImpulseScore, 2);
+      assert.notEqual(fresh.userImpulseScore, DELIBERATE.impulseScore);
 
       const conversationId = `desk:cart-${locked.code}`;
       await post(base, "/api/dev/messages", {
@@ -262,6 +278,7 @@ describe("impulse flow on the server", () => {
       assert.equal(strict.gradeSource, "keywords");
       assert.equal(strict.status, "locked");
       assert.equal(strict.isUnlocked, false);
+      assert.match(strict.explanation ?? "", /Impulsiveness 4\.5 of 8/);
       const held = await post(base, "/api/pay", { code: locked.code });
       assert.equal(held.status, 423);
 
@@ -400,6 +417,8 @@ type CartSnap = {
   necessity: string | null;
   necessitySource: string | null;
   userImpulseScore: number | null;
+  impulse?: { score1to8: number; band: string; why: string | null } | null;
+  hoursOfWork?: { hours: number; hourlyRate: number } | null;
   purchaseScore: number | null;
   scoreBucket: string | null;
   gradeSource: string | null;
