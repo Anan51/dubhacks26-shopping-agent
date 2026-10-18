@@ -122,52 +122,151 @@ describe("Photon inbound replies", () => {
     assert.equal(store.hasHandledInbound("pho_msg_once"), true);
   });
 
-  it("keeps an unlock when the Photon send throws", async () => {
-    const store = createMemoryStore();
-    const cart = startLockedCart({
-      items: itemsForBag(["Example phone"], 120_000, true),
-      totalCents: 120_000,
-      parsedFromPage: true,
-      pageHost: "www.apple.com",
-      fingerprint: "user-impulsive|120000|example phone",
-      now: NOW,
-      demo: true,
-      lockMs: 600_000,
-      userId: "user-impulsive",
-      code: "EF56GH",
-    });
-    cart.necessity = "unnecessary";
-    cart.userImpulseScore = 2;
-    store.saveCart(cart);
-    store.savePhoneLink({
-      userId: "user-impulsive",
-      conversationId: SPACE,
-      linkedAt: NOW.toISOString(),
-    });
+  it("does not mark replied when the Photon send throws, and a retry can succeed", async () => {
+    const store = linkedStore("EF56GH");
+    let attempts = 0;
     let repliedDuringSend: boolean | null = null;
+    const logged: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      logged.push(args.map((part) => String(part)).join(" "));
+    };
     const runtime = createRuntime({
       store,
       now: () => NOW,
       demoReminderMs: 60_000,
       send: async () => {
+        attempts += 1;
         repliedDuringSend = store.getCart("EF56GH")?.replied === true;
-        throw new Error("photon down");
+        if (attempts === 1) {
+          throw new Error("photon down bearer super-secret-token");
+        }
+      },
+      armReminder: () => undefined,
+      disarmReminder: () => undefined,
+      polish: async (template) => template,
+    });
+    const inbound = {
+      id: "pho_msg_save_first",
+      conversationId: SPACE,
+      text: "cracked screen, battery dies by 3pm, I need it for work tomorrow",
+    };
+    try {
+      await runtime.enqueue(inbound);
+    } finally {
+      console.error = original;
+    }
+    const saved = store.getCart("EF56GH");
+    assert.equal(repliedDuringSend, false);
+    assert.equal(saved?.replied, false);
+    assert.equal(saved?.isUnlocked, false);
+    assert.equal(saved?.status, "locked");
+    assert.match(saved?.advice ?? "", /^Buy\./);
+    assert.match(store.getSession(SPACE)?.turns.at(-1)?.text ?? "", /^Buy\./);
+    assert.equal(store.hasHandledInbound("pho_msg_save_first"), false);
+    const logText = logged.join("\n");
+    assert.match(logText, /iMessage send failed/);
+    assert.equal(logText.includes("super-secret-token"), false);
+    assert.equal(logText.includes("cracked screen"), false);
+
+    await runtime.enqueue(inbound);
+    const retried = store.getCart("EF56GH");
+    assert.equal(attempts, 2);
+    assert.equal(retried?.replied, true);
+    assert.equal(retried?.isUnlocked, false);
+    assert.equal(retried?.status, "locked");
+    assert.match(retried?.advice ?? "", /^Buy\./);
+  });
+
+  it("does not mark replied when the send returns failure, and a retry can succeed", async () => {
+    const store = linkedStore("GH78JK");
+    let attempts = 0;
+    const runtime = createRuntime({
+      store,
+      now: () => NOW,
+      demoReminderMs: 60_000,
+      send: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return { ok: false };
+        }
+      },
+      armReminder: () => undefined,
+      disarmReminder: () => undefined,
+      polish: async (template) => template,
+    });
+    const inbound = {
+      id: "pho_msg_fail_result",
+      conversationId: SPACE,
+      text: "the new color looks nice",
+    };
+    await runtime.enqueue(inbound);
+    const saved = store.getCart("GH78JK");
+    assert.equal(saved?.replied, false);
+    assert.equal(saved?.isUnlocked, false);
+    assert.equal(saved?.status, "locked");
+    assert.match(saved?.advice ?? "", /^(Buy|Wait|Skip)\./);
+    assert.equal(store.hasHandledInbound("pho_msg_fail_result"), false);
+
+    await runtime.enqueue(inbound);
+    const retried = store.getCart("GH78JK");
+    assert.equal(attempts, 2);
+    assert.equal(retried?.replied, true);
+    assert.equal(retried?.isUnlocked, false);
+    assert.equal(retried?.status, "locked");
+    assert.match(retried?.advice ?? "", /^(Buy|Wait|Skip)\./);
+  });
+
+  it("marks replied after a successful send and leaves checkout locked", async () => {
+    const store = linkedStore("JK90LM");
+    let attempts = 0;
+    const runtime = createRuntime({
+      store,
+      now: () => NOW,
+      demoReminderMs: 60_000,
+      send: async () => {
+        attempts += 1;
       },
       armReminder: () => undefined,
       disarmReminder: () => undefined,
       polish: async (template) => template,
     });
     await runtime.enqueue({
-      id: "pho_msg_save_first",
+      id: "pho_msg_ok",
       conversationId: SPACE,
-      text: "cracked screen, battery dies by 3pm, I need it for work tomorrow",
+      text: "the new color looks nice",
     });
-    const saved = store.getCart("EF56GH");
-    assert.equal(repliedDuringSend, false);
+    const saved = store.getCart("JK90LM");
+    assert.equal(attempts, 1);
     assert.equal(saved?.replied, true);
     assert.equal(saved?.isUnlocked, false);
     assert.equal(saved?.status, "locked");
-    assert.match(saved?.advice ?? "", /^Buy\./);
-    assert.match(store.getSession(SPACE)?.turns.at(-1)?.text ?? "", /^Buy\./);
+    assert.match(saved?.advice ?? "", /^(Buy|Wait|Skip)\./);
+    assert.equal(store.hasHandledInbound("pho_msg_ok"), true);
   });
 });
+
+function linkedStore(code: string) {
+  const store = createMemoryStore();
+  const cart = startLockedCart({
+    items: itemsForBag(["Example phone"], 120_000, true),
+    totalCents: 120_000,
+    parsedFromPage: true,
+    pageHost: "www.apple.com",
+    fingerprint: `user-impulsive|120000|example phone|${code}`,
+    now: NOW,
+    demo: true,
+    lockMs: 600_000,
+    userId: "user-impulsive",
+    code,
+  });
+  cart.necessity = "unnecessary";
+  cart.userImpulseScore = 2;
+  store.saveCart(cart);
+  store.savePhoneLink({
+    userId: "user-impulsive",
+    conversationId: SPACE,
+    linkedAt: NOW.toISOString(),
+  });
+  return store;
+}

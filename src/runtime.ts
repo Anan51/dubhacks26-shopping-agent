@@ -13,7 +13,7 @@ export function createRuntime(deps: {
   store: Store;
   now: () => Date;
   demoReminderMs: number;
-  send: (message: OutboundMessage) => Promise<void>;
+  send: (message: OutboundMessage) => Promise<void | { ok: boolean }>;
   armReminder: (cart: Cart) => void;
   disarmReminder: (code: string) => void;
   polish: (template: string, action: Decision["action"]) => Promise<string>;
@@ -86,16 +86,30 @@ export function createRuntime(deps: {
         deps.disarmReminder(result.cart.code);
       }
     }
+    let delivered = false;
     try {
-      await deps.send({
+      const outcome = await deps.send({
         conversationId: message.conversationId,
         text: reply,
         agentSenderId: result.cart?.agentSenderId ?? message.agentSenderId,
         parentMessageId: message.id,
         idempotencyKey: `simmer:${message.id}`,
       });
+      delivered = !sendFailed(outcome);
+      if (!delivered) {
+        logSendFailure(undefined);
+      }
     } catch (error) {
-      console.error(error instanceof Error ? error.message : "Photon reply failed.");
+      logSendFailure(error);
+      delivered = false;
+    }
+    if (!delivered) {
+      deps.store.forgetInbound(message.id);
+      if (result.session.lastInboundId === message.id) {
+        result.session.lastInboundId = null;
+        deps.store.saveSession(result.session);
+      }
+      return;
     }
     if (result.markReplied && result.cart) {
       result.cart.replied = true;
@@ -117,4 +131,14 @@ export function createRuntime(deps: {
       return next;
     },
   };
+}
+
+function sendFailed(outcome: void | { ok: boolean }): boolean {
+  return typeof outcome === "object" && outcome !== null && outcome.ok === false;
+}
+
+/** Log the failure without the reply text, phone numbers, or API keys. */
+function logSendFailure(error: unknown): void {
+  const name = error instanceof Error ? error.name : "Error";
+  console.error(`iMessage send failed (${name}).`);
 }

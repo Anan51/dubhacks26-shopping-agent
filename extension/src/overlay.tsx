@@ -150,7 +150,7 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
         </div>
         {open ? (
           <div>
-            <p>{unreadable ? "The Apple bag could not be read." : pauseSentence(glance)}</p>
+            <p className="why">{unreadable ? "The Apple bag could not be read." : pauseSentence(glance)}</p>
             {unreadable ? null : <p>{priceLine(model.totalCents, { cents: glance.decision?.costLaterCents ?? 0, example: true })}</p>}
             <div className="row">
               {showLockControls ? (
