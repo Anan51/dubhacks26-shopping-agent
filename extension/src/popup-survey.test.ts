@@ -462,7 +462,7 @@ describe("popup survey", () => {
     releaseBody();
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.equal(income.value, "40");
-    const savedNote = [...document.querySelectorAll("#simmer-settings p")].find((node) => node.textContent === "Saved.");
+    const savedNote = [...document.querySelectorAll<HTMLElement>("#simmer-settings p")].find((node) => node.textContent === "Saved.");
     assert.equal(savedNote?.hidden, false);
     income.value = "55";
     save.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
