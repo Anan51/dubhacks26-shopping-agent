@@ -125,6 +125,24 @@ export type ImpulseScoreOptions = {
 /** Enough hits to reach the similar-regret cap without a long wait. */
 export const REGRET_SEARCH_LIMIT = 5;
 const REGRET_SEARCH_TIMEOUT_MS = 1_200;
+/** Under a known relevant match (0.615) and above likely noise. */
+export const DEFAULT_REGRET_SEARCH_MIN_SCORE = 0.5;
+
+/**
+ * Similarity floor for Backboard search hits. Unset or outside [0, 1] uses 0.5.
+ * A hit with no numeric score is not rejected here.
+ */
+export function regretSearchMinScore(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.REGRET_SEARCH_MIN_SCORE;
+  if (typeof raw !== "string" || raw.trim() === "") {
+    return DEFAULT_REGRET_SEARCH_MIN_SCORE;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    return DEFAULT_REGRET_SEARCH_MIN_SCORE;
+  }
+  return parsed;
+}
 
 /**
  * Query for memories of regretted buys that resemble this bag.
@@ -179,14 +197,14 @@ export async function computeImpulseScore(
 }
 
 /**
- * Sum of closeness for regret hits. A missing score counts as one hit.
- * A score in (0, 1) counts as that fraction, so a closer hit weighs more.
- * Non-regret memories (goals, kept buys) add nothing.
+ * Sum of closeness for regret hits at or above the similarity floor.
+ * A missing score counts as one hit. A score in (0, 1) counts as that fraction,
+ * so a closer hit weighs more. Non-regret memories add nothing.
  */
-function similarRegretWeight(hits: readonly MemorySearchHit[]): number {
+function similarRegretWeight(hits: readonly MemorySearchHit[], minScore: number): number {
   let weight = 0;
   for (const hit of hits) {
-    if (!isRegretContent(hit.content)) {
+    if (!isRegretContent(hit.content) || !clearsScoreFloor(hit.score, minScore)) {
       continue;
     }
     weight += hitCloseness(hit.score);
@@ -220,7 +238,7 @@ async function searchRegretWeight(
       REGRET_SEARCH_LIMIT,
       options?.searchTimeoutMs ?? REGRET_SEARCH_TIMEOUT_MS,
     );
-    return similarRegretWeight(hits);
+    return similarRegretWeight(hits, regretSearchMinScore());
   } catch {
     return 0;
   }
@@ -255,6 +273,13 @@ async function searchWithin(
       clearTimeout(timer);
     }
   }
+}
+
+function clearsScoreFloor(score: number | null, minScore: number): boolean {
+  if (score == null || !Number.isFinite(score)) {
+    return true;
+  }
+  return score >= minScore;
 }
 
 function isRegretContent(content: string): boolean {

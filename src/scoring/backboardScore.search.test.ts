@@ -6,10 +6,10 @@ import mongoose from "mongoose";
 
 import { mongooseDirectory } from "../auth/accounts.js";
 import { connectMongo } from "../auth/db.js";
-import { User } from "../auth/user.js";
+import { MemoryNote, User } from "../auth/user.js";
 import { InMemoryBackboardClient, type BackboardClient, type MemorySearchHit } from "../memory/backboard.js";
 import { PurchaseRecord } from "../purchases/model.js";
-import { purchaseVoteLine, writeUserMemoryLine } from "../purchases/service.js";
+import { insertRealPurchase, purchaseVoteLine, setPurchaseFeedback, writeUserMemoryLine } from "../purchases/service.js";
 import { computeImpulseScore, REGRET_SEARCH_LIMIT, regretSearchQuery, type ImpulseItem } from "./backboardScore.js";
 
 const HASH = "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHQ$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -18,10 +18,13 @@ const buds: ImpulseItem = { item: "AirPods", category: "audio", price: 40, neces
 
 describe("regret search scoring", { concurrency: false }, () => {
   let mongod: MongoMemoryServer;
+  let bench: InMemoryBackboardClient;
 
   before(async () => {
     mongod = await MongoMemoryServer.create({ binary: { version: "7.0.14" } });
     await connectMongo(mongod.getUri());
+    bench = new InMemoryBackboardClient();
+    await bench.createAssistant({ name: "reserved", systemPrompt: "unused" });
   });
 
   after(async () => {
@@ -133,7 +136,7 @@ describe("regret search scoring", { concurrency: false }, () => {
       seen.push({ assistantId, query, limit });
       return hits;
     });
-    hits = [hit("regretted purchase: AirPods (audio, $179)", 0.3)];
+    hits = [hit("regretted purchase: AirPods (audio, $179)", 0.55)];
     const weak = await computeImpulseScore(ada.id, buds, undefined, { backboardEnabled: true, client });
     hits = [hit("regretted purchase: AirPods (audio, $179)", 0.95)];
     const close = await computeImpulseScore(ada.id, buds, undefined, { backboardEnabled: true, client });
@@ -159,6 +162,116 @@ describe("regret search scoring", { concurrency: false }, () => {
     });
     assert.equal(timed.score, 4.5);
     assert.ok(calls >= 1);
+  });
+
+  it("scores a kept flip the same as a purchase that was never regretted", async () => {
+    const client = bench;
+    const directory = mongooseDirectory();
+    const deps = { directory, client, remote: true as const };
+    const steadyAssistant = await reserveAssistant(bench, "steady");
+    const steady = await User.create({
+      email: "steady-kept@example.com",
+      passwordHash: HASH,
+      weeklyBudget: 500,
+      backboardAssistantId: steadyAssistant,
+    });
+    const steadyPurchase = await insertRealPurchase({
+      userId: steady.id,
+      item: "AirPods",
+      category: "audio",
+      price: 179,
+      verdict: null,
+      feedback: null,
+    });
+    await setPurchaseFeedback(steady.id, steadyPurchase._id, "kept", deps);
+
+    const shopperAssistant = await reserveAssistant(bench, "flipped");
+    const shopper = await User.create({
+      email: "flipped-kept@example.com",
+      passwordHash: HASH,
+      weeklyBudget: 500,
+      backboardAssistantId: shopperAssistant,
+    });
+    const purchase = await insertRealPurchase({
+      userId: shopper.id,
+      item: "AirPods",
+      category: "audio",
+      price: 179,
+      verdict: null,
+      feedback: null,
+    });
+    await setPurchaseFeedback(shopper.id, purchase._id, "regretted", deps);
+    const during = await computeImpulseScore(shopper.id, buds, undefined, { backboardEnabled: true, client });
+    assert.ok(during.score > 4.5);
+    await setPurchaseFeedback(shopper.id, purchase._id, "kept", deps);
+
+    const afterFlip = await computeImpulseScore(shopper.id, buds, undefined, { backboardEnabled: true, client });
+    const neverRegretted = await computeImpulseScore(steady.id, buds, undefined, { backboardEnabled: true, client });
+    assert.equal(afterFlip.score, neverRegretted.score);
+    assert.equal(afterFlip.score, 4.5);
+    assert.equal(afterFlip.why, null);
+  });
+
+  it("keeps one regret memory when a vote goes regretted, kept, then regretted", async () => {
+    const client = bench;
+    const directory = mongooseDirectory();
+    const ada = await User.create({
+      email: "cycle-regret@example.com",
+      passwordHash: HASH,
+      weeklyBudget: 500,
+      backboardAssistantId: await reserveAssistant(bench, "cycle"),
+    });
+    const purchase = await insertRealPurchase({
+      userId: ada.id,
+      item: "AirPods",
+      category: "audio",
+      price: 179,
+      verdict: null,
+      feedback: null,
+    });
+    const deps = { directory, client, remote: true as const };
+    await setPurchaseFeedback(ada.id, purchase._id, "regretted", deps);
+    await setPurchaseFeedback(ada.id, purchase._id, "kept", deps);
+    await setPurchaseFeedback(ada.id, purchase._id, "regretted", deps);
+
+    assert.equal(await MemoryNote.countDocuments({ userId: ada.id, "meta.purchaseId": purchase._id }), 1);
+    assert.equal(await MemoryNote.countDocuments({ userId: ada.id, type: "regret", "meta.purchaseId": purchase._id }), 1);
+    const account = await directory.findById(ada.id);
+    const hits = await client.searchMemories(account?.backboardAssistantId ?? "", regretSearchQuery(buds.item, buds.category), REGRET_SEARCH_LIMIT);
+    assert.equal(hits.filter((hit) => hit.content.includes("regretted purchase:")).length, 1);
+  });
+
+  it("ignores a regret hit below the score floor and counts one on the floor", async () => {
+    const ada = await User.create({
+      email: "search-floor@example.com",
+      passwordHash: HASH,
+      hourlyRate: 30,
+      weeklyBudget: 500,
+      backboardAssistantId: "asst-floor",
+    });
+    const previous = process.env.REGRET_SEARCH_MIN_SCORE;
+    delete process.env.REGRET_SEARCH_MIN_SCORE;
+    try {
+      const below = scriptedClient(async () => [hit("regretted purchase: AirPods (audio, $179)", 0.49)]);
+      const ignored = await computeImpulseScore(ada.id, buds, undefined, { backboardEnabled: true, client: below });
+      assert.equal(ignored.score, 4.5);
+      assert.equal(ignored.why, null);
+
+      const onFloor = scriptedClient(async () => [hit("regretted purchase: AirPods (audio, $179)", 0.5)]);
+      const counted = await computeImpulseScore(ada.id, buds, undefined, { backboardEnabled: true, client: onFloor });
+      assert.ok(counted.score > 4.5);
+
+      process.env.REGRET_SEARCH_MIN_SCORE = "0.7";
+      const underKnob = scriptedClient(async () => [hit("regretted purchase: AirPods (audio, $179)", 0.615)]);
+      const raised = await computeImpulseScore(ada.id, buds, undefined, { backboardEnabled: true, client: underKnob });
+      assert.equal(raised.score, 4.5);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.REGRET_SEARCH_MIN_SCORE;
+      } else {
+        process.env.REGRET_SEARCH_MIN_SCORE = previous;
+      }
+    }
   });
 
   it("leaves price and hours alone when the key is unset", async () => {
@@ -192,6 +305,11 @@ describe("regret search scoring", { concurrency: false }, () => {
     assert.equal(calls, 0);
   });
 });
+
+async function reserveAssistant(client: InMemoryBackboardClient, name: string): Promise<string> {
+  const created = await client.createAssistant({ name: `Simmer ${name}`, systemPrompt: "Remember one shopper." });
+  return created.assistantId;
+}
 
 function hit(content: string, score: number | null): MemorySearchHit {
   return { id: "mem", content, score, createdAt: null };

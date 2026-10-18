@@ -55,6 +55,12 @@ Simmer lists from the Mongo index rather than `GET /assistants/{id}/memories`. `
 
 `POST /threads/messages` is from the docs, not this live check. The client sends the stored assistant id, `memory: "Auto"`, `stream: false`, and `model_name: "gpt-4o"`. Assistant create does not take a model. The SDK's `k` is `limit` on search.
 
+## Regret search score floor
+
+Impulse scoring searches the shopper's assistant for similar regrets. A hit counts only when its similarity `score` is at least `REGRET_SEARCH_MIN_SCORE`. The default is `0.5`. A live check matched a clearly relevant regret at `0.615`, so `0.5` sits under that match and above likely unrelated noise. Set the variable to a float in `[0, 1]`. An unset or invalid value falls back to `0.5`. Tune the threshold once more live scores are on file. A hit with no numeric score still counts.
+
+Changing a purchase vote removes that purchase's previous vote memory, including the Backboard row when `backboardMemoryId` is set, before writing the new vote. Clearing the vote removes it and does not write another. A regretted vote is written once per purchase.
+
 ## Single-memory delete
 
 The public API documents `DELETE /assistants/{assistant_id}/memories/{memory_id}` (one memory, database and vector store). It was not in the Oct 17 live check. When a shopper deletes a purchase and the matching `MemoryNote` has `backboardMemoryId`, and `BACKBOARD_API_KEY` is set, Simmer calls that route with the assistant id stored on the user. A failed call is logged. The Mongo purchase and the note are still removed. With the key unset, nothing is sent.
