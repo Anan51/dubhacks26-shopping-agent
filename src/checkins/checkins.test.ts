@@ -23,7 +23,7 @@ import { startCheckInLoop } from "./scheduler.js";
 import { rememberCheckIn } from "./ensure.js";
 import { answerCheckIn, ensureCheckIn, sendDueCheckIns, takeCheckInReply } from "./service.js";
 
-const SECRET = "checkin-test-secret";
+const SECRET = "checkin-test-secret".padEnd(32, "x");
 let base = "";
 
 describe("worth-it replies", () => {

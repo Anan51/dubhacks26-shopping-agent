@@ -20,7 +20,7 @@ import { budgetMemoryLine, countRegrets, getBudgetProfile, getHourlyRate, getSav
 import { positiveSettingsAmount } from "./service.js";
 import { createOnboardingRouter, createSettingsRouter } from "./routes.js";
 
-const SECRET = "survey-test-secret";
+const SECRET = "survey-test-secret".padEnd(32, "x");
 let base = "";
 
 describe("onboarding survey", () => {

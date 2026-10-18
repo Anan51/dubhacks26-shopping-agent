@@ -4,13 +4,13 @@ Email login and per-user memory are optional. With `MONGODB_URI`, `JWT_SECRET`, 
 
 ## Auth method
 
-Simmer issues a **JWT in the httpOnly cookie `simmer_token`** (HS256, 7 days, `SameSite=Lax`). This is not a server-side session, so it does not share the cart store. Middleware also accepts `Authorization: Bearer <jwt>` for curl and other non-browser clients. The token is not returned in the JSON body.
+Simmer issues a **JWT in the httpOnly cookie `simmer_token`** (HS256, 7 days, `SameSite=Lax`). This is not a server-side session, so it does not share the cart store. Middleware also accepts `Authorization: Bearer <jwt>` for curl and other non-browser clients. `POST /auth/signup` and `POST /auth/login` return that same token in the JSON body as `token`, next to `user`.
 
 `SESSION_SECRET` is unused while this cookie is the session.
 
 `POST /auth/signup` and `POST /auth/login` take `{ email, password }`. Passwords are hashed with argon2id before they are stored. `GET /auth/me` reads the signed-in user from the JWT. The `User` document has `email`, `passwordHash`, an optional `backboardAssistantId`, and timestamps. There is no Google sign-in.
 
-Both routes answer `503` with a clear message when MongoDB or `JWT_SECRET` is missing, and the process still boots.
+Both routes answer `503` with a clear message when MongoDB or `JWT_SECRET` is missing, and the process still boots. `POST /auth/logout` answers `503` when `JWT_SECRET` is unset. When the secret is set, logout clears `simmer_token` with the same Path, SameSite, and Secure attributes used to set it, and returns `{ ok: true }` without a MongoDB connection.
 
 ## Memory
 

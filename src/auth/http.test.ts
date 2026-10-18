@@ -16,7 +16,7 @@ import { MemoryNote, User } from "./user.js";
 
 let base = "";
 
-const SECRET = "http-test-jwt-secret";
+const SECRET = "http-test-jwt-secret".padEnd(32, "x");
 const PASSWORD = "correct horse battery";
 const GENERIC_LOGIN_ERROR = { error: "Invalid email or password." };
 
@@ -105,9 +105,14 @@ describe("auth http", () => {
   });
 
   it("logs out with 200 while auth is on", async () => {
-    const loggedOut = await post("/auth/logout", {});
+    const created = await post("/auth/signup", { email: "logout-on@example.com", password: PASSWORD });
+    const loggedOut = await post("/auth/logout", {}, created.cookie);
     assert.equal(loggedOut.status, 200);
     assert.deepEqual(loggedOut.body, { ok: true });
+    assert.ok(created.setCookie);
+    assert.ok(loggedOut.setCookie);
+    assert.match(loggedOut.setCookie, /^simmer_token=;/);
+    assert.deepEqual(cookieIdentity(loggedOut.setCookie), cookieIdentity(created.setCookie));
   });
 
   it("logs in with the right password", async () => {
@@ -140,7 +145,10 @@ describe("auth http", () => {
     const missing = await get("/auth/me");
     const badCookie = await get("/auth/me", { cookie: "not-a-jwt" });
     const badBearer = await get("/auth/me", { authorization: "Bearer not-a-jwt" });
-    const wrongSecret = await signSession({ id: "64b1c0f0c0ffee00000000aa", email: "ada@example.com" }, "other-secret");
+    const wrongSecret = await signSession(
+      { id: "64b1c0f0c0ffee00000000aa", email: "ada@example.com" },
+      "other-secret".padEnd(32, "y"),
+    );
     const forged = await get("/auth/me", { authorization: `Bearer ${wrongSecret}` });
 
     for (const rejected of [missing, badCookie, badBearer, forged]) {
@@ -268,6 +276,26 @@ function setCookieLine(response: Response): string | null {
   const headers = response.headers as Headers & { getSetCookie?: () => string[] };
   const lines = headers.getSetCookie?.() ?? [];
   return lines.find((line) => line.toLowerCase().startsWith(`${SESSION_COOKIE}=`)) ?? null;
+}
+
+function cookieIdentity(setCookie: string): { path: string; sameSite: string; secure: boolean; httpOnly: boolean; domain: string } {
+  const attributes = new Map<string, string>();
+  for (const part of setCookie.split(";").slice(1)) {
+    const trimmed = part.trim();
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) {
+      attributes.set(trimmed.toLowerCase(), "");
+    } else {
+      attributes.set(trimmed.slice(0, eq).toLowerCase(), trimmed.slice(eq + 1));
+    }
+  }
+  return {
+    path: attributes.get("path") ?? "",
+    sameSite: attributes.get("samesite") ?? "",
+    secure: attributes.has("secure"),
+    httpOnly: attributes.has("httponly"),
+    domain: attributes.get("domain") ?? "",
+  };
 }
 
 function texts(body: Record<string, unknown>): string {
