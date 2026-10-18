@@ -108,6 +108,18 @@ export function startLockedCart(input: {
     lockStartedAt: createdAt,
     lockEndsAt: new Date(input.now.getTime() + input.lockMs).toISOString(),
     vaultUntil: null,
+    vaultMode: null,
+    necessity: null,
+    necessitySource: null,
+    necessityReason: null,
+    personaId: null,
+    userImpulseScore: null,
+    justificationGrade: null,
+    gradeSource: null,
+    gradeReason: null,
+    purchaseScore: null,
+    scoreBucket: null,
+    scoreReason: null,
     signalSource: null,
     motiveSources: null,
     reading: false,
@@ -116,18 +128,36 @@ export function startLockedCart(input: {
   };
 }
 
-export function unlockCart(cart: Cart): Cart {
-  if (isVaultActive(cart, new Date())) {
-    return cart;
-  }
+/** Clears a vault and opens checkout. Does not ask whether the vault was enforced. */
+export function liftCart(cart: Cart): Cart {
+  cart.vaultUntil = null;
+  cart.vaultMode = null;
   cart.isUnlocked = true;
   cart.status = "unlocked";
   return cart;
 }
 
-export function sleepCart(cart: Cart, now: Date, vaultMs: number = VAULT_MS, demoReminderMs: number = 60_000): Cart {
+export function isEnforcedVault(cart: Cart, now: Date): boolean {
+  return isVaultActive(cart, now) && cart.vaultMode !== "soft";
+}
+
+export function unlockCart(cart: Cart, now: Date = new Date()): Cart {
+  if (isEnforcedVault(cart, now)) {
+    return cart;
+  }
+  return liftCart(cart);
+}
+
+export function sleepCart(
+  cart: Cart,
+  now: Date,
+  vaultMs: number = VAULT_MS,
+  demoReminderMs: number = 60_000,
+  mode: "enforced" | "soft" = "enforced",
+): Cart {
   cart.isUnlocked = false;
   cart.status = "vault";
+  cart.vaultMode = mode;
   cart.vaultUntil = new Date(now.getTime() + vaultMs).toISOString();
   cart.reminderAt = cart.vaultUntil;
   cart.reminderFireAt = cart.demo ? new Date(now.getTime() + demoReminderMs).toISOString() : cart.vaultUntil;

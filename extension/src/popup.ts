@@ -10,6 +10,16 @@ type CartPayload = {
   decision: GlanceItem["decision"];
   signals: GlanceItem["signals"];
   motiveSources: GlanceItem["motiveSources"];
+  necessity?: GlanceItem["necessity"];
+  necessitySource?: GlanceItem["necessitySource"];
+  necessityReason?: GlanceItem["necessityReason"];
+  userImpulseScore?: GlanceItem["userImpulseScore"];
+  justificationGrade?: GlanceItem["justificationGrade"];
+  gradeSource?: GlanceItem["gradeSource"];
+  gradeReason?: GlanceItem["gradeReason"];
+  purchaseScore?: GlanceItem["purchaseScore"];
+  scoreBucket?: GlanceItem["scoreBucket"];
+  scoreReason?: GlanceItem["scoreReason"];
 };
 
 const state = document.getElementById("state");
@@ -92,6 +102,16 @@ function toGlance(cart: CartPayload): GlanceItem {
     decision: cart.decision,
     signals: cart.signals ?? {},
     motiveSources: cart.motiveSources,
+    necessity: cart.necessity ?? null,
+    necessitySource: cart.necessitySource ?? null,
+    necessityReason: cart.necessityReason ?? null,
+    userImpulseScore: cart.userImpulseScore ?? null,
+    justificationGrade: cart.justificationGrade ?? null,
+    gradeSource: cart.gradeSource ?? null,
+    gradeReason: cart.gradeReason ?? null,
+    purchaseScore: cart.purchaseScore ?? null,
+    scoreBucket: cart.scoreBucket ?? null,
+    scoreReason: cart.scoreReason ?? null,
   };
 }
 

@@ -6,6 +6,8 @@ import { breakdownLines, oneLineVerdict, type GlanceItem, type GlanceSignals, ty
 import { UPGRADE_PROMPT } from "../../src/links.js";
 import type { Decision } from "../../src/types.js";
 
+import { quantityTotalLabel } from "./bag-dom.js";
+
 export type OverlayModel = {
   code: string;
   status: "locked" | "vault" | "unlocked";
@@ -15,6 +17,7 @@ export type OverlayModel = {
   totalCents: number;
   parsedFromPage: boolean;
   itemNames: string[];
+  quantity: number | null;
   explanation: string | null;
   decision: Decision | null;
   signals: GlanceSignals;
@@ -28,6 +31,16 @@ export type OverlayModel = {
   qrDataUrl: string | null;
   turns: { role: "shopper" | "agent"; text: string }[];
   error: string | null;
+  necessity: "necessary" | "unnecessary" | null;
+  necessitySource: string | null;
+  necessityReason: string | null;
+  userImpulseScore: number | null;
+  justificationGrade: number | null;
+  gradeSource: string | null;
+  gradeReason: string | null;
+  purchaseScore: number | null;
+  scoreBucket: "free" | "soft" | "strict" | null;
+  scoreReason: string | null;
 };
 
 export type OverlayActions = {
@@ -76,22 +89,43 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
   }, []);
   const remaining = Math.max(0, new Date(model.lockEndsAt).getTime() - now);
   const glance = toGlance(model);
-  const title = model.status === "unlocked" ? "Unlocked" : model.status === "vault" ? "In the Vault" : "Marinating";
+  const title =
+    model.necessity === "necessary" && model.purchaseScore == null
+      ? "Necessary buy"
+      : model.status === "unlocked"
+        ? "Unlocked"
+        : model.status === "vault"
+          ? "In the Vault"
+          : "Marinating";
+  const clock =
+    model.necessity === "necessary" && model.purchaseScore == null
+      ? "Checkout can proceed"
+      : model.purchaseScore != null || model.status === "vault"
+        ? oneLineVerdict(glance, now)
+        : remaining > 0
+          ? clockFrom(remaining)
+          : "0:00";
+  const showLockControls = model.necessity !== "necessary";
   return (
     <div className="panel">
       <section className="card" role="dialog" aria-labelledby="simmer-title">
         <p className="kicker">Simmer · example data</p>
         <h1 id="simmer-title">{title}</h1>
+        {model.quantity != null && model.itemNames[0] ? <p>{model.itemNames[0]}</p> : null}
         <p>
-          {model.itemNames[0] ?? "Apple bag"} · {formatUsd(model.totalCents)}
+          {model.quantity != null
+            ? quantityTotalLabel(model.quantity, model.totalCents)
+            : `${model.itemNames[0] ?? "Apple bag"} · ${formatUsd(model.totalCents)}`}
         </p>
         <p className="clock" aria-live="polite">
-          {model.status === "vault" ? oneLineVerdict(glance, now) : remaining > 0 ? clockFrom(remaining) : "0:00"}
+          {clock}
         </p>
         <div className="row">
-          <button type="button" onClick={actions.unlock}>
-            Unlock
-          </button>
+          {showLockControls ? (
+            <button type="button" onClick={actions.unlock}>
+              Unlock
+            </button>
+          ) : null}
           <button type="button" className="quiet" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
             Why
           </button>
@@ -107,9 +141,11 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
               ))}
             </dl>
             <div className="row">
-              <button type="button" className="quiet" onClick={actions.sleep}>
-                Sleep on it
-              </button>
+              {showLockControls ? (
+                <button type="button" className="quiet" onClick={actions.sleep}>
+                  Sleep on it
+                </button>
+              ) : null}
               {model.status === "vault" ? (
                 <button type="button" className="quiet" onClick={actions.skipVault}>
                   Demo: skip 24 hours
@@ -159,10 +195,23 @@ function toGlance(model: OverlayModel): GlanceItem {
           tradeInLaterCents: model.decision.tradeInLaterCents,
           financingNowCents: model.decision.financingNowCents,
           financingLaterCents: model.decision.financingLaterCents,
+          mathAction: model.decision.mathAction,
+          mathWaitMonths: model.decision.mathWaitMonths,
+          mathSavingsCents: model.decision.mathSavingsCents,
         }
       : null,
     signals: model.signals,
     motiveSources: model.motiveSources,
+    necessity: model.necessity,
+    necessitySource: model.necessitySource,
+    necessityReason: model.necessityReason,
+    userImpulseScore: model.userImpulseScore,
+    justificationGrade: model.justificationGrade,
+    gradeSource: model.gradeSource,
+    gradeReason: model.gradeReason,
+    purchaseScore: model.purchaseScore,
+    scoreBucket: model.scoreBucket,
+    scoreReason: model.scoreReason,
   };
 }
 

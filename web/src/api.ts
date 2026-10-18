@@ -64,6 +64,17 @@ export type CartResponse = {
   } | null;
   decision: Decision | null;
   explanation: string | null;
+  necessity: "necessary" | "unnecessary" | null;
+  necessitySource: "grok" | "keywords" | null;
+  necessityReason: string | null;
+  personaId: "impulsive" | "deliberate" | null;
+  userImpulseScore: number | null;
+  justificationGrade: number | null;
+  gradeSource: "grok" | "keywords" | null;
+  gradeReason: string | null;
+  purchaseScore: number | null;
+  scoreBucket: "free" | "soft" | "strict" | null;
+  scoreReason: string | null;
   lastPing: CheckoutPing | null;
   smsLink: string;
   linkMessage: string | null;
@@ -82,6 +93,13 @@ export type PublicConfig = {
   exampleOwedCents: number;
   fallbackTotalCents: number;
   exampleOffers: { id: string; name: string; savingCents: number; monthsFromNow: number; windowLabel: string }[];
+  personas: {
+    id: "impulsive" | "deliberate";
+    label: string;
+    userId: string;
+    impulseScore: number;
+    history: { item: string; cents: number; waited: boolean; note: string }[];
+  }[];
 };
 
 export type PayGate = {
@@ -118,6 +136,13 @@ export async function readPayGate(code: string): Promise<PayGate> {
     body: JSON.stringify({ code }),
   });
   return (await response.json()) as PayGate;
+}
+
+export async function setPersona(userId: string, persona: "impulsive" | "deliberate"): Promise<void> {
+  await request("/api/dev/persona", {
+    method: "POST",
+    body: JSON.stringify({ userId, persona }),
+  });
 }
 
 export async function linkDesk(userId: string, conversationId: string): Promise<void> {

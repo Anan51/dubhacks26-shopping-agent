@@ -1,6 +1,7 @@
 declare const chrome: {
   runtime: {
-    sendMessage: (message: unknown, response?: (value: unknown) => void) => void;
+    id?: string;
+    sendMessage: (message: unknown, response?: (value: unknown) => void) => void | Promise<unknown>;
     lastError?: { message?: string };
   };
   storage: {

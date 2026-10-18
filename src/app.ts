@@ -9,21 +9,22 @@ import { bagOrFallback } from "./apple-bag.js";
 import {
   bagFingerprint,
   FALLBACK_TOTAL_CENTS,
-  isVaultActive,
+  isEnforcedVault,
   itemsForBag,
   lockState,
   skipVault,
   sleepCart,
   startLockedCart,
   unlockCart,
-  VAULT_MS,
   withCartFacts,
 } from "./carts.js";
 import type { OutboundMessage } from "./channel.js";
 import type { PhotonChannel } from "./channels/photon.js";
 import { readConfig } from "./config.js";
 import { handleIncomingEvent } from "./handle-message.js";
+import { isPersonaId, PERSONAS, personaById, personaFor, type PersonaId } from "./history.js";
 import { decide, EXAMPLE_OWED_CENTS } from "./heuristic.js";
+import { applyPurchaseScore, classifyNecessity, keywordNecessity } from "./impulse.js";
 import { EXAMPLE_OFFERS } from "./offers.js";
 import { deskChatUrl, linkPhoneSms, linkPhoneText, prefilledText, textSimmerLink } from "./links.js";
 import { isUserId, notifyCheckout } from "./phone-link.js";
@@ -46,6 +47,7 @@ export type AppDeps = {
   xaiApiKey?: string;
   xaiModel: string;
   xaiTimeoutMs: number;
+  fetchImpl?: typeof fetch;
   now?: () => Date;
   polish?: (template: string, action: Decision["action"]) => Promise<string>;
 };
@@ -58,6 +60,29 @@ export type RunningApp = {
 
 export function createApp(deps: AppDeps): RunningApp {
   const now = deps.now ?? (() => new Date());
+  const assignedPersonas = new Map<string, PersonaId>();
+  const extractOptions = {
+    ...(deps.xaiApiKey ? { apiKey: deps.xaiApiKey } : {}),
+    model: deps.xaiModel,
+    timeoutMs: deps.xaiTimeoutMs,
+    ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
+  };
+
+  function refineNecessity(code: string, bagText: string): void {
+    void classifyNecessity(bagText, extractOptions)
+      .then((necessity) => {
+        if (necessity.source !== "grok") {
+          return;
+        }
+        const current = deps.store.getCart(code);
+        if (!current) {
+          return;
+        }
+        applyNecessity(current, necessity);
+        deps.store.saveCart(current);
+      })
+      .catch(() => undefined);
+  }
 
   async function routeSend(message: OutboundMessage): Promise<void> {
     if (message.conversationId.startsWith("desk:")) {
@@ -85,11 +110,7 @@ export function createApp(deps: AppDeps): RunningApp {
     polish:
       deps.polish ??
       ((template, action) => polishPhrase(template, action, deps.xaiApiKey, fetch, deps.xaiModel, deps.xaiTimeoutMs)),
-    extract: {
-      ...(deps.xaiApiKey ? { apiKey: deps.xaiApiKey } : {}),
-      model: deps.xaiModel,
-      timeoutMs: deps.xaiTimeoutMs,
-    },
+    extract: extractOptions,
   });
 
   if (deps.photon) {
@@ -116,6 +137,10 @@ export function createApp(deps: AppDeps): RunningApp {
     res.type("html").send(readFileSync(path.join(process.cwd(), "web", "fallback.html"), "utf8"));
   });
 
+  app.get("/fallback/cable", (_req, res) => {
+    res.type("html").send(readFileSync(path.join(process.cwd(), "web", "fallback-cable.html"), "utf8"));
+  });
+
   app.get("/api/config", (_req, res) => {
     res.json({
       synthetic: true,
@@ -128,6 +153,7 @@ export function createApp(deps: AppDeps): RunningApp {
       exampleOwedCents: EXAMPLE_OWED_CENTS,
       fallbackTotalCents: FALLBACK_TOTAL_CENTS,
       exampleOffers: EXAMPLE_OFFERS,
+      personas: PERSONAS,
       deskChat: true,
     });
   });
@@ -145,12 +171,21 @@ export function createApp(deps: AppDeps): RunningApp {
       return;
     }
     const bag = postedBag(body);
+    const bagText = bag.itemNames.join("\n");
     const fingerprint = bagFingerprint(userId, bag.itemNames, bag.totalCents);
     const existing = deps.store
       .listCarts()
       .find((cart) => cart.userId === userId && cart.fingerprint === fingerprint);
     if (existing) {
-      if (!existing.lastPing?.delivered) {
+      if (existing.necessity == null) {
+        const keyword = keywordNecessity(bagText);
+        applyNecessity(existing, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason });
+        if (!keyword.necessary) {
+          await pingCart(existing, false);
+        }
+        deps.store.saveCart(existing);
+        refineNecessity(existing.code, bagText);
+      } else if (!existing.lastPing?.delivered) {
         await pingCart(existing, false);
         deps.store.saveCart(existing);
       }
@@ -172,9 +207,17 @@ export function createApp(deps: AppDeps): RunningApp {
       taken: (code) => deps.store.getCart(code) !== undefined,
     });
     seedDecision(cart);
-    await pingCart(cart, false);
+    const persona = personaFor(userId, assignedPersonas);
+    cart.personaId = persona.id;
+    cart.userImpulseScore = persona.impulseScore;
+    const keyword = keywordNecessity(bagText);
+    applyNecessity(cart, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason });
+    if (!keyword.necessary) {
+      await pingCart(cart, false);
+    }
     deps.store.saveCart(cart);
     res.status(201).json(publicCart(cart, deps.agentHandle));
+    refineNecessity(cart.code, bagText);
   }));
 
   app.get("/api/carts/:code", (req, res) => {
@@ -204,7 +247,7 @@ export function createApp(deps: AppDeps): RunningApp {
       res.status(404).json({ error: "Cart not found." });
       return;
     }
-    if (isVaultActive(cart, now())) {
+    if (isEnforcedVault(cart, now())) {
       res.status(423).json({
         error: "This bag is in the Impulse Vault.",
         vaultUntil: cart.vaultUntil,
@@ -212,7 +255,7 @@ export function createApp(deps: AppDeps): RunningApp {
       });
       return;
     }
-    unlockCart(cart);
+    unlockCart(cart, now());
     deps.store.saveCart(cart);
     scheduler.disarm(cart.code);
     res.json(publicCart(cart, deps.agentHandle));
@@ -224,7 +267,14 @@ export function createApp(deps: AppDeps): RunningApp {
       res.status(404).json({ error: "Cart not found." });
       return;
     }
-    sleepCart(cart, now(), VAULT_MS, deps.demoReminderMs);
+    if (cart.scoreBucket !== "soft") {
+      res.status(409).json({
+        error: "Sleep is only for a soft score.",
+        cart: publicCart(cart, deps.agentHandle),
+      });
+      return;
+    }
+    sleepCart(cart, now(), deps.lockMs, deps.demoReminderMs, "soft");
     deps.store.saveCart(cart);
     scheduler.arm(cart);
     res.json(publicCart(cart, deps.agentHandle));
@@ -262,6 +312,48 @@ export function createApp(deps: AppDeps): RunningApp {
     }
     const link = deps.store.getPhoneLink(userId);
     res.json({ linked: Boolean(link), conversationId: link?.conversationId ?? null });
+  });
+
+  app.post("/api/dev/persona", (req, res) => {
+    const body = isRecord(req.body) ? req.body : {};
+    const userId = typeof body.userId === "string" ? body.userId : "";
+    const personaId = typeof body.persona === "string" ? body.persona : "";
+    if (!isUserId(userId) || !isPersonaId(personaId)) {
+      res.status(400).json({ error: "userId and persona (impulsive or deliberate) are required." });
+      return;
+    }
+    assignedPersonas.set(userId, personaId);
+    const persona = personaById(personaId);
+    const carts = [];
+    for (const cart of deps.store.listCarts()) {
+      if (cart.userId !== userId || cart.necessity === "necessary") {
+        continue;
+      }
+      cart.personaId = persona.id;
+      cart.userImpulseScore = persona.impulseScore;
+      if (cart.justificationGrade !== null && cart.gradeSource) {
+        const scored = applyPurchaseScore(
+          cart,
+          { grade: cart.justificationGrade, source: cart.gradeSource, reason: cart.gradeReason ?? "" },
+          persona.impulseScore,
+          now(),
+          deps.demoReminderMs,
+        );
+        if (scored.bucket === "strict") {
+          scheduler.arm(cart);
+        } else {
+          scheduler.disarm(cart.code);
+        }
+      }
+      deps.store.saveCart(cart);
+      carts.push(cart.code);
+    }
+    res.json({
+      personaId: persona.id,
+      impulseScore: persona.impulseScore,
+      history: persona.history,
+      carts,
+    });
   });
 
   app.post("/api/dev/link", (req, res) => {
@@ -385,6 +477,30 @@ function seedDecision(cart: Cart): void {
   };
   cart.explanation = phraseDecision(cart.decision, signals, null, cart.motiveSources);
   cart.signalSource = null;
+}
+
+function applyNecessity(
+  cart: Cart,
+  read: { necessary: boolean; source: "grok" | "keywords"; reason: string },
+): void {
+  cart.necessity = read.necessary ? "necessary" : "unnecessary";
+  cart.necessitySource = read.source;
+  cart.necessityReason = read.reason;
+  if (cart.purchaseScore != null) {
+    return;
+  }
+  if (read.necessary) {
+    unlockCart(cart);
+    cart.scoreReason = read.reason;
+    return;
+  }
+  if (cart.scoreBucket == null && !isEnforcedVault(cart, new Date())) {
+    cart.isUnlocked = false;
+    if (cart.status === "unlocked") {
+      cart.status = "locked";
+    }
+    cart.scoreReason = null;
+  }
 }
 
 function postedBag(body: Record<string, unknown>): { itemNames: string[]; totalCents: number; parsed: boolean } {

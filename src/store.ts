@@ -23,13 +23,20 @@ export type Store = {
   saveSession(session: Session): void;
   getPhoneLink(userId: string): PhoneLink | undefined;
   savePhoneLink(link: PhoneLink): void;
+  findPhoneLinkByConversation(conversationId: string): PhoneLink | undefined;
+  /** True when this inbound id already produced an outbound reply. */
+  hasHandledInbound(messageId: string): boolean;
+  rememberInbound(messageId: string): void;
 };
 
 type Snapshot = {
   carts: Record<string, Cart>;
   sessions: Record<string, Session>;
   phoneLinks: Record<string, PhoneLink>;
+  handledInboundIds?: string[];
 };
+
+const HANDLED_INBOUND_CAP = 500;
 
 export function createMemoryStore(): Store {
   return new MemoryStore();
@@ -47,6 +54,7 @@ class MemoryStore implements Store {
   private carts = new Map<string, Cart>();
   private sessions = new Map<string, Session>();
   private phoneLinks = new Map<string, PhoneLink>();
+  private handledInboundIds: string[] = [];
 
   getCart(code: string): Cart | undefined {
     const cart = this.carts.get(code.toUpperCase());
@@ -78,6 +86,20 @@ class MemoryStore implements Store {
   savePhoneLink(link: PhoneLink): void {
     this.phoneLinks.set(link.userId, clone(link));
   }
+
+  findPhoneLinkByConversation(conversationId: string): PhoneLink | undefined {
+    return latestLink(
+      [...this.phoneLinks.values()].filter((link) => link.conversationId === conversationId),
+    );
+  }
+
+  hasHandledInbound(messageId: string): boolean {
+    return this.handledInboundIds.includes(messageId);
+  }
+
+  rememberInbound(messageId: string): void {
+    this.handledInboundIds = rememberId(this.handledInboundIds, messageId);
+  }
 }
 
 class FileStore implements Store {
@@ -91,9 +113,10 @@ class FileStore implements Store {
         carts: parsed.carts ?? {},
         sessions: parsed.sessions ?? {},
         phoneLinks: parsed.phoneLinks ?? {},
+        handledInboundIds: parsed.handledInboundIds ?? [],
       };
     } catch {
-      this.snapshot = { carts: {}, sessions: {}, phoneLinks: {} };
+      this.snapshot = { carts: {}, sessions: {}, phoneLinks: {}, handledInboundIds: [] };
     }
   }
 
@@ -131,11 +154,38 @@ class FileStore implements Store {
     this.persist();
   }
 
+  findPhoneLinkByConversation(conversationId: string): PhoneLink | undefined {
+    return latestLink(
+      Object.values(this.snapshot.phoneLinks).filter((link) => link.conversationId === conversationId),
+    );
+  }
+
+  hasHandledInbound(messageId: string): boolean {
+    return (this.snapshot.handledInboundIds ?? []).includes(messageId);
+  }
+
+  rememberInbound(messageId: string): void {
+    this.snapshot.handledInboundIds = rememberId(this.snapshot.handledInboundIds ?? [], messageId);
+    this.persist();
+  }
+
   private persist(): void {
     const temporary = `${this.filePath}.tmp`;
     writeFileSync(temporary, JSON.stringify(this.snapshot));
     renameSync(temporary, this.filePath);
   }
+}
+
+function latestLink(links: PhoneLink[]): PhoneLink | undefined {
+  return links.sort((left, right) => right.linkedAt.localeCompare(left.linkedAt))[0];
+}
+
+function rememberId(ids: string[], messageId: string): string[] {
+  if (ids.includes(messageId)) {
+    return ids;
+  }
+  const next = [...ids, messageId];
+  return next.length > HANDLED_INBOUND_CAP ? next.slice(next.length - HANDLED_INBOUND_CAP) : next;
 }
 
 function clone<T>(value: T): T {

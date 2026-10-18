@@ -1,6 +1,7 @@
 import type { InboundMessage, OutboundMessage } from "./channel.js";
 import { applyTurn } from "./conversation.js";
 import type { ExtractOptions } from "./extract-signals.js";
+import { cartForThread } from "./phone-link.js";
 import type { Store } from "./store.js";
 import type { Cart, Decision } from "./types.js";
 
@@ -21,6 +22,11 @@ export function createRuntime(deps: {
   const queues = new Map<string, Promise<void>>();
 
   async function processMessage(message: InboundMessage): Promise<void> {
+    if (deps.store.hasHandledInbound(message.id)) {
+      return;
+    }
+    // Claim the id before any await so a replay cannot send a second reply.
+    deps.store.rememberInbound(message.id);
     const result = await applyTurn({
       session: deps.store.getSession(message.conversationId) ?? null,
       conversationId: message.conversationId,
@@ -30,6 +36,10 @@ export function createRuntime(deps: {
       now: deps.now(),
       demoReminderMs: deps.demoReminderMs,
       loadCart: (code) => deps.store.getCart(code),
+      resolveCart: (conversationId) => {
+        const link = deps.store.findPhoneLinkByConversation(conversationId);
+        return cartForThread(deps.store.listCarts(), conversationId, link?.userId ?? null);
+      },
       ...(deps.extract ? { extract: deps.extract } : {}),
       markReading: (readingCart) => {
         deps.store.saveCart(readingCart);

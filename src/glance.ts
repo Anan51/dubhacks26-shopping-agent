@@ -13,6 +13,9 @@ export type GlanceDecision = {
   tradeInLaterCents: number;
   financingNowCents: number;
   financingLaterCents: number;
+  mathAction?: "sleep" | "unlock";
+  mathWaitMonths?: number;
+  mathSavingsCents?: number;
 };
 
 export type GlanceSignals = {
@@ -38,6 +41,16 @@ export type GlanceItem = {
   decision: GlanceDecision | null;
   signals: GlanceSignals;
   motiveSources: GlanceSources | null;
+  necessity?: "necessary" | "unnecessary" | null;
+  necessitySource?: string | null;
+  necessityReason?: string | null;
+  userImpulseScore?: number | null;
+  justificationGrade?: number | null;
+  gradeSource?: string | null;
+  gradeReason?: string | null;
+  purchaseScore?: number | null;
+  scoreBucket?: "free" | "soft" | "strict" | null;
+  scoreReason?: string | null;
 };
 
 export type LockGlance = "Marinating" | "Unlocked" | "In the Vault";
@@ -55,8 +68,26 @@ export function lockGlance(items: readonly GlanceItem[]): LockGlance {
 
 /** One line for a card. No explanation. */
 export function oneLineVerdict(item: GlanceItem, nowMs: number): string {
+  if (item.necessity === "necessary" && item.purchaseScore == null) {
+    return "Necessary buy";
+  }
+  if (item.purchaseScore != null && item.scoreBucket === "strict" && item.status === "vault") {
+    return `Score ${item.purchaseScore} · ${vaultLine(item.vaultUntil, nowMs)}`;
+  }
+  if (item.purchaseScore != null && item.scoreBucket === "soft" && item.status === "vault") {
+    return `Score ${item.purchaseScore} · optional pause`;
+  }
+  if (item.purchaseScore != null && item.scoreBucket === "soft") {
+    return `Score ${item.purchaseScore} · Sleep on it`;
+  }
+  if (item.purchaseScore != null && item.scoreBucket === "free") {
+    return `Score ${item.purchaseScore} · Buy now`;
+  }
   if (item.status === "vault") {
     return vaultLine(item.vaultUntil, nowMs);
+  }
+  if (item.userImpulseScore != null && item.purchaseScore == null && item.status === "locked") {
+    return `Impulse ${item.userImpulseScore} · need a reason`;
   }
   if (item.status === "unlocked") {
     return "Buy now";
@@ -78,15 +109,24 @@ export type BreakdownLine = {
 export function breakdownLines(item: GlanceItem): BreakdownLine[] {
   const decision = item.decision;
   const lines: BreakdownLine[] = [];
+  appendScoreLines(item, lines);
   if (!decision) {
-    lines.push({ label: "Verdict", value: "No read yet" });
+    if (lines.length === 0) {
+      lines.push({ label: "Verdict", value: "No read yet" });
+    }
     return lines;
   }
+  const scored = item.scoreBucket === "soft" || item.scoreBucket === "strict";
+  if (scored) {
+    lines.push({ label: "Alternative", value: alternativeGlance(decision) });
+  }
   const months = decision.waitMonths > 0 ? decision.waitMonths : 0;
-  lines.push({
-    label: "Wait",
-    value: decision.action === "sleep" && months > 0 ? `${months} months` : "Buy now",
-  });
+  if (!scored) {
+    lines.push({
+      label: "Wait",
+      value: decision.action === "sleep" && months > 0 ? `${months} months` : "Buy now",
+    });
+  }
   if (decision.action === "sleep" && decision.savingsCents > 0) {
     lines.push({ label: "Saved by waiting", value: formatUsd(decision.savingsCents) });
   }
@@ -98,7 +138,7 @@ export function breakdownLines(item: GlanceItem): BreakdownLine[] {
     label: "Financing",
     value: `${formatUsd(decision.financingNowCents)} owed, ${formatUsd(decision.financingLaterCents)} later. Example data.`,
   });
-  if (decision.offerName && decision.savingsCents > 0 && decision.action === "sleep") {
+  if (!scored && decision.offerName && decision.savingsCents > 0 && decision.action === "sleep") {
     lines.push({
       label: "Example offer",
       value: `Waiting for the ${decision.offerName} saves ${formatUsd(decision.savingsCents)}. Example data, not a current carrier deal.`,
@@ -128,6 +168,49 @@ export function breakdownLines(item: GlanceItem): BreakdownLine[] {
         : `${formatUsd(decision.costNowCents)} now, ${formatUsd(decision.costLaterCents)} if you wait`,
   });
   return lines;
+}
+
+function appendScoreLines(item: GlanceItem, lines: BreakdownLine[]): void {
+  if (item.necessity) {
+    const source = item.necessitySource ?? "keywords";
+    const reason = item.necessityReason ? `. ${item.necessityReason}` : "";
+    lines.push({ label: "Necessity", value: `${item.necessity} (${source})${reason}` });
+  }
+  if (item.userImpulseScore != null) {
+    lines.push({ label: "Impulse", value: `${item.userImpulseScore} (mock history)` });
+  }
+  if (item.justificationGrade != null) {
+    const signed = item.justificationGrade > 0 ? `+${item.justificationGrade}` : String(item.justificationGrade);
+    const because = item.gradeReason ? `. ${item.gradeReason}` : "";
+    lines.push({ label: "Grade", value: `${signed} (${item.gradeSource ?? "keywords"})${because}` });
+  }
+  if (item.purchaseScore != null && item.userImpulseScore != null && item.justificationGrade != null) {
+    const signed = item.justificationGrade > 0 ? `+${item.justificationGrade}` : String(item.justificationGrade);
+    lines.push({
+      label: "Purchase score",
+      value: `${item.purchaseScore} = ${item.userImpulseScore} + ${signed}`,
+    });
+  }
+  if (item.scoreBucket === "strict") {
+    lines.push({ label: "Time limit", value: "24 hours, required. Demo: skip 24 hours lifts it." });
+  } else if (item.scoreBucket === "soft") {
+    lines.push({ label: "Time limit", value: "Optional. Sleep on it is not required." });
+  } else if (item.scoreBucket === "free") {
+    lines.push({ label: "Time limit", value: "None. The bag is unlocked." });
+  }
+}
+
+function alternativeGlance(decision: GlanceDecision): string {
+  const months = decision.mathWaitMonths && decision.mathWaitMonths > 0 ? decision.mathWaitMonths : decision.waitMonths;
+  const savings = decision.mathSavingsCents && decision.mathSavingsCents > 0 ? decision.mathSavingsCents : decision.savingsCents;
+  if (decision.offerName && savings > 0) {
+    const wait = months > 0 ? `${months} months` : "a while";
+    return `Wait ${wait} for the ${decision.offerName}. Saves ${formatUsd(savings)}. Example data, not a current carrier deal.`;
+  }
+  if ((decision.mathAction === "sleep" || decision.action === "sleep") && savings > 0 && months > 0) {
+    return `Wait ${months} months. Saves ${formatUsd(savings)}.`;
+  }
+  return "Waiting does not cost less than buying now.";
 }
 
 function vaultLine(vaultUntil: string | null, nowMs: number): string {

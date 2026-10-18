@@ -50,8 +50,12 @@ describe("applyTurn", () => {
       loadCart: () => cart(),
     });
     assert.equal(result.cart?.decision?.action, "sleep");
-    assert.match(result.reply ?? "", /^Waiting /);
-    assert.match(result.reply ?? "", /Current phone broken: yes \(keywords\)/);
+    assert.equal(result.cart?.purchaseScore, 4);
+    assert.equal(result.cart?.scoreBucket, "free");
+    assert.equal(result.cart?.isUnlocked, true);
+    assert.match(result.reply ?? "", /Purchase score 4/);
+    assert.match(result.reply ?? "", /keywords/);
+    assert.match(result.cart?.explanation ?? "", /Current phone broken: yes \(keywords\)/);
     assert.equal(result.cart?.signalSource, "keywords");
   });
 

@@ -26,6 +26,7 @@ describe("apple pages", () => {
     assert.equal(shouldEngage(bag, ["example.com"]), true);
     assert.equal(shouldEngage("https://www.apple.com/", []), false);
     assert.equal(shouldEngage("http://127.0.0.1:4321/fallback", []), true);
+    assert.equal(shouldEngage("http://127.0.0.1:4321/fallback/cable", []), true);
     assert.equal(shouldEngage("http://localhost:4321/fallback", []), true);
     assert.equal(shouldEngage("http://127.0.0.1:4321/dev", []), false);
   });

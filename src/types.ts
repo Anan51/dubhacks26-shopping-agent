@@ -82,6 +82,15 @@ export type CartItem = {
 
 export type CartStatus = "locked" | "vault" | "unlocked";
 
+export type Necessity = "necessary" | "unnecessary";
+
+/** `free` lifts the lock. `soft` offers sleep. `strict` requires the vault. */
+export type ScoreBucket = "free" | "soft" | "strict";
+
+export type VaultMode = "enforced" | "soft";
+
+export type PersonaId = "impulsive" | "deliberate";
+
 /** What the extension shows when the checkout ping cannot land in a linked thread. */
 export type CheckoutPing = {
   delivered: boolean;
@@ -118,6 +127,25 @@ export type Cart = {
   lockEndsAt: string;
   /** When set and still in the future, the Apple bag and checkout stay in the Impulse Vault. */
   vaultUntil: string | null;
+  /** Enforced vaults ignore Unlock. A soft vault is the optional pause. */
+  vaultMode: VaultMode | null;
+  /** Bag classification. Necessary buys are not locked. */
+  necessity: Necessity | null;
+  necessitySource: SignalSource | null;
+  necessityReason: string | null;
+  /** Mock history persona. Unknown shoppers use the impulsive seed. */
+  personaId: PersonaId | null;
+  /** 1–5 from the mock history, before the justification grade. */
+  userImpulseScore: number | null;
+  /** -3..3. Null until the shopper replies. */
+  justificationGrade: number | null;
+  gradeSource: SignalSource | null;
+  gradeReason: string | null;
+  /** Impulse plus grade, clamped to 1–5. */
+  purchaseScore: number | null;
+  scoreBucket: ScoreBucket | null;
+  /** One line for the popup. The grade's short reason. */
+  scoreReason: string | null;
   /** Which parser produced the shopper signals used for the verdict. */
   signalSource: SignalSource | null;
   /** Per-field source for the motive signals that can move the verdict. */

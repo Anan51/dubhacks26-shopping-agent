@@ -1,9 +1,11 @@
-import { isVaultActive, sleepCart, unlockCart, VAULT_MS, withCartFacts } from "./carts.js";
+import { isEnforcedVault, sleepCart, unlockCart, VAULT_MS, withCartFacts } from "./carts.js";
 import { extractCartCode, extractSignals, pickShopperSignals, type ExtractOptions } from "./extract-signals.js";
 import { formatLongDate } from "./format.js";
+import { personaFor } from "./history.js";
 import { decide } from "./heuristic.js";
+import { applyPurchaseScore, gradeJustification, keywordGrade } from "./impulse.js";
 import { UPGRADE_PROMPT } from "./links.js";
-import { parseLinkCommand, threadUserId } from "./phone-link.js";
+import { justificationAsk, parseLinkCommand, threadUserId } from "./phone-link.js";
 import { phraseDecision } from "./phrase.js";
 import type { PhoneLink } from "./store.js";
 import { assertNever, type Cart, type ConversationContext, type Session } from "./types.js";
@@ -17,6 +19,8 @@ export type ApplyInput = {
   now: Date;
   demoReminderMs: number;
   loadCart: (code: string) => Cart | undefined;
+  /** Phone thread with no cart code in the text. Photon replies land here. */
+  resolveCart?: (conversationId: string) => Cart | undefined;
   extract?: ExtractOptions;
   /** Persist the cart while Grok is in flight so other pages can show it. */
   markReading?: (cart: Cart) => void;
@@ -90,7 +94,13 @@ export async function applyTurn(input: ApplyInput): Promise<ApplyResult> {
     session.step = "need_code";
   }
   if (!session.cartCode) {
-    return say(session, "Send the cart code from the Apple bag overlay, like: cart AB23CD.");
+    const resolved = input.resolveCart?.(input.conversationId);
+    if (resolved) {
+      session.cartCode = resolved.code;
+    }
+  }
+  if (!session.cartCode) {
+    return say(session, `I don't have your bag on this thread yet. Text the cart code, then answer: ${UPGRADE_PROMPT}`);
   }
 
   const loaded = input.loadCart(session.cartCode);
@@ -122,11 +132,11 @@ export async function applyTurn(input: ApplyInput): Promise<ApplyResult> {
 }
 
 function unlockTurn(session: Session, cart: Cart, now: Date): ApplyResult {
-  if (isVaultActive(cart, now)) {
+  if (isEnforcedVault(cart, now)) {
     const until = cart.vaultUntil ? formatLongDate(cart.vaultUntil) : "the saved time";
     return say(session, `This bag keeps marinating in the Vault until ${until}. Unlock stays on the overlay and waits until then.`, { cart });
   }
-  unlockCart(cart);
+  unlockCart(cart, now);
   session.step = "confirm";
   return say(session, "Unlock — Apple's own button works again. Simmer will not click it or place the order.", {
     cart,
@@ -149,13 +159,36 @@ async function sleepTurn(session: Session, cart: Cart, input: ApplyInput): Promi
 async function justifyTurn(session: Session, cart: Cart, input: ApplyInput): Promise<ApplyResult> {
   await fillDecision(session, cart, input);
   session.step = "confirm";
-  const explanation = cart.explanation ?? UPGRADE_PROMPT;
-  if (isVaultActive(cart, input.now) && cart.vaultUntil) {
-    return say(session, `${explanation}\n\nThis bag stays covered in the Vault until ${formatLongDate(cart.vaultUntil)}.`, {
-      cart,
-    });
+  if (cart.necessity === "necessary") {
+    return say(session, "This bag is a necessary buy. Checkout can proceed. Simmer will not click the button.", { cart });
   }
-  return say(session, explanation, { cart });
+  const spoken = withoutCartLabel(input.text);
+  if (!spoken || (cart.justificationGrade == null && keywordGrade(spoken).grade === 0 && !input.extract?.apiKey)) {
+    return say(session, justificationAsk(cart), { cart });
+  }
+  const useGrok = Boolean(input.extract?.apiKey);
+  if (useGrok) {
+    cart.reading = true;
+    input.markReading?.(cart);
+  }
+  let graded;
+  try {
+    graded = await gradeJustification(spoken, input.extract ?? {});
+  } finally {
+    if (useGrok) {
+      cart.reading = false;
+    }
+  }
+  if (cart.justificationGrade == null && graded.grade === 0) {
+    return say(session, justificationAsk(cart), { cart });
+  }
+  const impulse = cart.userImpulseScore ?? personaFor(cart.userId).impulseScore;
+  const scored = applyPurchaseScore(cart, graded, impulse, input.now, input.demoReminderMs);
+  return say(session, scored.reply, {
+    cart,
+    armReminder: scored.bucket === "strict",
+    disarmReminder: scored.bucket === "free",
+  });
 }
 
 async function fillDecision(session: Session, cart: Cart, input: ApplyInput): Promise<void> {

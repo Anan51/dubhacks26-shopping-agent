@@ -1,8 +1,13 @@
 import css from "./overlay.css?inline";
 
-import { bagOrFallback, interpretBag, isBlockedControl, type BagControl, type InterpretedBag } from "../../src/apple-bag.js";
+import { bagOrFallback } from "../../src/apple-bag.js";
 import { applePage, hostOptedOut, type ApplePage } from "../../src/sites.js";
+import { bagContentKey, bagReadAction, readPageBag, watchBagDom, type BagWatch, type PageBag } from "./bag-dom.js";
+import { deliverExtensionMessage, extensionContextAlive } from "./extension-context.js";
+import { installGate } from "./gate.js";
 import { mountOverlay, type OverlayModel } from "./overlay.js";
+
+let onContextDead = (): void => undefined;
 
 type Settings = {
   origin: string;
@@ -24,11 +29,15 @@ if (page) {
 }
 
 async function start(kind: ApplePage): Promise<void> {
+  let stopped = false;
+  onContextDead = () => {
+    stopped = true;
+  };
   const settings = await loadSettings();
-  if (hostOptedOut(location.hostname, settings.optOut)) {
+  if (stopped || !extensionContextAlive(chrome.runtime) || hostOptedOut(location.hostname, settings.optOut)) {
     return;
   }
-  const gate = installGate(kind);
+  const gate = installGate(document, kind);
   const host = document.createElement("div");
   host.id = "simmer-root";
   const shadow = host.attachShadow({ mode: "open" });
@@ -39,9 +48,30 @@ async function start(kind: ApplePage): Promise<void> {
 
   let code = "";
   let posting = false;
+  let postedKey: string | null = null;
+  let watching = false;
+  let quantity: number | null = null;
   let update = (_next: OverlayModel): void => undefined;
   let mounted = false;
-  let stopped = false;
+  let pollTimer = 0;
+  let fallbackTimer = 0;
+  let showBlock = false;
+  let bagWatch: BagWatch | null = null;
+  let pageObserver: MutationObserver | null = null;
+
+  const shutdown = () => {
+    if (stopped) {
+      return;
+    }
+    stopped = true;
+    window.clearInterval(pollTimer);
+    window.clearTimeout(fallbackTimer);
+    bagWatch?.disconnect();
+    pageObserver?.disconnect();
+    gate.stop();
+    host.remove();
+  };
+  onContextDead = shutdown;
 
   const actions = {
     unlock: () => {
@@ -72,31 +102,55 @@ async function start(kind: ApplePage): Promise<void> {
     if (!code || stopped) {
       return;
     }
-    const cart = await getJson(`/api/carts/${code}`);
-    const thread = await getJson(`/api/dev/messages?conversationId=${encodeURIComponent(`desk:cart-${code}`)}`);
+    const current = code;
+    const cart = await getJson(`/api/carts/${current}`);
+    const thread = await getJson(`/api/dev/messages?conversationId=${encodeURIComponent(`desk:cart-${current}`)}`);
+    if (current !== code || stopped) {
+      return;
+    }
     if (!isRecord(cart)) {
       show(emptyModel(settings, code, "Simmer can't reach the local server."));
       return;
     }
-    if (cart.isUnlocked === true && cart.status === "unlocked") {
-      stopped = true;
+    const unlocked = cart.isUnlocked === true && cart.status === "unlocked";
+    if (unlocked) {
+      showBlock = false;
       gate.lift();
-      host.remove();
+    } else {
+      showBlock = true;
+      gate.paint();
+    }
+    if (cart.necessity === "necessary") {
+      show(modelFrom(cart, thread, settings, null, quantity));
       return;
     }
-    show(modelFrom(cart, thread, settings, null));
-    gate.paint();
+    if (unlocked) {
+      shutdown();
+      return;
+    }
+    show(modelFrom(cart, thread, settings, null, quantity));
   };
 
-  const publish = async (interpreted: InterpretedBag) => {
-    if (code || posting) {
+  const publish = async (interpreted: PageBag) => {
+    if (posting) {
+      return;
+    }
+    // A cart already exists. Post again only when the bag line itself changed.
+    if (code && bagReadAction(postedKey, interpreted) !== "post") {
       return;
     }
     posting = true;
+    if (interpreted.quantity != null) {
+      quantity = interpreted.quantity;
+    }
     try {
       if (!interpreted.parsed && settings.cartCode && kind === "checkout") {
         code = settings.cartCode;
         await refresh();
+        return;
+      }
+      if (isAppleHost(location.hostname) && (!interpreted.parsed || interpreted.itemNames.length === 0)) {
+        show(emptyModel(settings, "------", "couldn't read bag"));
         return;
       }
       const bag = bagOrFallback(interpreted);
@@ -107,130 +161,114 @@ async function start(kind: ApplePage): Promise<void> {
         parsed: bag.parsed,
         pageHost: location.hostname,
       });
-      if (!isRecord(created) || typeof created.code !== "string") {
-        show(emptyModel(settings, "------", "Simmer can't reach the local server."));
+      if (stopped) {
         return;
       }
+      if (!isRecord(created) || typeof created.code !== "string") {
+        if (!code) {
+          show(emptyModel(settings, "------", "Simmer can't reach the local server."));
+        }
+        return;
+      }
+      const previous = code;
       code = created.code;
-      await rememberCart(code);
-      show(modelFrom(created, { turns: [] }, settings, null));
-      window.setInterval(() => {
-        void refresh();
-      }, 1000);
+      postedKey = bagContentKey(interpreted);
+      if (previous !== code) {
+        await rememberCart(code);
+      }
+      if (stopped) {
+        return;
+      }
+      if (created.isUnlocked === true && created.status === "unlocked") {
+        showBlock = false;
+        gate.lift();
+      } else {
+        showBlock = true;
+        gate.paint();
+      }
+      if (previous !== "" && previous === code) {
+        await refresh();
+      } else {
+        show(modelFrom(created, { turns: [] }, settings, null, quantity));
+      }
+      if (!watching) {
+        watching = true;
+        pollTimer = window.setInterval(() => {
+          if (stopped || !extensionContextAlive(chrome.runtime)) {
+            shutdown();
+            return;
+          }
+          void refresh();
+        }, 1000);
+      }
     } finally {
       posting = false;
     }
   };
 
-  const attempt = () => {
-    if (!document.body || code) {
+  // One initial read, then only when the bag area itself changes. The 1s timer polls lock state.
+  const readBagNow = () => {
+    if (!document.body || stopped || posting) {
       return;
     }
-    const interpreted = interpretBag(linesFrom(document.body));
-    if (interpreted.parsed) {
+    const interpreted = readPageBag(document.body);
+    if (interpreted.quantity != null) {
+      quantity = interpreted.quantity;
+    }
+    if (code) {
+      const action = bagReadAction(postedKey, interpreted);
+      switch (action) {
+        case "post":
+          void publish(interpreted);
+          return;
+        case "keep":
+          return;
+        default: {
+          const unreachable: never = action;
+          return unreachable;
+        }
+      }
+    }
+    if (interpreted.parsed && interpreted.itemNames.length > 0) {
       void publish(interpreted);
     }
   };
 
-  const observer = new MutationObserver(() => {
-    gate.paint();
-    attempt();
+  pageObserver = new MutationObserver(() => {
+    if (stopped) {
+      return;
+    }
+    if (showBlock) {
+      gate.paint();
+    }
+    if (bagWatch && !bagWatch.connected() && bagWatch.retarget()) {
+      readBagNow();
+    }
   });
   whenReady(() => {
-    observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
-    attempt();
+    bagWatch = watchBagDom(document, readBagNow);
+    pageObserver?.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    readBagNow();
   });
-  window.setTimeout(() => {
-    if (!code) {
-      void publish(interpretBag(document.body ? linesFrom(document.body) : []));
+  fallbackTimer = window.setTimeout(() => {
+    if (!code && !stopped) {
+      readBagNow();
     }
   }, 4000);
 }
 
-function installGate(kind: ApplePage): { paint: () => void; lift: () => void } {
-  // Lift only clears the block. It must never click, submit, or complete Apple's button.
-  let blocked = true;
-  const stop = (event: Event) => {
-    if (!blocked) {
-      return;
-    }
-    const control = controlFrom(event.target);
-    if (!control || !isBlockedControl(control, kind)) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
-  };
-  const stopSubmit = (event: Event) => {
-    if (!blocked || !(event instanceof SubmitEvent)) {
-      return;
-    }
-    const control = controlFrom(event.submitter);
-    if (!control || !isBlockedControl(control, kind)) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
-  };
-  window.addEventListener("click", stop, true);
-  window.addEventListener("pointerdown", stop, true);
-  window.addEventListener("submit", stopSubmit, true);
-  const paint = () => {
-    if (!document.body) {
-      return;
-    }
-    const nodes = document.querySelectorAll("button, a, input, apple-pay-button, [role='button']");
-    for (const node of nodes) {
-      if (!(node instanceof HTMLElement)) {
-        continue;
-      }
-      const control = controlFrom(node);
-      const mark = blocked && control !== null && isBlockedControl(control, kind);
-      if (mark) {
-        node.setAttribute("data-simmer-blocked", "1");
-        node.setAttribute("aria-disabled", "true");
-      } else if (node.hasAttribute("data-simmer-blocked")) {
-        node.removeAttribute("data-simmer-blocked");
-        node.removeAttribute("aria-disabled");
-      }
-    }
-  };
-  return {
-    paint,
-    lift: () => {
-      blocked = false;
-      paint();
-    },
-  };
+function isAppleHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return host === "apple.com" || host.endsWith(".apple.com");
 }
 
-function linesFrom(root: ParentNode): string[] {
-  const element = root instanceof HTMLElement ? root : document.body;
-  if (!element) {
-    return [];
-  }
-  return element.innerText
-    .split(/\n+/)
-    .map((line) => line.replace(/\s+/g, " ").trim())
-    .filter((line) => line.length > 0 && line.length < 180);
-}
-
-function controlFrom(target: EventTarget | null): BagControl | null {
-  const element = target instanceof Element ? target : null;
-  const control = element?.closest("button, a, input, apple-pay-button, [role='button']");
-  if (!(control instanceof HTMLElement)) {
-    return null;
-  }
-  return {
-    tag: control.tagName.toLowerCase(),
-    text: control.textContent?.replace(/\s+/g, " ").trim().slice(0, 80) ?? "",
-    ariaLabel: control.getAttribute("aria-label") ?? "",
-  };
-}
-
-function modelFrom(cart: Record<string, unknown>, thread: unknown, settings: Settings, error: string | null): OverlayModel {
+function modelFrom(
+  cart: Record<string, unknown>,
+  thread: unknown,
+  settings: Settings,
+  error: string | null,
+  quantity: number | null,
+): OverlayModel {
   const ping = isRecord(cart.lastPing) ? cart.lastPing : null;
   const turns = isRecord(thread) && Array.isArray(thread.turns) ? thread.turns.flatMap(turnFrom) : [];
   const names = Array.isArray(cart.items)
@@ -246,6 +284,7 @@ function modelFrom(cart: Record<string, unknown>, thread: unknown, settings: Set
     totalCents: typeof cart.totalCents === "number" ? cart.totalCents : 0,
     parsedFromPage: cart.parsedFromPage === true,
     itemNames: names,
+    quantity,
     explanation: typeof cart.explanation === "string" ? cart.explanation : null,
     decision: isRecord(cart.decision) ? decisionFrom(cart.decision) : null,
     signals: signalsFrom(cart.signals),
@@ -259,6 +298,16 @@ function modelFrom(cart: Record<string, unknown>, thread: unknown, settings: Set
     qrDataUrl: typeof ping?.qrDataUrl === "string" ? ping.qrDataUrl : null,
     turns,
     error,
+    necessity: cart.necessity === "necessary" || cart.necessity === "unnecessary" ? cart.necessity : null,
+    necessitySource: typeof cart.necessitySource === "string" ? cart.necessitySource : null,
+    necessityReason: typeof cart.necessityReason === "string" ? cart.necessityReason : null,
+    userImpulseScore: typeof cart.userImpulseScore === "number" ? cart.userImpulseScore : null,
+    justificationGrade: typeof cart.justificationGrade === "number" ? cart.justificationGrade : null,
+    gradeSource: typeof cart.gradeSource === "string" ? cart.gradeSource : null,
+    gradeReason: typeof cart.gradeReason === "string" ? cart.gradeReason : null,
+    purchaseScore: typeof cart.purchaseScore === "number" ? cart.purchaseScore : null,
+    scoreBucket: cart.scoreBucket === "free" || cart.scoreBucket === "soft" || cart.scoreBucket === "strict" ? cart.scoreBucket : null,
+    scoreReason: typeof cart.scoreReason === "string" ? cart.scoreReason : null,
   };
 }
 
@@ -344,6 +393,7 @@ function emptyModel(settings: Settings, code: string, error: string): OverlayMod
     totalCents: 0,
     parsedFromPage: false,
     itemNames: [],
+    quantity: null,
     explanation: null,
     decision: null,
     signals: {},
@@ -357,6 +407,16 @@ function emptyModel(settings: Settings, code: string, error: string): OverlayMod
     qrDataUrl: null,
     turns: [],
     error,
+    necessity: null,
+    necessitySource: null,
+    necessityReason: null,
+    userImpulseScore: null,
+    justificationGrade: null,
+    gradeSource: null,
+    gradeReason: null,
+    purchaseScore: null,
+    scoreBucket: null,
+    scoreReason: null,
   };
 }
 
@@ -392,11 +452,7 @@ function unwrap(value: unknown): unknown {
 }
 
 function message(payload: unknown): Promise<unknown> {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage(payload, (value) => {
-      resolve(chrome.runtime.lastError ? null : value);
-    });
-  });
+  return deliverExtensionMessage(chrome.runtime, payload, () => onContextDead());
 }
 
 function whenReady(run: () => void): void {
