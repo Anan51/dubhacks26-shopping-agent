@@ -3,6 +3,7 @@ import type { Request } from "express";
 import type { AccountDirectory, AccountUser } from "../auth/accounts.js";
 import { MemoryNote } from "../auth/user.js";
 import { isRecord } from "../record.js";
+import { regretSearchMaxDistance, withinMaxDistance } from "../scoring/searchDistance.js";
 import {
   waitForMemoryWrite,
   type BackboardClient,
@@ -47,6 +48,7 @@ export async function searchMemoriesForCurrentUser(
   const userId = authenticatedUserId(req);
   refuseClientScope(req, userId);
   const query = readSearchQuery(req);
+  const maxDistance = regretSearchMaxDistance();
   const user = await deps.directory.findById(userId);
   if (!user) {
     throw new ScopeError(401, "Authentication required.");
@@ -57,10 +59,10 @@ export async function searchMemoriesForCurrentUser(
     return owned;
   }
   // Backboard hits have no Simmer user id. Rank only Mongo rows owned by req.user.id.
-  // Usable hits that match none of those rows fall through to the token scan.
+  // Hits past the distance cutoff, or hits that match none of those rows, fall through to the token scan.
   if (deps.remote && user.backboardAssistantId) {
     const hits = await deps.client.searchMemories(user.backboardAssistantId, query, 10);
-    const ranked = rankOwnedByHits(owned, hits);
+    const ranked = rankOwnedByHits(owned, hits, maxDistance);
     if (ranked !== null && ranked.length > 0) {
       return ranked;
     }
@@ -163,9 +165,16 @@ function memoryContent(type: MemoryKind, text: string): string {
   }
 }
 
-/** Null when no hit has an id or content, so the caller can fall back to tokens. */
-function rankOwnedByHits(owned: readonly MemoryRecord[], hits: readonly MemorySearchHit[]): MemoryRecord[] | null {
-  const usable = hits.filter((hit) => (hit.id?.trim() ?? "").length > 0 || hit.content.trim().length > 0);
+/** Null when no close hit has an id or content, so the caller can fall back to tokens. */
+function rankOwnedByHits(
+  owned: readonly MemoryRecord[],
+  hits: readonly MemorySearchHit[],
+  maxDistance: number,
+): MemoryRecord[] | null {
+  const usable = hits.filter((hit) => {
+    const identifiable = (hit.id?.trim() ?? "").length > 0 || hit.content.trim().length > 0;
+    return identifiable && withinMaxDistance(hit.score, maxDistance);
+  });
   if (usable.length === 0) {
     return null;
   }

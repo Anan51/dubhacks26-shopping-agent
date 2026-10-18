@@ -176,11 +176,11 @@ describe("memory scope", () => {
     const headphones = record(USER, "regret", "Bought noise-cancelling headphones for a flight", "bb-phones");
     const cable = record(USER, "goal", "spare headphones audio cable", "bb-cable");
     const client = searchClient([
-      { id: "bb-monitors", content: "mentioned speakers", score: 0.93, createdAt: null },
+      { id: "bb-monitors", content: "mentioned speakers", score: 0.31, createdAt: null },
       {
         id: null,
         content: "Regret: Bought noise-cancelling headphones for a flight",
-        score: 0.81,
+        score: 0.52,
         createdAt: null,
       },
     ]);
@@ -205,7 +205,7 @@ describe("memory scope", () => {
       {
         id: "bb-phones",
         content: "Regret: Bought noise-cancelling headphones for a flight",
-        score: 0.88,
+        score: 0.4,
         createdAt: null,
       },
     ]);
@@ -225,7 +225,7 @@ describe("memory scope", () => {
     const adaMemory = record(USER, "regret", "Bought noise-cancelling headphones for a flight", "bb-ada");
     const byronMemory = record(OTHER, "regret", "headphones audio desk", "bb-byron");
     const client = searchClient([
-      { id: "bb-byron", content: "Regret: headphones audio desk", score: 0.99, createdAt: null },
+      { id: "bb-byron", content: "Regret: headphones audio desk", score: 0.2, createdAt: null },
       {
         id: "bb-ada",
         content: "Regret: Bought noise-cancelling headphones for a flight",
@@ -308,7 +308,7 @@ describe("memory scope", () => {
     const milk = record(USER, "goal", "milk and eggs", null);
     const other = record(OTHER, "regret", "someone else's phone note", "bb-other");
     const client = searchClient([
-      { id: "bb-other", content: "Regret: someone else's phone note", score: 0.99, createdAt: null },
+      { id: "bb-other", content: "Regret: someone else's phone note", score: 0.33, createdAt: null },
     ]);
     const found = await searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "phone" } }), {
       directory: directoryOfUsers([account(USER, "asst-ada"), account(OTHER, "asst-other")]),
@@ -366,7 +366,88 @@ describe("memory scope", () => {
     const filler = await searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "to my" } }), deps);
     assert.deepEqual(filler, []);
   });
+
+  it("returns no rows when every Backboard hit is past the distance cutoff", async () => {
+    const headphones = record(USER, "regret", "noise-cancelling headphones", "bb-phones");
+    const monitors = record(USER, "goal", "studio monitors", "bb-monitors");
+    const other = record(OTHER, "regret", "wool socks for winter", "bb-other");
+    const deps = {
+      directory: directoryOfUsers([account(USER, "asst-ada"), account(OTHER, "asst-other")]),
+      client: searchClient([
+        { id: "bb-phones", content: "Regret: noise-cancelling headphones", score: 0.91, createdAt: null },
+        { id: "bb-monitors", content: "Goal: studio monitors", score: 0.88, createdAt: null },
+        { id: "bb-other", content: "Regret: wool socks for winter", score: 0.05, createdAt: null },
+      ]),
+      index: listing([other, headphones, monitors]),
+      remote: true,
+    };
+    for (const query of ["wool socks", "kitchen blender"]) {
+      const found = await searchMemoriesForCurrentUser(request({ id: USER }, { body: { query } }), deps);
+      assert.deepEqual(found, []);
+    }
+  });
+
+  it("returns only the in-cutoff row when another hit is farther", async () => {
+    const headphones = record(USER, "regret", "noise-cancelling headphones", "bb-phones");
+    const monitors = record(USER, "goal", "studio monitors", "bb-monitors");
+    const other = record(OTHER, "regret", "studio monitors", "bb-other");
+    const deps = {
+      directory: directoryOfUsers([account(USER, "asst-ada"), account(OTHER, "asst-other")]),
+      index: listing([other, monitors, headphones]),
+      remote: true,
+    };
+    const found = await searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "headphones monitors" } }), {
+      ...deps,
+      client: searchClient([
+        { id: "bb-phones", content: "Regret: noise-cancelling headphones", score: 0.7, createdAt: null },
+        { id: "bb-monitors", content: "Goal: studio monitors", score: 0.71, createdAt: null },
+      ]),
+    });
+    assert.deepEqual(found, [headphones]);
+
+    const missingScore = await searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "headphones monitors" } }), {
+      ...deps,
+      client: searchClient([
+        { id: "bb-phones", content: "Regret: noise-cancelling headphones", score: null, createdAt: null },
+        { id: "bb-monitors", content: "Goal: studio monitors", score: 0.9, createdAt: null },
+      ]),
+    });
+    assert.deepEqual(missingScore, [headphones]);
+  });
+
+  it("honors REGRET_SEARCH_MAX_DISTANCE and still returns only owned rows", async () => {
+    const monitors = record(USER, "regret", "studio monitors", "bb-monitors");
+    const other = record(OTHER, "regret", "studio monitors", "bb-other");
+    const depsFor = (score: number) => ({
+      directory: directoryOfUsers([account(USER, "asst-ada"), account(OTHER, "asst-other")]),
+      client: searchClient([
+        { id: "bb-monitors", content: "Regret: studio monitors", score, createdAt: null },
+        { id: "bb-other", content: "Regret: studio monitors", score: 0.01, createdAt: null },
+      ]),
+      index: listing([other, monitors]),
+      remote: true,
+    });
+    const query = request({ id: USER }, { body: { query: "wool socks" } });
+
+    assert.deepEqual(await searchMemoriesForCurrentUser(query, depsFor(0.85)), []);
+    assert.deepEqual(await searchWithDistance("0.9", () => searchMemoriesForCurrentUser(query, depsFor(0.85))), [monitors]);
+    assert.deepEqual(await searchWithDistance("0.4", () => searchMemoriesForCurrentUser(query, depsFor(0.5))), []);
+    assert.deepEqual(await searchMemoriesForCurrentUser(query, depsFor(0.5)), [monitors]);
+  });
 });
+
+/** The search reads the cutoff before its first await, so the variable is restored before that promise settles. */
+function searchWithDistance<T>(distance: string, start: () => Promise<T>): Promise<T> {
+  const previous = process.env.REGRET_SEARCH_MAX_DISTANCE;
+  process.env.REGRET_SEARCH_MAX_DISTANCE = distance;
+  const pending = start();
+  if (previous === undefined) {
+    delete process.env.REGRET_SEARCH_MAX_DISTANCE;
+  } else {
+    process.env.REGRET_SEARCH_MAX_DISTANCE = previous;
+  }
+  return pending;
+}
 
 function request(user: { id: string }, extra: { query?: Request["query"]; body?: unknown; params?: Request["params"] } = {}): Request {
   return {
