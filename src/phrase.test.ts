@@ -43,6 +43,27 @@ describe("phraseDecision", () => {
     assert.match(text, /^Waiting for the example trade-in bundle saves about /);
     assert.match(text, new RegExp(formatUsd(decision.savingsCents).replace(/[$.]/g, "\\$&")));
     assert.match(text, /not a current T-Mobile or carrier deal/);
+    assert.ok(decision.savingsCents > 0);
+    assert.match(text, /\$186\.67/);
+  });
+
+  it("does not mention an example offer when none beats buying now", () => {
+    const shopper = signals({ owedCents: 0, deviceAgeMonths: 24, problemText: "" });
+    const decision = decide(shopper, [
+      {
+        id: "example-tiny",
+        name: "example tiny promo",
+        savingCents: 100,
+        monthsFromNow: 2,
+        windowLabel: "example window",
+      },
+    ]);
+    const text = phraseDecision(decision, shopper, null);
+    assert.equal(decision.offerName, null);
+    assert.equal(decision.savingsCents <= 0, true);
+    assert.doesNotMatch(text, /example tiny promo/);
+    assert.doesNotMatch(text, /saves about \$0/);
+    assert.match(text, /^Unlock /);
   });
 
   it("leads with Unlock when a broken phone is needed now", () => {

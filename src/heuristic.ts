@@ -43,10 +43,11 @@ const TRADE_IN_ANCHORS: readonly { months: number; cents: number }[] = [
  * 1. need + a broken current phone + high urgency unlocks now, even when waiting saves money.
  * 2. A want with low urgency sleeps, even when waiting does not save money.
  * 3. Otherwise the best of trade-in/financing and the example offer catalog.
- *    An example offer can sleep the call when its window beats buying now.
+ *    Surface an example offer only when its total cost is strictly below buying now.
+ *    If none is, leave the offer fields empty so the UI does not show a $0 or negative saving.
  *    Those offers are synthetic. They are not live carrier deals.
  */
-export function decide(signals: Signals): Decision {
+export function decide(signals: Signals, offers: readonly ExampleOffer[] = EXAMPLE_OFFERS): Decision {
   const newDeviceCents = signals.phonePriceCents;
   const tradeInNowCents = tradeInValueCents(signals.deviceAgeMonths, signals.condition);
   const financingNowCents = Math.max(0, signals.owedCents);
@@ -63,7 +64,7 @@ export function decide(signals: Signals): Decision {
     }
   }
   const financingAction: VerdictAction = bestSavings > 0 ? "sleep" : "unlock";
-  const offerPick = bestExampleOffer(signals, newDeviceCents, costNowCents, financingNowCents, bestSavings);
+  const offerPick = bestExampleOffer(offers, signals, newDeviceCents, costNowCents, financingNowCents, bestSavings);
   const moneySleep = offerPick !== null || financingAction === "sleep";
   const mathAction: VerdictAction = moneySleep ? "sleep" : "unlock";
   const effect = motiveEffect(signals);
@@ -98,6 +99,7 @@ export function decide(signals: Signals): Decision {
 }
 
 function bestExampleOffer(
+  offers: readonly ExampleOffer[],
   signals: Signals,
   newDeviceCents: number,
   costNowCents: number,
@@ -105,13 +107,14 @@ function bestExampleOffer(
   financingSavingsCents: number,
 ): { offer: ExampleOffer; netSavingsCents: number; quote: Quote } | null {
   let picked: { offer: ExampleOffer; netSavingsCents: number; quote: Quote } | null = null;
-  for (const offer of EXAMPLE_OFFERS) {
-    if (offer.monthsFromNow < 1 || offer.monthsFromNow > MAX_WAIT_MONTHS) {
+  for (const offer of offers) {
+    if (offer.monthsFromNow < 1 || offer.monthsFromNow > MAX_WAIT_MONTHS || offer.savingCents <= 0) {
       continue;
     }
     const quote = quoteAt(signals, newDeviceCents, costNowCents, financingNowCents, offer.monthsFromNow);
-    const netSavingsCents = quote.savingsCents + offer.savingCents;
-    if (netSavingsCents <= financingSavingsCents || netSavingsCents <= 0) {
+    const costWithOffer = quote.costLaterCents - offer.savingCents;
+    const netSavingsCents = costNowCents - costWithOffer;
+    if (netSavingsCents <= 0 || netSavingsCents <= financingSavingsCents) {
       continue;
     }
     if (!picked || netSavingsCents > picked.netSavingsCents) {

@@ -50,16 +50,30 @@ describe("decide", () => {
     assert.equal(MONTHLY_PAYMENT_CENTS, 3_500);
   });
 
-  it("sleeps for an example offer when trade-in decay alone does not save money", () => {
-    const decision = decide(signals({ owedCents: 0, deviceAgeMonths: 24 }));
-    assert.equal(decision.financingAction, "unlock");
-    assert.ok(decision.financingSavingsCents <= 0);
-    assert.equal(decision.action, "sleep");
-    assert.equal(decision.signalEffect, "math");
-    assert.equal(decision.offerId, "example-trade-in-bundle");
-    assert.equal(decision.offerName, "example trade-in bundle");
-    assert.equal(decision.offerMonthsFromNow, 2);
-    assert.equal(decision.savingsCents, 18_667);
+  it("shows an example offer only when waiting for it costs less than buying now", () => {
+    const shown = decide(signals({ owedCents: 0, deviceAgeMonths: 24 }));
+    assert.equal(shown.financingAction, "unlock");
+    assert.ok(shown.financingSavingsCents <= 0);
+    assert.equal(shown.action, "sleep");
+    assert.equal(shown.signalEffect, "math");
+    assert.equal(shown.offerId, "example-trade-in-bundle");
+    assert.equal(shown.offerName, "example trade-in bundle");
+    assert.ok(shown.savingsCents > 0);
+    assert.equal(shown.savingsCents, 18_667);
+
+    const hidden = decide(signals({ owedCents: 0, deviceAgeMonths: 24 }), [
+      {
+        id: "example-tiny",
+        name: "example tiny promo",
+        savingCents: 100,
+        monthsFromNow: 2,
+        windowLabel: "example window, about 2 months from today",
+      },
+    ]);
+    assert.equal(hidden.offerId, null);
+    assert.equal(hidden.offerName, null);
+    assert.equal(hidden.offerSavingCents, 0);
+    assert.equal(hidden.action, "unlock");
   });
 
   it("unlocks a needed broken phone even when waiting saves money", () => {

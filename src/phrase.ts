@@ -13,8 +13,8 @@ export function phraseDecision(
   const lead = verdictLead(decision);
   const numbers = `Buying now is ${formatUsd(decision.costNowCents)} (the ${formatUsd(decision.newDeviceCents)} bag, plus ${formatUsd(decision.financingNowCents)} still owed, minus ${formatUsd(decision.tradeInNowCents)} trade-in). In ${decision.mathWaitMonths || decision.waitMonths || 0} months it is ${formatUsd(decision.costLaterCents)}, with trade-in at ${formatUsd(decision.tradeInLaterCents)} and ${formatUsd(decision.financingLaterCents)} left on the old phone if you keep paying ${formatUsd(MONTHLY_PAYMENT_CENTS)} a month.`;
   const said = signals.reasonText.length > 0 ? `You said "${signals.reasonText}".` : signals.problemText.length > 0 ? `You said "${signals.problemText}".` : "";
-  const offerNote = decision.offerName
-    ? `${decision.offerName} is example data, not a current T-Mobile or carrier deal.`
+  const offerNote = showExampleOffer(decision)
+    ? `${decision.offerName} is example data, not a current T-Mobile or carrier deal. Waiting for it saves ${formatUsd(decision.savingsCents)} versus buying now.`
     : "";
   return [lead, numbers, said, signalReport(decision, signals, source, motiveSources), offerNote, "Trade-in values and the $35 financing are example data, not a carrier quote."].filter((part) => part.length > 0).join("\n\n");
 }
@@ -63,9 +63,13 @@ function verdictLead(decision: Decision): string {
   }
 }
 
+function showExampleOffer(decision: Decision): boolean {
+  return decision.offerName !== null && decision.savingsCents > 0;
+}
+
 function mathLead(decision: Decision): string {
-  if (decision.action === "sleep" && decision.offerName) {
-    return `Waiting for the ${decision.offerName} saves about ${formatUsd(decision.savingsCents)}. Sleep on it?`;
+  if (decision.action === "sleep" && showExampleOffer(decision)) {
+    return `Waiting for the ${decision.offerName} saves about ${formatUsd(decision.savingsCents)}. Sleep on it? Example data, not a current carrier deal.`;
   }
   switch (decision.action) {
     case "sleep":
