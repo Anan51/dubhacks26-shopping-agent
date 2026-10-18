@@ -324,6 +324,10 @@ export function createApp(deps: AppDeps): RunningApp {
   });
 
   app.post("/api/carts/:code/skip-vault", (req, res) => {
+    if (!demoReplyOpen(env)) {
+      res.status(403).json({ error: "Not available." });
+      return;
+    }
     const cart = loadCart(req.params.code);
     if (!cart) {
       res.status(404).json({ error: "Cart not found." });

@@ -79,6 +79,10 @@ describe("dev routes", () => {
       assert.equal(messages.status, 200);
       const demoOff = await post(locked.base, "/api/dev/reply", { code: heldCode, text: "hello" });
       assert.equal(demoOff.status, 403);
+      const skipOff = await post(locked.base, `/api/carts/${heldCode}/skip-vault`, {});
+      assert.equal(skipOff.status, 403);
+      const skipProduction = await post(production.base, `/api/carts/${prodCode}/skip-vault`, {});
+      assert.equal(skipProduction.status, 403);
       const demoOn = await listen({ NODE_ENV: "test", WAITMATE_DEMO: "1" });
       try {
         const made = await post(demoOn.base, "/api/carts", bag);
@@ -89,6 +93,15 @@ describe("dev routes", () => {
         assert.equal(body.replied, true);
         assert.equal(body.isUnlocked, false);
         assert.match(body.advice ?? "", /^(Buy|Wait|Skip)\./);
+        const skipped = await post(demoOn.base, `/api/carts/${demoCode}/skip-vault`, {});
+        assert.equal(skipped.status, 200);
+        const prodDemo = await listen({ NODE_ENV: "production", WAITMATE_DEMO: "1" });
+        try {
+          const skipFlag = await post(prodDemo.base, `/api/carts/${demoCode}/skip-vault`, {});
+          assert.equal(skipFlag.status, 403);
+        } finally {
+          await prodDemo.close();
+        }
       } finally {
         await demoOn.close();
       }

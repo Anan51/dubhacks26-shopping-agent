@@ -75,11 +75,11 @@ async function start(site: StoreAdapter): Promise<void> {
     sleep: () => {
       void post(`/api/carts/${code}/sleep`).then(() => refresh());
     },
-    skipVault: () => {
-      void post(`/api/carts/${code}/skip-vault`).then(() => refresh());
-    },
     ...(import.meta.env.VITE_SIMMER_DEMO === "1"
       ? {
+          skipVault: () => {
+            void post(`/api/carts/${code}/skip-vault`).then(() => refresh());
+          },
           demoReply: () => {
             void post("/api/dev/reply", { code, text: "simmer-demo-reply" }).then(() => refresh());
           },
