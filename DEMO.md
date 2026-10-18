@@ -18,18 +18,21 @@ The extension only matches the Apple bag, Apple checkout hosts, and `http://127.
 
 Stay signed out. Do not enter a card. Do not go past the checkout entry.
 
+These two replies use the **keyword** fallback. Grok runs only when `XAI_API_KEY` is set. With the key empty, Why and the desk say `keywords`.
+
 1. Open `http://127.0.0.1:4321/fallback`. If apple.com loads, you can use a signed-out bag instead: add one item, stop on the bag.
-2. The overlay says **Marinating**. Check Out and Apple Pay do nothing. The Why panel names the **example trade-in bundle**, the dollar saving, and says it is example data, not a current carrier deal. The trade-in curve is labeled example data.
-3. Note the cart code and the line `Text this once: link user-...`.
-4. Open `http://127.0.0.1:4321/dev?cart=THATCODE`. Click **Simulate linked ping**. The stub thread gets `What's making you want to upgrade?` If you skip the link, the overlay keeps an `sms:` link and a QR code instead.
-5. Back on the bag, in the box under **What's making you want to upgrade?**, send:
+2. A corner card says **Marinating**, shows a countdown, **Unlock**, and **Why**. Check Out and Apple Pay do nothing. The long read is not on the page until you open Why.
+3. Click the Simmer toolbar icon. The popup header says **Marinating**. The card is the bag: name, price, and one line such as `Wait ~2 mo, save ~$557`. Click that card. The breakdown shows the wait, the dollars saved, trade-in decay, financing, and the example trade-in bundle only if waiting for it costs less than buying now. That offer line says example data, not a current carrier deal.
+4. Open `http://127.0.0.1:4321/dev`. The cart dropdown has the same bag. Click **Simulate linked ping**. The stub thread gets `What's making you want to upgrade?` If you skip the link, open **Why** on the bag: the `sms:` link is there.
+5. On the bag, click **Why**. In the box under **What's making you want to upgrade?**, send:
    `cracked screen, battery dies by 3pm, I need it for work tomorrow`
-6. Why now starts with **Unlock**. It lists need, high urgency, and a broken phone, each sourced to keywords, and says the price math would have slept.
+6. The verdict flips to Unlock. Open the toolbar popup: that card's line is **Buy now**. Why lists need, high urgency, and a broken phone, each marked `keywords`, and the desk reply starts with **Unlock**. The price math would have slept. Check Out is still blocked. The corner card stays **Marinating** with the countdown until you vault or unlock.
 7. Send:
    `the new color looks nice`
-8. Why now says this is a want with low urgency and **Sleep on it**.
-9. Click **Why**, then **Sleep on it**. The overlay becomes **In the Vault**, names the hours left, and still shows **Unlock**. Check Out is still blocked. Nothing is purchased. The toolbar popup lists the same bag as a short card. Click the card for the breakdown.
-10. Refresh the desk. It shows the verdict, trade-in and financing numbers, each signal with its source, and the example offer with its saving.
+8. The verdict is Sleep. Why shows want and low urgency, marked `keywords`.
+9. In that Why panel, click **Sleep on it**. The corner card and the popup header say **In the Vault**. The popup card says `Vault · 24h left` (or the hours remaining). **Unlock** stays visible. Check Out stays blocked. Nothing is purchased.
+10. Open Why and click **Demo: skip 24 hours**. The vault time lifts and the bag is Marinating again. Then click **Unlock**. The card goes away and Apple's button works. Simmer does not click it. The page result appears only after you press Check Out yourself.
+11. Refresh the desk. It shows the verdict, trade-in and financing numbers, each signal with its source, and the example offer when that offer beats buying now.
 
 To show opt-out: extension options, add `127.0.0.1` (or `apple.com`), save, reload the bag. The overlay stays off and Check Out works again. Remove the line and reload to turn Simmer back on.
 
@@ -39,9 +42,9 @@ To show opt-out: extension options, add `127.0.0.1` (or `apple.com`), save, relo
 | --- | --- |
 | apple.com will not load | `http://127.0.0.1:4321/fallback` — example phone, $1,200, same extension |
 | Bag text cannot be read | Example $1,200 phone, labeled on the overlay |
-| No phone linked, or the send fails | `sms:` link and QR code on the overlay. The body is `Hey Simmer, cart CODE` |
+| No phone linked, or the send fails | `sms:` link inside Why. The QR is on the desk. The body is `Hey Simmer, cart CODE` |
 | No Photon key | Desk stub at `/dev`. Same agent as the live adapter |
-| No `XAI_API_KEY` | Keyword parsing. The Why panel says keywords |
+| No `XAI_API_KEY` | Keyword parsing for both scripted replies. Why and the desk say `keywords`. Grok runs only when the key is set |
 
 ## Known limitations
 
