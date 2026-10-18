@@ -1,7 +1,9 @@
 import { toDataURL } from "qrcode";
 
 import { formatUsd } from "./format.js";
+import { capItemName, cartItemLines, postedItemNames, readHiddenItemCount } from "./item-name.js";
 import { prefilledText, textSimmerLink, UPGRADE_PROMPT } from "./links.js";
+import { mainItemName } from "./scoring/cartReading.js";
 import type { PhoneLink, Store } from "./store.js";
 import type { Cart, CheckoutPing } from "./types.js";
 
@@ -29,13 +31,51 @@ export function threadUserId(conversationId: string): string {
 }
 
 export function checkoutPingText(cart: Cart): string {
-  return `Simmer paused your ${formatUsd(cart.totalCents)} checkout. Cart ${cart.code}. ${UPGRADE_PROMPT}`;
+  return `Simmer paused your ${bagAskLabel(cart)} (${formatUsd(cart.totalCents)}) checkout. Cart ${cart.code}. ${UPGRADE_PROMPT}`;
 }
 
-/** Inbound ask. Names this bag so it is not the same line as every other cart. */
+/** Inbound ask. Names this bag, including titles the card leaves as "+k more". */
 export function justificationAsk(cart: Cart): string {
-  const name = cart.items[0]?.name ?? "Your bag";
-  return `${name} (${formatUsd(cart.totalCents)}) is marinating. ${UPGRADE_PROMPT}`;
+  return `${bagAskLabel(cart)} (${formatUsd(cart.totalCents)}) is marinating. ${UPGRADE_PROMPT}`;
+}
+
+/**
+ * Lead item plus the card's "+k more" suffix.
+ * A mixed bag leads with the main item. k counts every other distinct title,
+ * including titles the cart stored only as hiddenItemCount.
+ */
+function bagAskLabel(cart: Cart): string {
+  const names = cart.items.map((item) => item.name);
+  const known = postedItemNames(names, Number.MAX_SAFE_INTEGER);
+  const lines = cartItemLines(names);
+  const hidden = hiddenTitleCount(cart);
+  const extraHidden = hidden > lines.more ? hidden - lines.more : 0;
+  const total = known.length + extraHidden;
+  const lead = askLead(cart, known);
+  const others = total - (known.includes(lead) ? 1 : 0);
+  if (others > 0) {
+    return `${lead} +${others} more`;
+  }
+  return lead;
+}
+
+function askLead(cart: Cart, known: readonly string[]): string {
+  if (known.length === 0) {
+    return "Your bag";
+  }
+  const chosen = capItemName(mainItemName(cart));
+  if (chosen && known.includes(chosen)) {
+    return chosen;
+  }
+  return known[0] ?? "Your bag";
+}
+
+function hiddenTitleCount(cart: Cart): number {
+  const record: unknown = cart;
+  if (typeof record !== "object" || record === null || !("hiddenItemCount" in record)) {
+    return 0;
+  }
+  return readHiddenItemCount(record.hiddenItemCount);
 }
 
 /** Latest unnecessary bag for this thread. A necessary buy is not waiting on a reason. */
