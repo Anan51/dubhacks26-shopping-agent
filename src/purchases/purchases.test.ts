@@ -19,7 +19,7 @@ import { PurchaseRecord } from "./model.js";
 import { createPurchaseRouter } from "./routes.js";
 import { hasRegrettedPurchase, purchaseVoteLine, recordUnlockedPurchase } from "./service.js";
 
-const SECRET = "purchase-test-secret";
+const SECRET = "purchase-test-secret".padEnd(32, "x");
 let base = "";
 
 describe("purchase feedback", () => {

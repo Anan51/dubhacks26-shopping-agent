@@ -1,6 +1,8 @@
 import type { NextFunction, Request, Response } from "express";
 import { SignJWT, jwtVerify } from "jose";
 
+import { requireJwtSecret } from "./config.js";
+
 export type AuthPrincipal = {
   id: string;
   email: string;
@@ -106,6 +108,7 @@ export function setSessionCookie(res: Response, token: string): void {
 }
 
 export function clearSessionCookie(res: Response): void {
+  // Path, SameSite, Secure, and HttpOnly must match setSessionCookie or the browser keeps the old cookie.
   res.clearCookie(SESSION_COOKIE, sessionCookieOptions());
 }
 
@@ -126,5 +129,6 @@ function sessionCookieOptions(maxAge?: number): {
 }
 
 function key(secret: string): Uint8Array {
+  requireJwtSecret(secret);
   return new TextEncoder().encode(secret);
 }

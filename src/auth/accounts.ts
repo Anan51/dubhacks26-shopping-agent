@@ -64,10 +64,14 @@ export async function signUp(directory: AccountDirectory, input: { email: string
   }
 }
 
+/** Same argon2id parameters as hashPassword, so an unknown email still pays a verify. */
+const DUMMY_PASSWORD_HASH =
+  "$argon2id$v=19$m=19456,p=1,t=2$58DJJV552ep5b0R8DthsDA$jIUPCIOoV4TtoKsI3K1nOVC9gjKlGVu4QLg5EZQvrVo";
+
 export async function logIn(directory: AccountDirectory, input: { email: string; password: string }): Promise<AccountUser> {
   const email = normalizeEmail(input.email);
   const user = email ? await directory.findByEmail(email) : null;
-  const matches = user ? await verifyPassword(input.password, user.passwordHash) : false;
+  const matches = await verifyPassword(input.password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
   if (!user || !matches) {
     throw new AccountError(401, "Invalid email or password.");
   }

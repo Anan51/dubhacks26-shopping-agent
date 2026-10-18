@@ -97,11 +97,11 @@ function createAuthRouter(deps: AuthRouteDeps): Router {
   });
 
   router.post("/logout", (_req, res) => {
-    const secret = openAuth(deps, res);
-    if (!secret) {
+    if (!deps.jwtSecret) {
+      res.status(503).json({ error: deps.unavailableMessage() });
       return;
     }
-    // Clears the cookie only. The 7-day JWT is not revoked; a jti denylist is the follow-up.
+    // Clears the cookie without a Mongo connection. The 7-day JWT is not revoked; a jti denylist is the follow-up.
     clearSessionCookie(res);
     res.json({ ok: true });
   });
