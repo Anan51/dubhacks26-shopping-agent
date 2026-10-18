@@ -140,8 +140,8 @@ export const REGRET_SEARCH_TIMEOUT_MS = 3_500;
  * Backboard's search score is a distance: 0 is an identical memory.
  * After the category gate, a numeric score counts at or under 0.7,
  * and a distance around 0.88 or higher does not.
- * The 0.578 Pixel query is under 0.7, but `Pixel 9` is `other` and
- * the iPhone regret is `phone`, so the category gate drops it first.
+ * A same-item phone query scored about 0.44 and a Pixel query scored 0.578.
+ * Pixel 9 keywords to phone, so that query matches an iPhone regret and 0.7 keeps it.
  */
 export const DEFAULT_REGRET_SEARCH_MAX_DISTANCE = 0.7;
 
@@ -216,26 +216,32 @@ export async function computeImpulseScore(
 const NAME_STOPWORDS = new Set(["a", "an", "the", "and", "or", "of", "for", "to", "in", "on", "with", "from", "by", "at"]);
 
 /**
- * Sum of closeness for regret hits in the same product category as the bag.
- * Category equality is the first gate. Two "other" names only count when they
- * share a token, because unrecognized products all land in that bucket.
+ * Sum of closeness for regret hits that match this bag.
+ * Callers pass the bag category. The cart path passes `categoryForItem(item)`.
+ * A blank category falls back to that same mapping. It does not override the
+ * name with a category the cart never stored.
+ * A real category matches when the saved vote category or `categoryForItem`
+ * of the memory subject equals the bag category. "other" is not a category
+ * match. An "other" bag counts only when the names share a token.
  * The score is a distance, so it is only a second guard: a hit counts when
  * the distance is at most the maximum. A cross-category hit can still be close.
  * A missing score counts as one hit. Closeness is 1 minus the distance, so a
  * closer hit weighs more. Non-regret memories add nothing.
  */
-function similarRegretWeight(hits: readonly MemorySearchHit[], maxDistance: number, bagItem: string): number {
-  const bagCategory = categoryForItem(bagItem);
+function similarRegretWeight(
+  hits: readonly MemorySearchHit[],
+  maxDistance: number,
+  bagItem: string,
+  bagCategory: string,
+): number {
+  const supplied = bagCategory.trim().toLowerCase();
+  const category = supplied.length > 0 ? supplied : categoryForItem(bagItem);
   let weight = 0;
   for (const hit of hits) {
     if (!isRegretContent(hit.content)) {
       continue;
     }
-    const memoryCategory = categoryOfMemory(hit.content);
-    if (memoryCategory !== bagCategory) {
-      continue;
-    }
-    if (bagCategory === "other" && memoryCategory === "other" && !itemNamesOverlap(bagItem, memorySubject(hit.content))) {
+    if (!regretMatchesBag(category, bagItem, hit.content)) {
       continue;
     }
     if (!withinMaxDistance(hit.score, maxDistance)) {
@@ -247,16 +253,46 @@ function similarRegretWeight(hits: readonly MemorySearchHit[], maxDistance: numb
 }
 
 /**
+ * "other" is the catch-all, so it is not a category match. Two unrecognized
+ * names count only when they share a token. A real category matches when the
+ * saved vote category or `categoryForItem` of the subject equals the bag.
+ * A Pixel 9 bag keywords to phone, so it lines up with an iPhone regret.
+ */
+function regretMatchesBag(bagCategory: string, bagItem: string, content: string): boolean {
+  const subject = memorySubject(content);
+  if (bagCategory === "other") return itemNamesOverlap(bagItem, subject);
+  return categoryOfMemory(content) === bagCategory || categoryForItem(subject) === bagCategory;
+}
+
+/**
  * Search hits return content and a score, not metadata. The score is a
  * distance, where 0 is identical. A vote memory is already
- * `regretted purchase: {item} ({category}, {price})` from purchaseVoteLine,
- * so the item name is taken from that text and mapped with categoryForItem,
- * the same function used for the bag. A `Regret:` line with no vote shape is
- * mapped from its text. A hit counts only when the two categories are equal.
- * When both are "other", the names also have to share a meaningful token.
+ * `regretted purchase: {item} ({category}, {price})` from purchaseVoteLine.
+ * The category inside those parentheses, the token before the first comma,
+ * is used when it is present. An empty category, or a `Regret:` line with no
+ * vote shape, is mapped with categoryForItem from its subject.
  */
 function categoryOfMemory(content: string): string {
+  const recorded = recordedVoteCategory(content);
+  if (recorded) {
+    return recorded;
+  }
   return categoryForItem(memorySubject(content));
+}
+
+/** Category written by purchaseVoteLine, or null when the vote shape is absent. */
+function recordedVoteCategory(content: string): string | null {
+  const match = content.trim().match(/^regretted purchase:\s*.+\(([^)]*)\)\s*$/i);
+  const inside = match?.[1];
+  if (inside == null) {
+    return null;
+  }
+  const comma = inside.indexOf(",");
+  if (comma < 0) {
+    return null;
+  }
+  const category = inside.slice(0, comma).trim().toLowerCase();
+  return category.length > 0 ? category : null;
 }
 
 function itemNamesOverlap(bagItem: string, rememberedItem: string): boolean {
@@ -316,7 +352,7 @@ async function searchRegretWeight(
       REGRET_SEARCH_LIMIT,
       options?.searchTimeoutMs ?? REGRET_SEARCH_TIMEOUT_MS,
     );
-    return similarRegretWeight(hits, regretSearchMaxDistance(), input.item);
+    return similarRegretWeight(hits, regretSearchMaxDistance(), input.item, input.category);
   } catch {
     return 0;
   }
