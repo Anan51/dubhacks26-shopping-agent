@@ -3,7 +3,13 @@ import mongoose from "mongoose";
 import { readAccountConfig } from "../auth/config.js";
 import { User } from "../auth/user.js";
 import type { BackboardClient, MemorySearchHit } from "../memory/backboard.js";
-import { getBudgetProfile, getSavedGoals, type BudgetProfile, type SavedGoal } from "../purchases/service.js";
+import {
+  categoryForItem,
+  getBudgetProfile,
+  getSavedGoals,
+  type BudgetProfile,
+  type SavedGoal,
+} from "../purchases/service.js";
 import { clampImpulseScale } from "./lockBand.js";
 
 export type ImpulseItem = {
@@ -124,22 +130,31 @@ export type ImpulseScoreOptions = {
 
 /** Enough hits to reach the similar-regret cap without a long wait. */
 export const REGRET_SEARCH_LIMIT = 5;
-const REGRET_SEARCH_TIMEOUT_MS = 1_200;
-/** Under a known relevant match (0.615) and above likely noise. */
-export const DEFAULT_REGRET_SEARCH_MIN_SCORE = 0.5;
+/**
+ * Live search often takes longer than 1.2s, so a real match used to time out
+ * and leave the score at 4.5. 3.5s covers that. A timeout still returns no hits.
+ * The search stays on the cart response: the score is part of the reply.
+ */
+export const REGRET_SEARCH_TIMEOUT_MS = 3_500;
+/**
+ * Backboard's search score is a distance: 0 is an identical memory.
+ * A same-item phone query scored about 0.44 and a Pixel scored 0.578.
+ * 0.7 keeps matches from about 0.44 through 0.62 and drops distances around 0.88 and higher.
+ */
+export const DEFAULT_REGRET_SEARCH_MAX_DISTANCE = 0.7;
 
 /**
- * Similarity floor for Backboard search hits. Unset or outside [0, 1] uses 0.5.
+ * Maximum distance for a Backboard search hit. Unset or outside [0, 1] uses 0.7.
  * A hit with no numeric score is not rejected here.
  */
-export function regretSearchMinScore(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = env.REGRET_SEARCH_MIN_SCORE;
+export function regretSearchMaxDistance(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.REGRET_SEARCH_MAX_DISTANCE;
   if (typeof raw !== "string" || raw.trim() === "") {
-    return DEFAULT_REGRET_SEARCH_MIN_SCORE;
+    return DEFAULT_REGRET_SEARCH_MAX_DISTANCE;
   }
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
-    return DEFAULT_REGRET_SEARCH_MIN_SCORE;
+    return DEFAULT_REGRET_SEARCH_MAX_DISTANCE;
   }
   return parsed;
 }
@@ -196,20 +211,81 @@ export async function computeImpulseScore(
   );
 }
 
+const NAME_STOPWORDS = new Set(["a", "an", "the", "and", "or", "of", "for", "to", "in", "on", "with", "from", "by", "at"]);
+
 /**
- * Sum of closeness for regret hits at or above the similarity floor.
- * A missing score counts as one hit. A score in (0, 1) counts as that fraction,
- * so a closer hit weighs more. Non-regret memories add nothing.
+ * Sum of closeness for regret hits in the same product category as the bag.
+ * Category equality is the first gate. Two "other" names only count when they
+ * share a token, because unrecognized products all land in that bucket.
+ * The score is a distance, so it is only a second guard: a hit counts when
+ * the distance is at most the maximum. A cross-category hit can still be close.
+ * A missing score counts as one hit. Closeness is 1 minus the distance, so a
+ * closer hit weighs more. Non-regret memories add nothing.
  */
-function similarRegretWeight(hits: readonly MemorySearchHit[], minScore: number): number {
+function similarRegretWeight(hits: readonly MemorySearchHit[], maxDistance: number, bagItem: string): number {
+  const bagCategory = categoryForItem(bagItem);
   let weight = 0;
   for (const hit of hits) {
-    if (!isRegretContent(hit.content) || !clearsScoreFloor(hit.score, minScore)) {
+    if (!isRegretContent(hit.content)) {
+      continue;
+    }
+    const memoryCategory = categoryOfMemory(hit.content);
+    if (memoryCategory !== bagCategory) {
+      continue;
+    }
+    if (bagCategory === "other" && memoryCategory === "other" && !itemNamesOverlap(bagItem, memorySubject(hit.content))) {
+      continue;
+    }
+    if (!withinMaxDistance(hit.score, maxDistance)) {
       continue;
     }
     weight += hitCloseness(hit.score);
   }
   return weight;
+}
+
+/**
+ * Search hits return content and a score, not metadata. The score is a
+ * distance, where 0 is identical. A vote memory is already
+ * `regretted purchase: {item} ({category}, {price})` from purchaseVoteLine,
+ * so the item name is taken from that text and mapped with categoryForItem,
+ * the same function used for the bag. A `Regret:` line with no vote shape is
+ * mapped from its text. A hit counts only when the two categories are equal.
+ * When both are "other", the names also have to share a meaningful token.
+ */
+function categoryOfMemory(content: string): string {
+  return categoryForItem(memorySubject(content));
+}
+
+function itemNamesOverlap(bagItem: string, rememberedItem: string): boolean {
+  const remembered = nameTokens(rememberedItem);
+  for (const token of nameTokens(bagItem)) {
+    if (remembered.has(token)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function nameTokens(name: string): Set<string> {
+  const tokens = name
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length > 0 && !NAME_STOPWORDS.has(token));
+  return new Set(tokens);
+}
+
+function memorySubject(content: string): string {
+  const trimmed = content.trim();
+  const vote = trimmed.match(/^regretted purchase:\s*(.+?)\s+\([^)]*\)\s*$/i);
+  if (vote?.[1]?.trim()) {
+    return vote[1].trim();
+  }
+  const prefixed = trimmed.match(/^regret:\s*(.+)$/i);
+  if (prefixed?.[1]?.trim()) {
+    return prefixed[1].trim();
+  }
+  return trimmed;
 }
 
 function memoryOn(options: ImpulseScoreOptions | undefined): boolean {
@@ -238,7 +314,7 @@ async function searchRegretWeight(
       REGRET_SEARCH_LIMIT,
       options?.searchTimeoutMs ?? REGRET_SEARCH_TIMEOUT_MS,
     );
-    return similarRegretWeight(hits, regretSearchMinScore());
+    return similarRegretWeight(hits, regretSearchMaxDistance(), input.item);
   } catch {
     return 0;
   }
@@ -275,11 +351,11 @@ async function searchWithin(
   }
 }
 
-function clearsScoreFloor(score: number | null, minScore: number): boolean {
+function withinMaxDistance(score: number | null, maxDistance: number): boolean {
   if (score == null || !Number.isFinite(score)) {
     return true;
   }
-  return score >= minScore;
+  return score <= maxDistance;
 }
 
 function isRegretContent(content: string): boolean {
@@ -287,14 +363,13 @@ function isRegretContent(content: string): boolean {
   return text.startsWith("regret:") || text.includes("regretted purchase:");
 }
 
+/** Distance 0 is identical, so closeness is 1 minus the distance. A missing score counts as one hit. */
 function hitCloseness(score: number | null): number {
   if (score == null || !Number.isFinite(score)) {
     return 1;
   }
-  if (score <= 0) {
-    return 0;
-  }
-  return Math.min(1, score);
+  const closeness = 1 - score;
+  return Math.min(1, Math.max(0, closeness));
 }
 
 function competesWithGoal(price: number, goals: readonly SavedGoal[]): boolean {
