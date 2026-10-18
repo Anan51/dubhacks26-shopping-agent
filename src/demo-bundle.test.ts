@@ -24,6 +24,8 @@ describe("demo reply build", () => {
     assert.equal(built.status, 0, built.stderr || built.stdout);
     const content = readFileSync(path.join(outDir, "content.js"), "utf8");
     assert.equal(content.includes(marker), false);
+    assert.equal(content.includes("Demo: skip 24 hours"), false);
+    assert.equal(content.includes("skip-vault"), false);
     rmSync(outDir, { recursive: true, force: true });
   });
 });

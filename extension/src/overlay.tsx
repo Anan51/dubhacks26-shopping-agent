@@ -49,7 +49,7 @@ export type OverlayModel = {
 export type OverlayActions = {
   unlock: () => void;
   sleep: () => void;
-  skipVault: () => void;
+  skipVault?: () => void;
   demoReply?: () => void;
 };
 
@@ -158,7 +158,7 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
                   Sleep on it
                 </button>
               ) : null}
-              {model.status === "vault" ? (
+              {import.meta.env.VITE_SIMMER_DEMO === "1" && model.status === "vault" && actions.skipVault ? (
                 <button type="button" className="quiet" onClick={actions.skipVault}>
                   Demo: skip 24 hours
                 </button>
