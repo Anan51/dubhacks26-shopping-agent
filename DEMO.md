@@ -75,5 +75,5 @@ To show opt-out: extension options, add `127.0.0.1` (or `apple.com`), save, relo
 - Score 1 (strict) is **Skip**. The status line is **This one can wait.** The bag stays Marinating. It does not enter a 24-hour vault, and the title does not become **Paused**. A low score does not unlock an unnecessary bag. **Sleep on it** is not shown.
 - Score 2–3 (soft) is **Wait**. **Sleep on it** is shown only for that band. The pause is optional and does not unlock checkout.
 - Score 4 or 5 (free) is **Buy**. Checkout stays locked until **Unlock**, after the advice has been sent. Simmer does not click Apple's button.
-- A necessary bag unlocks with no reply. An unnecessary bag stays locked after a graded reply until you press **Unlock**, and only once that advice has been sent. **Demo: end the pause** ends an open pause and leaves checkout locked.
+- A necessary bag unlocks with no reply. An unnecessary bag with no reply unlocks by itself when the countdown runs out (0:00, which is 60s in demo mode), unless a vault is active, in which case it stays locked. A reply plus **Unlock** also opens it. A low score never unlocks it. **Demo: end the pause** ends an open pause and leaves checkout locked.
 - The extension is built for port 4321.
