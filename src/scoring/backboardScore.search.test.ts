@@ -5,6 +5,7 @@ import { MongoMemoryServer } from "mongodb-memory-server";
 import mongoose from "mongoose";
 
 import { mongooseDirectory } from "../auth/accounts.js";
+import { itemsForBag, startLockedCart } from "../carts.js";
 import { connectMongo } from "../auth/db.js";
 import { MemoryNote, User } from "../auth/user.js";
 import { InMemoryBackboardClient, type BackboardClient, type MemorySearchHit } from "../memory/backboard.js";
@@ -17,6 +18,7 @@ import {
   regretSearchQuery,
   type ImpulseItem,
 } from "./backboardScore.js";
+import { readingForCart } from "./cartReading.js";
 
 const HASH = "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHQ$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -326,8 +328,9 @@ describe("regret search scoring", { concurrency: false }, () => {
       backboardEnabled: true,
       client: scriptedClient(async () => [socksRegret]),
     });
-    assert.equal(unrelatedOther.score, 4.5);
-    assert.equal(unrelatedOther.why, null);
+    // Both names keyword to "other", so the name-derived categories are equal.
+    assert.ok(unrelatedOther.score > 4.5);
+    assert.equal(unrelatedOther.why, "You regretted a similar purchase before.");
 
     const overlappingOther = await computeImpulseScore(ada.id, hikingSocks, undefined, {
       backboardEnabled: true,
@@ -357,7 +360,7 @@ describe("regret search scoring", { concurrency: false }, () => {
     assert.equal(macbookCross.score, 4.5);
   });
 
-  it("keeps the demo path at 4.5 when the item is necessary or the search has no hits", async () => {
+  it("keeps a necessary cart and a search with no hits at 4.5", async () => {
     const ada = await User.create({
       email: "search-demo-path@example.com",
       passwordHash: HASH,
@@ -365,24 +368,17 @@ describe("regret search scoring", { concurrency: false }, () => {
       weeklyBudget: 500,
       backboardAssistantId: "asst-demo-path",
     });
-    const phone: ImpulseItem = { item: "Pixel 9", category: "phone", price: 40, necessary: false };
-    const pixelRegret = hit("regretted purchase: Pixel 9 (phone, $799.00)", 0.44);
-    const none = await computeImpulseScore(ada.id, phone, undefined, {
-      backboardEnabled: true,
-      client: scriptedClient(async () => []),
-    });
-    assert.equal(none.score, 4.5);
-    assert.equal(none.why, null);
+    const pixel = hit("regretted purchase: Pixel 9 (phone, $799.00)", 0.44);
+    const none = await scoreReadCart(ada.id, "Pixel 9", []);
+    assert.equal(none.impulse.score1to8, 4.5);
+    assert.equal(none.impulse.why, null);
 
-    const necessary = await computeImpulseScore(ada.id, { ...phone, necessary: true }, undefined, {
-      backboardEnabled: true,
-      client: scriptedClient(async () => [pixelRegret]),
-    });
-    assert.equal(necessary.score, 4.5);
-    assert.equal(necessary.why, null);
+    const necessary = await scoreReadCart(ada.id, "Pixel 9", [pixel], true);
+    assert.equal(necessary.impulse.score1to8, 4.5);
+    assert.equal(necessary.impulse.why, null);
   });
 
-  it("drops an other-category socks regret against a computer bag", async () => {
+  it("drops Wool socks against a MacBook cart", async () => {
     const ada = await User.create({
       email: "search-socks-macbook@example.com",
       passwordHash: HASH,
@@ -390,17 +386,13 @@ describe("regret search scoring", { concurrency: false }, () => {
       weeklyBudget: 500,
       backboardAssistantId: "asst-socks-macbook",
     });
-    const macbook: ImpulseItem = { item: "MacBook Air", category: "computer", price: 40, necessary: false };
     const socks = hit("regretted purchase: Wool socks (other, $12.00)", 0.44);
-    const flat = await computeImpulseScore(ada.id, macbook, undefined, {
-      backboardEnabled: true,
-      client: scriptedClient(async () => [socks]),
-    });
-    assert.equal(flat.score, 4.5);
-    assert.equal(flat.why, null);
+    const flat = await scoreReadCart(ada.id, "MacBook Air", [socks]);
+    assert.equal(flat.impulse.score1to8, 4.5);
+    assert.equal(flat.impulse.why, null);
   });
 
-  it("uses a Pixel 9 regret's recorded phone category instead of the keyword list", async () => {
+  it("scores a Pixel 9 cart from a phone regret whose name keywords to other", async () => {
     assert.equal(categoryForItem("Pixel 9"), "other");
     const ada = await User.create({
       email: "search-pixel@example.com",
@@ -410,26 +402,16 @@ describe("regret search scoring", { concurrency: false }, () => {
       backboardAssistantId: "asst-pixel",
     });
     const pixel = hit("regretted purchase: Pixel 9 (phone, $799.00)", 0.44);
-    const bag: ImpulseItem = { item: "Pixel 9", category: "phone", price: 40, necessary: false };
-    const raised = await computeImpulseScore(ada.id, bag, undefined, {
-      backboardEnabled: true,
-      client: scriptedClient(async () => [pixel]),
-    });
-    // 4.5 + 0.7 * (1 - 0.44) rounds to 4.9.
-    assert.ok(raised.score > 4.5);
-    assert.equal(raised.score, 4.9);
-    assert.equal(raised.why, "You regretted a similar purchase before.");
-
-    const cased = hit("regretted purchase: Pixel 9 ( Phone , $799.00)", 0.44);
-    const trimmed = await computeImpulseScore(ada.id, bag, undefined, {
-      backboardEnabled: true,
-      client: scriptedClient(async () => [cased]),
-    });
-    assert.equal(trimmed.score, 4.9);
+    const raised = await scoreReadCart(ada.id, "Pixel 9", [pixel]);
+    // 4.5 + 0.7 * (1 - 0.44) rounds to 4.9. The cart category is "other".
+    assert.ok(raised.impulse.score1to8 > 4.5);
+    assert.equal(raised.impulse.score1to8, 4.9);
+    assert.equal(raised.impulse.why, "You regretted a similar purchase before.");
   });
 
-  it("uses the bag's recorded phone category for a Galaxy S24", async () => {
+  it("raises a Galaxy S24 cart from a Pixel phone regret without a shared name token", async () => {
     assert.equal(categoryForItem("Galaxy S24"), "other");
+    assert.equal(categoryForItem("Pixel 9"), "other");
     const ada = await User.create({
       email: "search-galaxy@example.com",
       passwordHash: HASH,
@@ -438,21 +420,58 @@ describe("regret search scoring", { concurrency: false }, () => {
       backboardAssistantId: "asst-galaxy",
     });
     const pixel = hit("regretted purchase: Pixel 9 (phone, $799.00)", 0.44);
-    const galaxy: ImpulseItem = { item: "Galaxy S24", category: "phone", price: 40, necessary: false };
-    const raised = await computeImpulseScore(ada.id, galaxy, undefined, {
-      backboardEnabled: true,
-      client: scriptedClient(async () => [pixel]),
-    });
-    assert.ok(raised.score > 4.5);
-    assert.equal(raised.score, 4.9);
-    assert.equal(raised.why, "You regretted a similar purchase before.");
+    const raised = await scoreReadCart(ada.id, "Galaxy S24", [pixel]);
+    assert.ok(raised.impulse.score1to8 > 4.5);
+    assert.equal(raised.impulse.score1to8, 4.9);
+    assert.equal(raised.impulse.why, "You regretted a similar purchase before.");
+  });
 
-    const iphoneRegret = hit("regretted purchase: iPhone (phone, $999)", 0.44);
-    const fromIphone = await computeImpulseScore(ada.id, galaxy, undefined, {
-      backboardEnabled: true,
-      client: scriptedClient(async () => [iphoneRegret]),
+  it("counts a shared token on an other bag when the keyword categories differ", async () => {
+    const ada = await User.create({
+      email: "search-shared-token@example.com",
+      passwordHash: HASH,
+      hourlyRate: 30,
+      weeklyBudget: 500,
+      backboardAssistantId: "asst-shared-token",
     });
-    assert.equal(fromIphone.score, 4.9);
+    const memory = hit("Regret: wool socks next to an iPhone", 0.44);
+    assert.equal(categoryForItem("wool socks next to an iPhone"), "phone");
+    const raised = await scoreReadCart(ada.id, "wool socks", [memory]);
+    assert.ok(raised.impulse.score1to8 > 4.5);
+    assert.equal(raised.impulse.score1to8, 4.9);
+  });
+
+  it("matches a MacBook cart to a regret saved under the apple category", async () => {
+    const ada = await User.create({
+      email: "search-apple-macbook@example.com",
+      passwordHash: HASH,
+      hourlyRate: 30,
+      weeklyBudget: 500,
+      backboardAssistantId: "asst-apple-macbook",
+    });
+    const saved = hit("regretted purchase: MacBook Air (apple, $999.00)", 0.44);
+    const raised = await scoreReadCart(ada.id, "MacBook Air", [saved]);
+    assert.ok(raised.impulse.score1to8 > 4.5);
+    assert.equal(raised.impulse.score1to8, 4.9);
+    assert.equal(raised.impulse.why, "You regretted a similar purchase before.");
+  });
+
+  it("falls back to the item name when the saved category is empty", async () => {
+    const ada = await User.create({
+      email: "search-empty-category@example.com",
+      passwordHash: HASH,
+      hourlyRate: 30,
+      weeklyBudget: 500,
+      backboardAssistantId: "asst-empty-category",
+    });
+    const empty = hit("regretted purchase: AirPods ( , $179.00)", 0.44);
+    const audio = await scoreReadCart(ada.id, "AirPods", [empty]);
+    assert.equal(audio.impulse.score1to8, 4.9);
+    assert.equal(audio.impulse.why, "You regretted a similar purchase before.");
+
+    const computer = await scoreReadCart(ada.id, "MacBook Air", [empty]);
+    assert.equal(computer.impulse.score1to8, 4.5);
+    assert.equal(computer.impulse.why, null);
   });
 
   it("maps a free-text Regret line with categoryForItem when no category is recorded", async () => {
@@ -547,6 +566,27 @@ async function reserveAssistant(client: InMemoryBackboardClient, name: string): 
 
 function hit(content: string, score: number | null): MemorySearchHit {
   return { id: "mem", content, score, createdAt: null };
+}
+
+/** Cart total stays under the weekly budget so only a regret hit can move the score. */
+async function scoreReadCart(userId: string, item: string, hits: MemorySearchHit[], necessary = false) {
+  const totalCents = 4_000;
+  const cart = startLockedCart({
+    items: itemsForBag([item], totalCents, true),
+    totalCents,
+    parsedFromPage: true,
+    pageHost: "www.apple.com",
+    fingerprint: `${userId}|${totalCents}|${item.toLowerCase()}`,
+    now: new Date("2026-10-18T00:00:00.000Z"),
+    demo: true,
+    lockMs: 600_000,
+    userId,
+  });
+  cart.necessity = necessary ? "necessary" : "unnecessary";
+  return readingForCart(userId, cart, {
+    backboardEnabled: true,
+    client: scriptedClient(async () => hits),
+  });
 }
 
 function scriptedClient(

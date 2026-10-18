@@ -216,11 +216,14 @@ export async function computeImpulseScore(
 const NAME_STOPWORDS = new Set(["a", "an", "the", "and", "or", "of", "for", "to", "in", "on", "with", "from", "by", "at"]);
 
 /**
- * Sum of closeness for regret hits in the same product category as the bag.
- * The bag's recorded category wins when it is non-empty. Otherwise the name
- * is mapped with categoryForItem. Category equality is the first gate.
- * Two "other" names only count when they share a token, because unrecognized
- * products all land in that bucket.
+ * Sum of closeness for regret hits that match this bag.
+ * Callers pass the bag category. The cart path passes `categoryForItem(item)`,
+ * so a Pixel or Galaxy bag arrives as "other". A blank category falls back to
+ * that same mapping. It does not override the name with a category the cart
+ * never stored.
+ * A regret counts when the saved vote category equals the bag category, or
+ * `categoryForItem` of the memory subject equals the bag category, or the bag
+ * category is "other" and the names share a token.
  * The score is a distance, so it is only a second guard: a hit counts when
  * the distance is at most the maximum. A cross-category hit can still be close.
  * A missing score counts as one hit. Closeness is 1 minus the distance, so a
@@ -232,18 +235,14 @@ function similarRegretWeight(
   bagItem: string,
   bagCategory: string,
 ): number {
-  const recorded = bagCategory.trim().toLowerCase();
-  const category = recorded.length > 0 ? recorded : categoryForItem(bagItem);
+  const supplied = bagCategory.trim().toLowerCase();
+  const category = supplied.length > 0 ? supplied : categoryForItem(bagItem);
   let weight = 0;
   for (const hit of hits) {
     if (!isRegretContent(hit.content)) {
       continue;
     }
-    const memoryCategory = categoryOfMemory(hit.content);
-    if (memoryCategory !== category) {
-      continue;
-    }
-    if (category === "other" && memoryCategory === "other" && !itemNamesOverlap(bagItem, memorySubject(hit.content))) {
+    if (!regretMatchesBag(category, bagItem, hit.content)) {
       continue;
     }
     if (!withinMaxDistance(hit.score, maxDistance)) {
@@ -255,14 +254,27 @@ function similarRegretWeight(
 }
 
 /**
+ * Saved category, name-derived category, or a shared token on an "other" bag.
+ * The cart's bag category is the keyword category. A Pixel 9 regret saved as
+ * phone still matches that bag because the subject keywords to "other", and
+ * the same name shares a token. A MacBook saved as "apple" still matches
+ * because the subject keywords to "computer".
+ */
+function regretMatchesBag(bagCategory: string, bagItem: string, content: string): boolean {
+  const subject = memorySubject(content);
+  if (categoryOfMemory(content) === bagCategory || categoryForItem(subject) === bagCategory) {
+    return true;
+  }
+  return bagCategory === "other" && itemNamesOverlap(bagItem, subject);
+}
+
+/**
  * Search hits return content and a score, not metadata. The score is a
  * distance, where 0 is identical. A vote memory is already
  * `regretted purchase: {item} ({category}, {price})` from purchaseVoteLine.
  * The category inside those parentheses, the token before the first comma,
- * is used when it is present. A `Regret:` line with no vote shape has nothing
- * to parse, so it is mapped with categoryForItem from its subject. A hit
- * counts only when the two categories are equal. When both are "other", the
- * names also have to share a meaningful token.
+ * is used when it is present. An empty category, or a `Regret:` line with no
+ * vote shape, is mapped with categoryForItem from its subject.
  */
 function categoryOfMemory(content: string): string {
   const recorded = recordedVoteCategory(content);
