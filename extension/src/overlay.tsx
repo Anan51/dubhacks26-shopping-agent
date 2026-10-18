@@ -1,6 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 
+import { DEMO_REPLY_PRESETS } from "../../src/demo-reply-presets.js";
 import { formatUsd } from "../../src/format.js";
 import { oneLineVerdict, type GlanceItem, type GlanceSignals, type GlanceSources } from "../../src/glance.js";
 import { offersSleep } from "../../src/score-band.js";
@@ -51,7 +52,7 @@ export type OverlayActions = {
   unlock: () => void;
   sleep: () => void;
   skipVault?: () => void;
-  demoReply?: () => void;
+  demoReply?: (text: string) => void;
 };
 
 export function mountOverlay(
@@ -143,12 +144,8 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
           <button type="button" className="quiet" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
             Why
           </button>
-          {import.meta.env.VITE_SIMMER_DEMO === "1" && actions.demoReply ? (
-            <button type="button" className="quiet" data-simmer-demo-reply="simmer-demo-reply" onClick={actions.demoReply}>
-              Simulate reply
-            </button>
-          ) : null}
         </div>
+        {import.meta.env.VITE_SIMMER_DEMO === "1" && actions.demoReply ? <DemoReplyForm onSend={actions.demoReply} /> : null}
         {open ? (
           <div>
             <p className="why">{unreadable ? "The Apple bag could not be read." : pauseSentence(glance)}</p>
@@ -224,4 +221,45 @@ function clockFrom(ms: number): string {
   const minutes = Math.floor(total / 60);
   const seconds = total % 60;
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function DemoReplyForm({ onSend }: { onSend: (text: string) => void }) {
+  const [text, setText] = useState("");
+  if (import.meta.env.VITE_SIMMER_DEMO !== "1") {
+    return null;
+  }
+  return (
+    <form
+      className="demo-reply"
+      data-simmer-demo-reply="simmer-demo-reply"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const trimmed = text.trim();
+        if (!trimmed) {
+          return;
+        }
+        onSend(trimmed);
+      }}
+    >
+      <label>
+        Simulate reply
+        <input
+          value={text}
+          maxLength={2000}
+          placeholder="Type a reply"
+          onChange={(event) => setText(event.target.value)}
+        />
+      </label>
+      <div className="row">
+        <button type="submit" className="quiet">
+          Send
+        </button>
+        {DEMO_REPLY_PRESETS.map((preset) => (
+          <button key={preset} type="button" className="quiet" onClick={() => onSend(preset)}>
+            {preset}
+          </button>
+        ))}
+      </div>
+    </form>
+  );
 }

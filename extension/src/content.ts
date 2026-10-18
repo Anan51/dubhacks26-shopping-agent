@@ -80,8 +80,12 @@ async function start(site: StoreAdapter): Promise<void> {
           skipVault: () => {
             void post(`/api/carts/${code}/skip-vault`).then(() => refresh());
           },
-          demoReply: () => {
-            void post("/api/dev/reply", { code, text: "simmer-demo-reply" }).then(() => refresh());
+          demoReply: (text: string) => {
+            const trimmed = text.trim();
+            if (!trimmed) {
+              return;
+            }
+            void post("/api/dev/reply", { code, text: trimmed }).then(() => refresh());
           },
         }
       : {}),

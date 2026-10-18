@@ -465,7 +465,7 @@ export function createApp(deps: AppDeps): RunningApp {
 
   app.post("/api/dev/reply", settle(async (req, res) => {
     if (!demoReplyOpen(env)) {
-      res.status(403).json({ error: "Not available." });
+      res.status(404).json({ error: "Not found." });
       return;
     }
     const body = isRecord(req.body) ? req.body : {};
@@ -475,8 +475,13 @@ export function createApp(deps: AppDeps): RunningApp {
       res.status(404).json({ error: "Cart not found." });
       return;
     }
-    const text = typeof body.text === "string" && body.text.trim() ? body.text.trim() : "I've thought about it.";
-    const conversationId = cart.conversationId ?? `desk:cart-${cart.code}`;
+    const text = typeof body.text === "string" ? body.text.trim() : "";
+    if (!text || text.length > 2_000) {
+      res.status(400).json({ error: "Text is required." });
+      return;
+    }
+    // Desk thread only. A simulated reply never uses a Photon conversation id.
+    const conversationId = `desk:cart-${cart.code}`;
     await runtime.enqueue({
       id: `demo-${randomUUID()}`,
       conversationId,
