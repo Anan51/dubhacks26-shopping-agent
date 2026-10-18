@@ -216,7 +216,8 @@ function cartHtml(rows: string[], subtotal: string): string {
 type CartPostBody = { itemNames?: string[]; totalCents?: number; hiddenItemCount?: number };
 
 async function assertSavedBag(base: string, names: string[], hidden: number): Promise<void> {
-  const dollars = names.length.toFixed(2);
+  const unitDollars = 10;
+  const dollars = (names.length * unitDollars).toFixed(2);
   let saved: Record<string, unknown> | null = null;
   const booted = bootCart(
     "https://www.amazon.com/gp/cart/view.html",
@@ -225,7 +226,7 @@ async function assertSavedBag(base: string, names: string[], hidden: number): Pr
         line(
           `B${index}`,
           name,
-          "$1.00",
+          `$${unitDollars}.00`,
           `<select name="quantity"><option value="1" selected>1</option></select>`,
         ),
       ),
@@ -272,7 +273,7 @@ async function assertSavedBag(base: string, names: string[], hidden: number): Pr
     } else {
       assert.equal(text.includes(" more"), false);
     }
-    assert.equal(text.includes(`${names.length} items · $${names.length}`), true);
+    assert.equal(text.includes(`${names.length} items · $${names.length * unitDollars}`), true);
     assert.equal(booted.document.querySelector("input[name='proceedToRetailCheckout']")?.getAttribute("data-simmer-blocked"), "1");
   } finally {
     booted.close();
