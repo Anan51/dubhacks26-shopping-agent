@@ -48,17 +48,15 @@ chrome.storage.local.get(["simmerOrigin", "simmerUserId", "simmerAuthOrigin", "s
   if (token.length === 0) {
     void load(origin, { kind: "device", userId });
   }
-  if (typeof stored.simmerAuthOrigin === "string" && stored.simmerAuthOrigin.trim().length > 0) {
-    mountPopupAuth(document.body, stored.simmerAuthOrigin, {
-      onAuthChange(account) {
-        if (!account) {
-          clearVault();
-          return;
-        }
-        void load(origin, { kind: "account", account });
-      },
-    });
-  }
+  mountPopupAuth(document.body, stored.simmerAuthOrigin, {
+    onAuthChange(account) {
+      if (!account) {
+        clearVault();
+        return;
+      }
+      void load(origin, { kind: "account", account });
+    },
+  });
 });
 
 async function load(origin: string, scope: CartScope): Promise<void> {
