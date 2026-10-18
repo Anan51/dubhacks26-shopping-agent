@@ -236,6 +236,25 @@ export async function setPurchaseFeedback(
   return toView(doc);
 }
 
+/** Owner-scoped hard delete. Unknown ids answer 404. Example rows are included. */
+export async function deletePurchase(userId: string, purchaseId: string): Promise<void> {
+  if (!/^[a-f0-9]{24}$/i.test(purchaseId) || !/^[a-f0-9]{24}$/i.test(userId)) {
+    throw new PurchaseError(404, "Purchase not found.");
+  }
+  const doc = await PurchaseRecord.findOneAndDelete({ _id: purchaseId, userId });
+  if (!doc) {
+    throw new PurchaseError(404, "Purchase not found.");
+  }
+  await forgetPurchaseVoteNotes(userId, doc.item, doc.category, doc.price);
+}
+
+async function forgetPurchaseVoteNotes(userId: string, item: string, category: string, price: number): Promise<void> {
+  const lines = [purchaseVoteLine("regretted", item, category, price), purchaseVoteLine("kept", item, category, price)];
+  await MemoryNote.deleteMany({ userId, text: { $in: lines } });
+  // TODO: BackboardClient has no per-memory delete. resetMemories wipes the assistant,
+  // and deleteAssistant removes the assistant. The vote line written with addMemory stays on Backboard.
+}
+
 export async function recordUnlockedPurchase(userId: string, cart: Cart): Promise<void> {
   const existing = await PurchaseRecord.findOne({ userId, cartCode: cart.code });
   if (existing) {
