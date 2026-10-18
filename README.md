@@ -22,7 +22,7 @@ The server listens on 127.0.0.1 unless `HOST` is set. The extension and `npm run
 
 ## CI
 
-Pull requests and pushes to `main` run [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on Node 24 (`ubuntu-latest`): `npm ci`, `npm test`, `npm run typecheck`, `npm run build`, then `npm run build:demo`. Those steps do not need MongoDB, Backboard, xAI, or Photon credentials.
+Pull requests and pushes to `main` run [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on Node 24 (`ubuntu-latest`): `npm ci`, `npm test`, `npm run typecheck`, `npm run build`, and `npm run build:demo`. A browser step then installs Playwright Chromium and runs `npm run test:e2e` and `npm run test:zoom`. `test:e2e` builds the default extension, starts the server on 127.0.0.1:4321 with no credentials, and checks that the Simmer card blocks checkout on `/fallback` and `/amazon`. None of these steps need MongoDB, Backboard, xAI, or Photon credentials.
 
 ![CI](https://github.com/Anan51/dubhacks26-shopping-agent/actions/workflows/ci.yml/badge.svg)
 
