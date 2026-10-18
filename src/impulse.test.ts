@@ -7,8 +7,11 @@ import { MongoMemoryServer } from "mongodb-memory-server";
 import mongoose from "mongoose";
 
 import { connectMongo } from "./auth/db.js";
+import { User } from "./auth/user.js";
 import { createApp } from "./app.js";
+import { InMemoryBackboardClient } from "./memory/backboard.js";
 import { PurchaseRecord } from "./purchases/model.js";
+import { purchaseVoteLine } from "./purchases/service.js";
 import { holdForUnlock, isEnforcedVault, itemsForBag, liftCart, sleepCart, startLockedCart, unlockCart, withCartFacts } from "./carts.js";
 import { createMemoryStore } from "./store.js";
 import { decide } from "./heuristic.js";
@@ -363,17 +366,19 @@ describe("checkout ping and a repeat post", () => {
   let stopMemory: () => void = () => undefined;
   let store: ReturnType<typeof createMemoryStore>;
   let memoryStore: ReturnType<typeof createMemoryStore>;
+  let regretClient: InMemoryBackboardClient;
 
   before(async () => {
     mongod = await MongoMemoryServer.create({ binary: { version: "7.0.14" } });
     await connectMongo(mongod.getUri());
     store = createMemoryStore();
     memoryStore = createMemoryStore();
+    regretClient = new InMemoryBackboardClient();
     const unset = await listenApp(store, false);
     base = unset.base;
     close = unset.close;
     stop = unset.stop;
-    const memory = await listenApp(memoryStore, true);
+    const memory = await listenApp(memoryStore, true, regretClient);
     memoryBase = memory.base;
     closeMemory = memory.close;
     stopMemory = memory.stop;
@@ -434,16 +439,28 @@ describe("checkout ping and a repeat post", () => {
     assert.equal(await pingCount(base, "desk:regret-unset"), 1);
   });
 
-  it("scores regret history stricter than 4.5 on an unnecessary bag and leaves a necessary bag alone", async () => {
-    const userId = new mongoose.Types.ObjectId().toString();
-    const seen = await postedBag(memoryBase, memoryStore, userId, "desk:strict-score-7");
+  it("scores a similar Backboard regret stricter than 4.5 and leaves a necessary bag alone", async () => {
+    const assistant = await regretClient.createAssistant({
+      name: "Simmer strict",
+      systemPrompt: "Remember one shopper.",
+    });
+    const user = await User.create({
+      email: "strict-score@example.com",
+      passwordHash: "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHQ$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      backboardAssistantId: assistant.assistantId,
+    });
+    const seen = await postedBag(memoryBase, memoryStore, user.id, "desk:strict-score-7");
     assert.equal(seen.first.impulse?.score1to8, 4.5);
-    await PurchaseRecord.insertMany(regrettedPhones(userId, 3));
-    const again = await post(memoryBase, "/api/carts", bagBody(userId));
+    await regretClient.addMemory(assistant.assistantId, {
+      content: purchaseVoteLine("regretted", "Example phone", "phone", 80),
+    });
+    await PurchaseRecord.insertMany(regrettedPhones(user.id, 3));
+    const again = await post(memoryBase, "/api/carts", bagBody(user.id));
     const replay = again.body as CartSnap;
     assert.equal(again.status, 200);
-    assert.equal(replay.impulse?.score1to8, 7);
+    assert.equal(replay.impulse?.score1to8, 5.2);
     assert.ok((replay.impulse?.score1to8 ?? 0) > 4.5);
+    assert.equal(replay.impulse?.why, "You regretted a similar purchase before.");
     assert.equal(replay.impulse?.band, "strict");
     assert.equal(replay.status, "locked");
     assert.equal(replay.vaultUntil, null);
@@ -451,7 +468,7 @@ describe("checkout ping and a repeat post", () => {
     assert.equal(await pingCount(memoryBase, "desk:strict-score-7"), 1);
 
     const cable = await post(memoryBase, "/api/carts", {
-      userId,
+      userId: user.id,
       itemNames: ["USB-C charge cable"],
       totalCents: 1_900,
       parsed: true,
@@ -585,6 +602,7 @@ type CartSnap = {
 async function listenApp(
   appStore: ReturnType<typeof createMemoryStore>,
   backboardEnabled: boolean,
+  backboardClient?: InMemoryBackboardClient,
 ): Promise<{ base: string; close: () => Promise<void>; stop: () => void }> {
   const running = createApp({
     store: appStore,
@@ -598,6 +616,7 @@ async function listenApp(
     xaiTimeoutMs: 8_000,
     polish: async (template) => template,
     backboardEnabled,
+    ...(backboardClient ? { backboardClient } : {}),
   });
   const server = createServer(running.app);
   await new Promise<void>((resolve) => {

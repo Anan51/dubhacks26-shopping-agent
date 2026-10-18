@@ -235,23 +235,33 @@ export async function setPurchaseFeedback(
   if (doc.userId.toString() !== userId || doc.isExample === true) {
     throw new PurchaseError(404, "Purchase not found.");
   }
+  const id = doc._id.toString();
   if (doc.feedback === feedback) {
     if (feedback) {
-      await rememberVoteIfMissing(userId, doc._id.toString(), doc.item, doc.category, doc.price, feedback, deps);
+      await rememberVoteIfMissing(userId, id, doc.item, doc.category, doc.price, feedback, deps);
     }
     return toView(doc);
   }
   doc.feedback = feedback;
   doc.ratedAt = feedback ? new Date() : null;
   await doc.save();
+  try {
+    await dropPurchaseVoteNotes(userId, id, deps);
+  } catch (error: unknown) {
+    console.error(error instanceof Error ? error.message : "Previous vote notes were not removed.");
+  }
   if (feedback) {
-    await writeVoteMemory(userId, doc._id.toString(), doc.item, doc.category, doc.price, feedback, deps);
+    await writeVoteMemory(userId, id, doc.item, doc.category, doc.price, feedback, deps);
   }
   return toView(doc);
 }
 
 /** Owner-scoped hard delete. Unknown ids answer 404. Example rows are included. */
-export async function deletePurchase(userId: string, purchaseId: string): Promise<void> {
+export async function deletePurchase(
+  userId: string,
+  purchaseId: string,
+  deps: { directory: AccountDirectory; client: BackboardClient; remote: boolean },
+): Promise<void> {
   if (!/^[a-f0-9]{24}$/i.test(purchaseId) || !/^[a-f0-9]{24}$/i.test(userId)) {
     throw new PurchaseError(404, "Purchase not found.");
   }
@@ -260,7 +270,7 @@ export async function deletePurchase(userId: string, purchaseId: string): Promis
     throw new PurchaseError(404, "Purchase not found.");
   }
   try {
-    await forgetPurchaseVoteNotes(userId, purchaseId, doc.item, doc.category, doc.price);
+    await forgetPurchaseVoteNotes(userId, purchaseId, doc.item, doc.category, doc.price, deps);
   } catch (error: unknown) {
     console.error(error instanceof Error ? error.message : "Purchase vote notes were not removed.");
   }
@@ -271,27 +281,76 @@ export async function deletePurchase(userId: string, purchaseId: string): Promis
   }
 }
 
+async function dropPurchaseVoteNotes(
+  userId: string,
+  purchaseId: string,
+  deps: { directory: AccountDirectory; client: BackboardClient; remote: boolean },
+): Promise<void> {
+  const memoryIds = await taggedVoteMemoryIds(userId, purchaseId);
+  await MemoryNote.deleteMany({ userId, "meta.purchaseId": purchaseId });
+  await deleteBackboardMemories(userId, memoryIds, deps);
+}
+
+async function taggedVoteMemoryIds(userId: string, purchaseId: string): Promise<string[]> {
+  const tagged = await MemoryNote.find({ userId, "meta.purchaseId": purchaseId }).select("backboardMemoryId");
+  const memoryIds: string[] = [];
+  for (const note of tagged) {
+    pushMemoryId(memoryIds, note.backboardMemoryId);
+  }
+  return memoryIds;
+}
+
 async function forgetPurchaseVoteNotes(
   userId: string,
   purchaseId: string,
   item: string,
   category: string,
   price: number,
+  deps: { directory: AccountDirectory; client: BackboardClient; remote: boolean },
 ): Promise<void> {
+  const memoryIds = await taggedVoteMemoryIds(userId, purchaseId);
   await MemoryNote.deleteMany({ userId, "meta.purchaseId": purchaseId });
   const sibling = await PurchaseRecord.exists({ userId, item, category, price });
-  if (sibling) {
+  if (!sibling) {
+    const lines = [purchaseVoteLine("regretted", item, category, price), purchaseVoteLine("kept", item, category, price)];
+    const notes = await MemoryNote.find({ userId, text: { $in: lines } }).select("_id meta backboardMemoryId");
+    const legacy = notes.filter((note) => !storedPurchaseId(note.meta));
+    for (const note of legacy) {
+      pushMemoryId(memoryIds, note.backboardMemoryId);
+    }
+    if (legacy.length > 0) {
+      await MemoryNote.deleteMany({ _id: { $in: legacy.map((note) => note._id) } });
+    }
+  }
+  await deleteBackboardMemories(userId, memoryIds, deps);
+}
+
+async function deleteBackboardMemories(
+  userId: string,
+  memoryIds: string[],
+  deps: { directory: AccountDirectory; client: BackboardClient; remote: boolean },
+): Promise<void> {
+  if (!deps.remote || memoryIds.length === 0) {
     return;
   }
-  const lines = [purchaseVoteLine("regretted", item, category, price), purchaseVoteLine("kept", item, category, price)];
-  const notes = await MemoryNote.find({ userId, text: { $in: lines } }).select("_id meta");
-  const legacyIds = notes.flatMap((note) => (storedPurchaseId(note.meta) ? [] : [note._id]));
-  if (legacyIds.length === 0) {
+  const user = await deps.directory.findById(userId);
+  const assistantId = user?.backboardAssistantId;
+  if (!assistantId) {
     return;
   }
-  await MemoryNote.deleteMany({ _id: { $in: legacyIds } });
-  // TODO: BackboardClient has no per-memory delete. resetMemories wipes the assistant,
-  // and deleteAssistant removes the assistant. The vote line written with addMemory stays on Backboard.
+  for (const memoryId of memoryIds) {
+    try {
+      await deps.client.deleteMemory(assistantId, memoryId);
+    } catch (error: unknown) {
+      console.error(error instanceof Error ? error.message : "Backboard memory was not removed.");
+    }
+  }
+}
+
+function pushMemoryId(memoryIds: string[], value: unknown): void {
+  if (typeof value === "string" && value.trim().length > 0) {
+    memoryIds.push(value.trim());
+  }
 }
 
 function storedPurchaseId(meta: unknown): string | null {
@@ -349,9 +408,7 @@ async function rememberVoteIfMissing(
   feedback: PurchaseFeedback,
   deps: { directory: AccountDirectory; client: BackboardClient; remote: boolean },
 ): Promise<void> {
-  const line = purchaseVoteLine(feedback, item, category, price);
-  const saved = await MemoryNote.exists({ userId, text: line });
-  if (saved) {
+  if (await voteNoteExists(userId, purchaseId, feedback)) {
     return;
   }
   await writeVoteMemory(userId, purchaseId, item, category, price, feedback, deps);
@@ -366,6 +423,9 @@ async function writeVoteMemory(
   feedback: PurchaseFeedback,
   deps: { directory: AccountDirectory; client: BackboardClient; remote: boolean },
 ): Promise<void> {
+  if (feedback === "regretted" && (await voteNoteExists(userId, purchaseId, "regretted"))) {
+    return;
+  }
   const user = await deps.directory.findById(userId);
   if (!user) {
     return;
@@ -373,6 +433,15 @@ async function writeVoteMemory(
   const line = purchaseVoteLine(feedback, item, category, price);
   const kind: MemoryKind = feedback === "regretted" ? "regret" : "goal";
   await writeUserMemoryLine(userId, line, kind, deps, { category, feedback, purchaseId });
+}
+
+async function voteNoteExists(userId: string, purchaseId: string, feedback: PurchaseFeedback): Promise<boolean> {
+  const found = await MemoryNote.exists({
+    userId,
+    "meta.purchaseId": purchaseId,
+    "meta.feedback": feedback,
+  });
+  return found != null;
 }
 
 export async function writeUserMemoryLine(

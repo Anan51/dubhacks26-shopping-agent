@@ -90,6 +90,7 @@ export async function startServer(): Promise<void> {
     xaiModel: appConfig.xaiModel,
     xaiTimeoutMs: appConfig.xaiTimeoutMs,
     ...(jwtSecret ? { readSession: (req) => readOptionalUser(req, jwtSecret) } : {}),
+    backboardClient: memory.client,
     ...(accountConfig.backboardEnabled
       ? { personalizeNudge: (text: string, userId: string) => memory.personalize(text, userId) }
       : {}),

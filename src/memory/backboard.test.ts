@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { createBackboardClient, HttpBackboardClient, waitForMemoryWrite } from "./backboard.js";
+import { createBackboardClient, HttpBackboardClient, InMemoryBackboardClient, waitForMemoryWrite } from "./backboard.js";
 
 describe("Backboard client", () => {
   it("uses the in-memory fallback when the API key is unset", async () => {
@@ -73,6 +73,32 @@ describe("Backboard client", () => {
     const search = requests.find((request) => request.url.endsWith("/memories/search"));
     assert.equal(search?.url, "https://app.backboard.io/api/assistants/asst-1/memories/search");
     assert.deepEqual(search?.body, { query: "wait", limit: 5 });
+  });
+
+  it("deletes one memory and leaves the rest", async () => {
+    const requests: string[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      requests.push(`${init?.method ?? "GET"} ${String(input)}`);
+      return json({ success: true, message: "deleted" });
+    };
+    const client = new HttpBackboardClient({
+      baseUrl: "https://app.backboard.io/api",
+      apiKey: "placeholder",
+      fetchImpl,
+    });
+    await client.deleteMemory("asst-1", "mem-9");
+    assert.deepEqual(requests, ["DELETE https://app.backboard.io/api/assistants/asst-1/memories/mem-9"]);
+
+    const local = new InMemoryBackboardClient();
+    const assistant = await local.createAssistant({ name: "Simmer", systemPrompt: "Remember one shopper." });
+    const kept = await local.addMemory(assistant.assistantId, { content: "regretted purchase: Watch (watch, $80)" });
+    const gone = await local.addMemory(assistant.assistantId, { content: "regretted purchase: AirPods (audio, $179)" });
+    await local.deleteMemory(assistant.assistantId, gone.memoryId ?? "");
+    const hits = await local.searchMemories(assistant.assistantId, "AirPods audio", 5);
+    assert.deepEqual(hits, []);
+    const remaining = await local.searchMemories(assistant.assistantId, "Watch", 5);
+    assert.equal(remaining.length, 1);
+    assert.equal(remaining[0]?.id, kept.memoryId);
   });
 
   it("defaults the base URL when only the key is set", async () => {

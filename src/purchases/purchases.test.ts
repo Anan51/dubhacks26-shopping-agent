@@ -54,6 +54,7 @@ describe("purchase feedback", () => {
       searchMemories: (assistantId, query, limit) => inner.searchMemories(assistantId, query, limit),
       sendMessage: (input) => inner.sendMessage(input),
       resetMemories: (assistantId) => inner.resetMemories(assistantId),
+      deleteMemory: (assistantId, memoryId) => inner.deleteMemory(assistantId, memoryId),
     };
     const memory = createMemoryRuntime({}, { client, remote: true });
     purchaseClient = client;
@@ -486,6 +487,35 @@ describe("purchase feedback", () => {
     const history = await get("/purchases/history", ada.cookie);
     const items = (history.body.purchases as { item: string }[]).map((row) => row.item);
     assert.deepEqual(items, ["USB-C cable"]);
+  });
+
+  it("removes the Backboard regret when the purchase is deleted", async () => {
+    const ada = await signup("ada-delete-memory@example.com");
+    const row = await PurchaseRecord.create({
+      userId: ada.id,
+      item: "AirPods",
+      category: "audio",
+      price: 179,
+      feedback: null,
+      isExample: false,
+      source: "survey",
+    });
+    const line = purchaseVoteLine("regretted", "AirPods", "audio", 179);
+    const rated = await post(`/purchases/${row._id.toString()}/feedback`, { feedback: "regretted" }, ada.cookie);
+    assert.equal(rated.status, 200);
+    const note = await MemoryNote.findOne({ userId: ada.id, text: line });
+    assert.equal(typeof note?.backboardMemoryId, "string");
+    const account = await purchaseDirectory?.findById(ada.id);
+    const assistantId = account?.backboardAssistantId ?? "";
+    assert.ok(assistantId);
+    const beforeHits = await purchaseClient?.searchMemories(assistantId, "AirPods", 5);
+    assert.equal(beforeHits?.some((hit) => hit.content.includes("regretted purchase: AirPods")), true);
+
+    const removed = await del(`/purchases/${row._id.toString()}`, ada.cookie);
+    assert.equal(removed.status, 204);
+    assert.equal(await MemoryNote.countDocuments({ userId: ada.id, text: line }), 0);
+    const afterHits = await purchaseClient?.searchMemories(assistantId, "AirPods", 5);
+    assert.deepEqual(afterHits, []);
   });
 
   it("returns 404 when another user deletes a purchase", async () => {

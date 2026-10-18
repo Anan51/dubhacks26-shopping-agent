@@ -22,7 +22,7 @@ describe("computeImpulseScore reads shopper services", { concurrency: false }, (
     await mongod.stop();
   });
 
-  it("keeps a new shopper at 4.5, skips example rows, and counts survey regrets", async () => {
+  it("keeps a new shopper at 4.5 and does not score from PurchaseRecords", async () => {
     const quiet = await User.create({
       email: "quiet-score@example.com",
       passwordHash: "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHQ$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -117,8 +117,8 @@ describe("computeImpulseScore reads shopper services", { concurrency: false }, (
     assert.equal(held.why, null);
 
     const surveyed = await computeImpulseScore(ada.id, phone, undefined, { backboardEnabled: true });
-    assert.equal(surveyed.why, "You regretted a similar purchase before.");
-    assert.ok(surveyed.score > blank.score);
+    assert.equal(surveyed.score, 4.5);
+    assert.equal(surveyed.why, null);
     assert.equal(blank.score, 4.5);
 
     const necessary = await computeImpulseScore(

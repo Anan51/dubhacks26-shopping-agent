@@ -63,10 +63,12 @@ export type AppDeps = {
   /** Test override. Request handlers read this instead of process.env when set. */
   env?: NodeJS.ProcessEnv;
   /**
-   * Regret history moves the 1–8 score only when this is true.
-   * Omitted follows BACKBOARD_API_KEY. Unset leaves the bag score unchanged.
+   * Similar-regret search moves the 1–8 score only when this is true.
+   * Omitted follows BACKBOARD_API_KEY. Unset leaves price, hours, and necessity alone.
    */
   backboardEnabled?: boolean;
+  /** Used for the regret search when `backboardEnabled` is true. The assistant id is read from the user row. */
+  backboardClient?: BackboardClient;
   /** When set, a valid JWT cookie or bearer token fills req.user and does not block anonymous demo calls. */
   readSession?: (req: Request) => Promise<{ id: string; email: string } | null>;
   /**
@@ -654,7 +656,10 @@ export function createApp(deps: AppDeps): RunningApp {
 
   async function attachImpulse(cart: Cart, authUserId: string | undefined, mode: "create" | "refresh"): Promise<void> {
     const wasVault = cart.status === "vault";
-    const reading = await readingForCart(authUserId ?? cart.userId, cart, { backboardEnabled });
+    const reading = await readingForCart(authUserId ?? cart.userId, cart, {
+      backboardEnabled,
+      ...(deps.backboardClient ? { client: deps.backboardClient } : {}),
+    });
     applyImpulseReading(cart, reading, now(), deps.demoReminderMs, mode);
     if (!wasVault && cart.status === "vault") {
       scheduler.arm(cart);

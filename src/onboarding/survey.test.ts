@@ -51,6 +51,7 @@ describe("onboarding survey", () => {
       searchMemories: (assistantId, query, limit) => inner.searchMemories(assistantId, query, limit),
       sendMessage: (input) => inner.sendMessage(input),
       resetMemories: (assistantId) => inner.resetMemories(assistantId),
+      deleteMemory: (assistantId, memoryId) => inner.deleteMemory(assistantId, memoryId),
     };
     const memory = createMemoryRuntime({}, { client, remote: true });
     directory = memory.directory;
@@ -326,6 +327,7 @@ describe("onboarding survey", () => {
         throw new Error("sendMessage should not run");
       },
       resetMemories: async () => undefined,
+      deleteMemory: async () => undefined,
     };
     await assert.rejects(
       () => writeUserMemoryLine(ada.id, budgetMemoryLine("hourly rate", 1), "goal", { directory, client: stalled, remote: false }),
