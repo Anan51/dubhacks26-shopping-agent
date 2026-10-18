@@ -9,7 +9,17 @@ const LOGIN_ERROR = "Invalid email or password.";
 const SIGNUP_ERROR = "Could not sign up.";
 const REACH_ERROR = "Could not reach the server.";
 
-export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boolean {
+export type PopupAccount = {
+  id: string;
+  email: string;
+  token: string | null;
+};
+
+export function mountPopupAuth(
+  parent: HTMLElement,
+  originValue: unknown,
+  hooks?: { onAuthChange?: (account: PopupAccount | null) => void },
+): boolean {
   const parsed = authOriginFromStorage(originValue);
   if (!parsed) {
     return false;
@@ -84,6 +94,7 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
   }, unauthorized);
   section.append(tabs, purchasesPanel, settingsPanel);
   parent.prepend(style, section);
+  let announcedId: string | null = null;
 
   signup.addEventListener("click", () => {
     void submit("signup");
@@ -127,7 +138,7 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
         showError(kind === "login" ? LOGIN_ERROR : SIGNUP_ERROR);
         return;
       }
-      await showSignedIn(account.email, account.token);
+      await showSignedIn(account);
     } catch {
       showError(REACH_ERROR);
     }
@@ -150,7 +161,7 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
         return;
       }
       sessionToken = await readStoredToken();
-      await showSignedIn(account.email);
+      await showSignedIn(account);
     } catch {
       showSignedOut();
     }
@@ -181,17 +192,22 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
     showSignedOut();
   }
 
-  async function showSignedIn(address: string, token?: string | null): Promise<void> {
+  async function showSignedIn(account: { id: string; email: string; token: string | null }): Promise<void> {
     const view = ++viewEpoch;
-    if (token) {
-      sessionToken = token;
-      await storeToken(token);
+    if (account.token) {
+      sessionToken = account.token;
+      await storeToken(account.token);
     } else if (!sessionToken) {
       sessionToken = await readStoredToken();
     }
+    if (view !== viewEpoch) {
+      return;
+    }
     form.hidden = true;
     signed.hidden = false;
-    who.textContent = address;
+    who.textContent = account.email;
+    announcedId = account.id;
+    hooks?.onAuthChange?.({ id: account.id, email: account.email, token: sessionToken });
     const completed = await survey.refresh();
     if (view !== viewEpoch || completed === "unauthorized") {
       return;
@@ -209,6 +225,11 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
     who.textContent = "";
     survey.hide();
     hideAccountPanels();
+    if (announcedId === null) {
+      return;
+    }
+    announcedId = null;
+    hooks?.onAuthChange?.(null);
   }
 
   function showPurchases(): void {
@@ -278,13 +299,17 @@ function actionButton(text: string): HTMLButtonElement {
   return button;
 }
 
-async function readUser(response: Response): Promise<{ email: string; token: string | null } | null> {
+async function readUser(response: Response): Promise<{ id: string; email: string; token: string | null } | null> {
   const body = (await response.json()) as unknown;
-  if (!isRecord(body) || !isRecord(body.user) || typeof body.user.email !== "string") {
+  if (!isRecord(body) || !isRecord(body.user) || typeof body.user.email !== "string" || typeof body.user.id !== "string") {
+    return null;
+  }
+  const id = body.user.id.trim();
+  if (id.length === 0) {
     return null;
   }
   const token = typeof body.token === "string" && body.token.length > 0 ? body.token : null;
-  return { email: body.user.email, token };
+  return { id, email: body.user.email, token };
 }
 
 function storeToken(token: string): Promise<void> {
