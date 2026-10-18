@@ -11,6 +11,10 @@ function signals(overrides: Partial<Signals> = {}): Signals {
     condition: "fine",
     problemText: "the battery dies by 3pm",
     problems: ["battery"],
+    needVsWant: "unknown",
+    urgency: "medium",
+    currentPhoneBroken: false,
+    reasonText: "",
     owedCents: 42_000,
     budgetCents: 0,
     dueTodayCents: 100_000,
@@ -26,7 +30,8 @@ describe("phraseDecision", () => {
     const text = phraseDecision(decision, signals(), "keywords");
     assert.match(text, /^Waiting 12 months saves you \$280\./);
     assert.match(text, /You said "the battery dies by 3pm"/);
-    assert.match(text, /Parsed with keywords/);
+    assert.match(text, /Need vs want: unknown \(keywords\)/);
+    assert.match(text, /Price math decided this/);
     assert.match(text, /example data/);
   });
 
@@ -34,7 +39,7 @@ describe("phraseDecision", () => {
     const decision = decide(signals({ owedCents: 0 }));
     const text = phraseDecision(decision, signals({ owedCents: 0, problemText: "" }), null);
     assert.match(text, /^Unlock /);
-    assert.match(text, /example trade-in and financing until you reply/);
+    assert.match(text, /Need vs want: unknown \(default\)/);
   });
 });
 

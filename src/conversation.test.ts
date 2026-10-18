@@ -51,7 +51,7 @@ describe("applyTurn", () => {
     });
     assert.equal(result.cart?.decision?.action, "sleep");
     assert.match(result.reply ?? "", /^Waiting /);
-    assert.match(result.reply ?? "", /Parsed with keywords/);
+    assert.match(result.reply ?? "", /Current phone broken: yes \(keywords\)/);
     assert.equal(result.cart?.signalSource, "keywords");
   });
 

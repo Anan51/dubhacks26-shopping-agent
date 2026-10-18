@@ -1,4 +1,4 @@
-import type { Condition, Decision, Signals } from "./types.js";
+import { assertNever, type Condition, type Decision, type SignalEffect, type Signals, type VerdictAction } from "./types.js";
 
 /** Synthetic installment used only for the payoff side of the comparison. */
 export const MONTHLY_PAYMENT_CENTS = 3_500;
@@ -28,9 +28,13 @@ const TRADE_IN_ANCHORS: readonly { months: number; cents: number }[] = [
 ];
 
 /**
- * Cost now versus cost later. Later is the month in the next year where
- * financing paydown beats trade-in decay by the most. No promo prices.
- * This function does not read chat text.
+ * Cost now versus cost later, then the shopper's motive.
+ * This function does not read chat text. It only sees `Signals`.
+ *
+ * Precedence:
+ * 1. need + a broken current phone + high urgency unlocks now, even when waiting saves money.
+ * 2. A want with low urgency sleeps, even when waiting does not save money.
+ * 3. Otherwise trade-in decay versus financing: sleep on the month that saves the most, or unlock when none do.
  */
 export function decide(signals: Signals): Decision {
   const newDeviceCents = signals.phonePriceCents;
@@ -48,20 +52,50 @@ export function decide(signals: Signals): Decision {
       best = quote;
     }
   }
-  const action = bestSavings > 0 ? "sleep" : "unlock";
+  const mathAction: VerdictAction = bestSavings > 0 ? "sleep" : "unlock";
+  const effect = motiveEffect(signals);
+  const action = applyEffect(mathAction, effect);
+  const sleepMonths = action === "sleep" ? (bestMonths > 0 ? bestMonths : 1) : 0;
   return {
     action,
-    waitMonths: action === "sleep" ? bestMonths : 0,
-    savingsCents: action === "sleep" ? bestSavings : best.savingsCents,
+    mathAction,
+    mathWaitMonths: mathAction === "sleep" ? bestMonths : 0,
+    mathSavingsCents: mathAction === "sleep" ? bestSavings : best.savingsCents,
+    signalEffect: effect,
+    waitMonths: sleepMonths,
+    savingsCents: action === "sleep" && effect === "math" ? bestSavings : action === "unlock" && effect === "math" ? best.savingsCents : bestSavings,
     costNowCents,
-    costLaterCents: action === "sleep" ? best.costLaterCents : costNowCents,
+    costLaterCents: action === "sleep" && bestMonths > 0 ? best.costLaterCents : costNowCents,
     tradeInNowCents,
-    tradeInLaterCents: action === "sleep" ? best.tradeInLaterCents : tradeInNowCents,
+    tradeInLaterCents: action === "sleep" && bestMonths > 0 ? best.tradeInLaterCents : tradeInNowCents,
     financingNowCents,
-    financingLaterCents: action === "sleep" ? best.financingLaterCents : financingNowCents,
+    financingLaterCents: action === "sleep" && bestMonths > 0 ? best.financingLaterCents : financingNowCents,
     newDeviceCents,
     tradeInCurve: tradeInCurve(signals.deviceAgeMonths, signals.condition, MAX_WAIT_MONTHS),
   };
+}
+
+function motiveEffect(signals: Signals): SignalEffect {
+  if (signals.needVsWant === "need" && signals.currentPhoneBroken && signals.urgency === "high") {
+    return "need_unlock";
+  }
+  if (signals.needVsWant === "want" && signals.urgency === "low") {
+    return "want_sleep";
+  }
+  return "math";
+}
+
+function applyEffect(mathAction: VerdictAction, effect: SignalEffect): VerdictAction {
+  switch (effect) {
+    case "need_unlock":
+      return "unlock";
+    case "want_sleep":
+      return "sleep";
+    case "math":
+      return mathAction;
+    default:
+      return assertNever(effect);
+  }
 }
 
 export function tradeInCurve(ageMonths: number, condition: Condition, span: number): { month: number; cents: number }[] {

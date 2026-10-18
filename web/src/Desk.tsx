@@ -9,6 +9,7 @@ import {
   readPayGate,
   sendDeskMessage,
   type CartResponse,
+  type Decision,
   type PayGate,
   type PublicConfig,
   type TranscriptTurn,
@@ -236,6 +237,21 @@ export function Desk() {
   );
 }
 
+function effectSentence(effect: Decision["signalEffect"]): string {
+  switch (effect) {
+    case "need_unlock":
+      return "A needed, broken phone with high urgency unlocked it.";
+    case "want_sleep":
+      return "A want with low urgency kept it marinating.";
+    case "math":
+      return "The motive signals did not override the price math.";
+    default: {
+      const unreachable: never = effect;
+      return unreachable;
+    }
+  }
+}
+
 function MathPanel({ cart, gate }: { cart: CartResponse; gate: PayGate | null }) {
   const decision = cart.decision;
   return (
@@ -293,7 +309,39 @@ function MathPanel({ cart, gate }: { cart: CartResponse; gate: PayGate | null })
                 <th>Inputs</th>
                 <td>
                   age {cart.signals.deviceAgeMonths ?? "—"} months, {cart.signals.condition ?? "—"}, owe{" "}
-                  {formatUsd(cart.signals.owedCents ?? 0)}, source {cart.signalSource ?? "example"}
+                  {formatUsd(cart.signals.owedCents ?? 0)}
+                </td>
+              </tr>
+              <tr>
+                <th>Need vs want</th>
+                <td>
+                  {cart.signals.needVsWant ?? "unknown"} ({cart.motiveSources?.needVsWant ?? cart.signalSource ?? "default"})
+                </td>
+              </tr>
+              <tr>
+                <th>Urgency</th>
+                <td>
+                  {cart.signals.urgency ?? "medium"} ({cart.motiveSources?.urgency ?? cart.signalSource ?? "default"})
+                </td>
+              </tr>
+              <tr>
+                <th>Phone broken</th>
+                <td>
+                  {cart.signals.currentPhoneBroken ? "yes" : "no"} ({cart.motiveSources?.currentPhoneBroken ?? cart.signalSource ?? "default"})
+                </td>
+              </tr>
+              <tr>
+                <th>Reason</th>
+                <td>
+                  {cart.signals.reasonText || "none"} ({cart.motiveSources?.reasonText ?? cart.signalSource ?? "default"})
+                </td>
+              </tr>
+              <tr>
+                <th>Why it moved</th>
+                <td>
+                  Price math said {decision.mathAction}
+                  {decision.mathAction === "sleep" ? ` (${formatUsd(decision.mathSavingsCents)} over ${decision.mathWaitMonths} months)` : ""}.{" "}
+                  {effectSentence(decision.signalEffect)} Verdict: {decision.action}.
                 </td>
               </tr>
             </tbody>

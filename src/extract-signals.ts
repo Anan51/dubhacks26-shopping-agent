@@ -1,11 +1,21 @@
 import { grokChat, DEFAULT_XAI_MODEL } from "./grok.js";
-import type { Condition, ConversationContext, ProblemTag, SignalSource, Signals } from "./types.js";
+import type {
+  Condition,
+  ConversationContext,
+  MotiveSources,
+  NeedVsWant,
+  ProblemTag,
+  SignalSource,
+  Signals,
+  Urgency,
+} from "./types.js";
 
 const PROBLEM_TAGS: readonly ProblemTag[] = ["battery", "screen", "performance", "cost"];
 
 export type Extraction = {
   signals: Partial<Signals>;
   source: SignalSource;
+  motiveSources: MotiveSources;
 };
 
 export type ExtractOptions = {
@@ -28,9 +38,13 @@ export async function extractSignals(
   const keyword = keywordExtract(text, conversation);
   const llm = await grokExtract(text, conversation, options);
   if (!llm) {
-    return { signals: keyword, source: "keywords" };
+    return { signals: keyword, source: "keywords", motiveSources: motiveFieldSources(keyword, null) };
   }
-  return { signals: mergeSignalPatches(keyword, llm), source: "grok" };
+  return {
+    signals: mergeSignalPatches(keyword, llm),
+    source: "grok",
+    motiveSources: motiveFieldSources(keyword, llm),
+  };
 }
 
 function keywordExtract(text: string, conversation: ConversationContext): Partial<Signals> {
@@ -62,10 +76,35 @@ function keywordExtract(text: string, conversation: ConversationContext): Partia
     patch.budgetCents = money.budgetCents;
   }
 
+  const motive = extractMotive(normalized, trimmed);
+  if (motive.needVsWant !== undefined) {
+    patch.needVsWant = motive.needVsWant;
+  }
+  if (motive.urgency !== undefined) {
+    patch.urgency = motive.urgency;
+  }
+  if (motive.currentPhoneBroken === true) {
+    patch.currentPhoneBroken = true;
+  }
+  if (motive.reasonText !== undefined) {
+    patch.reasonText = motive.reasonText;
+  }
+
   return patch;
 }
 
-const SHOPPER_KEYS = ["deviceAgeMonths", "condition", "problemText", "problems", "owedCents", "budgetCents"] as const;
+const SHOPPER_KEYS = [
+  "deviceAgeMonths",
+  "condition",
+  "problemText",
+  "problems",
+  "needVsWant",
+  "urgency",
+  "currentPhoneBroken",
+  "reasonText",
+  "owedCents",
+  "budgetCents",
+] as const;
 
 /** Cart totals stay on the cart. Chat text cannot overwrite them. */
 export function pickShopperSignals(patch: Partial<Signals>): Partial<Signals> {
@@ -113,6 +152,26 @@ function assignShopperField(
     case "budgetCents":
       if (typeof value === "number") {
         target.budgetCents = value;
+      }
+      return;
+    case "needVsWant":
+      if (value === "need" || value === "want" || value === "unknown") {
+        target.needVsWant = value;
+      }
+      return;
+    case "urgency":
+      if (value === "low" || value === "medium" || value === "high") {
+        target.urgency = value;
+      }
+      return;
+    case "currentPhoneBroken":
+      if (typeof value === "boolean") {
+        target.currentPhoneBroken = value;
+      }
+      return;
+    case "reasonText":
+      if (typeof value === "string") {
+        target.reasonText = value;
       }
       return;
     default: {
@@ -165,6 +224,32 @@ function extractAge(text: string, conversation: ConversationContext): number | u
     return clampAge(asMonths);
   }
   return undefined;
+}
+
+function extractMotive(normalized: string, trimmed: string): Partial<Signals> {
+  const patch: Partial<Signals> = {};
+  const need = /\b(need|needed|for work|work tomorrow|deadline)\b/.test(normalized);
+  const want = /\b(looks nice|new color|the color|for fun|pretty)\b/.test(normalized) || (/\bwant\b/.test(normalized) && !need);
+  if (need) {
+    patch.needVsWant = "need";
+  } else if (want) {
+    patch.needVsWant = "want";
+  }
+  if (/\b(tomorrow|today|asap|right now|urgent|work tomorrow|dies by|can't use|cannot use)\b/.test(normalized)) {
+    patch.urgency = "high";
+  } else if (/\b(no rush|whenever|someday|looks nice|new color|not urgent)\b/.test(normalized)) {
+    patch.urgency = "low";
+  }
+  if (
+    /\b(cracked|cracks|crack|shattered|shatter|smashed|broken|battery|dies|dying|unusable)\b/.test(normalized) ||
+    /won'?t turn on|will not turn on|does(?:n'?t| not) turn on/.test(normalized)
+  ) {
+    patch.currentPhoneBroken = true;
+  }
+  if (patch.needVsWant !== undefined || patch.urgency !== undefined || patch.currentPhoneBroken === true) {
+    patch.reasonText = trimmed.slice(0, 140);
+  }
+  return patch;
 }
 
 function extractProblems(normalized: string): ProblemTag[] {
@@ -351,7 +436,35 @@ export function parseGrokSignalJson(raw: string): Partial<Signals> | null {
   if (typeof parsed.budgetCents === "number" && Number.isInteger(parsed.budgetCents) && parsed.budgetCents >= 0 && parsed.budgetCents <= MAX_MONEY_CENTS) {
     patch.budgetCents = parsed.budgetCents;
   }
+  const needVsWant = parseNeedVsWant(parsed.needVsWant);
+  if (needVsWant !== undefined) {
+    patch.needVsWant = needVsWant;
+  }
+  const urgency = parseUrgency(parsed.urgency);
+  if (urgency !== undefined) {
+    patch.urgency = urgency;
+  }
+  if (typeof parsed.currentPhoneBroken === "boolean") {
+    patch.currentPhoneBroken = parsed.currentPhoneBroken;
+  }
+  if (typeof parsed.reasonText === "string" && parsed.reasonText.trim().length > 0) {
+    patch.reasonText = parsed.reasonText.trim().slice(0, 140);
+  }
   return Object.keys(patch).length > 0 ? patch : null;
+}
+
+function parseNeedVsWant(value: unknown): NeedVsWant | undefined {
+  if (value === "need" || value === "want" || value === "unknown") {
+    return value;
+  }
+  return undefined;
+}
+
+function parseUrgency(value: unknown): Urgency | undefined {
+  if (value === "low" || value === "medium" || value === "high") {
+    return value;
+  }
+  return undefined;
 }
 
 async function grokExtract(text: string, conversation: ConversationContext, options: ExtractOptions): Promise<Partial<Signals> | null> {
@@ -361,8 +474,10 @@ async function grokExtract(text: string, conversation: ConversationContext, opti
   const prompt = [
     "Extract shopper signals from this phone-upgrade chat message.",
     "Reply with JSON only, no markdown.",
-    'Keys: deviceAgeMonths (integer months or null), condition ("fine"|"minor"|"broken"|"unusable" or null), problems (array of "battery"|"screen"|"performance"|"cost"), problemText (string or null), owedCents (integer cents or null), budgetCents (integer cents or null).',
-    "Map a battery that dies during the day to problems [\"battery\"] and condition \"broken\".",
+    'Keys: deviceAgeMonths (integer months or null), condition ("fine"|"minor"|"broken"|"unusable" or null), problems (array of "battery"|"screen"|"performance"|"cost"), problemText (string or null), owedCents (integer cents or null), budgetCents (integer cents or null), needVsWant ("need"|"want"|"unknown"), urgency ("low"|"medium"|"high"), currentPhoneBroken (boolean), reasonText (short string).',
+    "Map a battery that dies during the day to problems [\"battery\"], condition \"broken\", and currentPhoneBroken true.",
+    'A cracked phone needed for work tomorrow is needVsWant "need", urgency "high", currentPhoneBroken true.',
+    'A new color with no rush is needVsWant "want" and urgency "low".',
     `The question we asked was: ${conversation.step}.`,
     "",
     text,
@@ -397,7 +512,38 @@ function stripEmpty(patch: Partial<Signals>): Partial<Signals> {
   if (patch.budgetCents !== undefined) {
     next.budgetCents = patch.budgetCents;
   }
+  if (patch.needVsWant !== undefined) {
+    next.needVsWant = patch.needVsWant;
+  }
+  if (patch.urgency !== undefined) {
+    next.urgency = patch.urgency;
+  }
+  if (patch.currentPhoneBroken !== undefined) {
+    next.currentPhoneBroken = patch.currentPhoneBroken;
+  }
+  if (patch.reasonText !== undefined && patch.reasonText.length > 0) {
+    next.reasonText = patch.reasonText;
+  }
   return next;
+}
+
+function motiveFieldSources(keyword: Partial<Signals>, llm: Partial<Signals> | null): MotiveSources {
+  return {
+    needVsWant: fieldSource(keyword.needVsWant, llm?.needVsWant),
+    urgency: fieldSource(keyword.urgency, llm?.urgency),
+    currentPhoneBroken: fieldSource(keyword.currentPhoneBroken, llm?.currentPhoneBroken),
+    reasonText: fieldSource(keyword.reasonText, llm?.reasonText),
+  };
+}
+
+function fieldSource(keywordValue: unknown, llmValue: unknown): MotiveSources["needVsWant"] {
+  if (llmValue !== undefined && llmValue !== "") {
+    return "grok";
+  }
+  if (keywordValue !== undefined && keywordValue !== "") {
+    return "keywords";
+  }
+  return "default";
 }
 
 function uniqueProblems(tags: readonly ProblemTag[]): ProblemTag[] {

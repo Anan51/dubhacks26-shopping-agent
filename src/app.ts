@@ -373,7 +373,13 @@ function seedDecision(cart: Cart): void {
   const signals = withCartFacts({}, cart.totalCents);
   cart.signals = signals;
   cart.decision = decide(signals);
-  cart.explanation = phraseDecision(cart.decision, signals, null);
+  cart.motiveSources = {
+    needVsWant: "default",
+    urgency: "default",
+    currentPhoneBroken: "default",
+    reasonText: "default",
+  };
+  cart.explanation = phraseDecision(cart.decision, signals, null, cart.motiveSources);
   cart.signalSource = null;
 }
 

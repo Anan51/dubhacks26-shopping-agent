@@ -5,6 +5,20 @@ export type ProblemTag = "battery" | "screen" | "performance" | "cost";
 
 export type SignalSource = "grok" | "keywords";
 
+export type NeedVsWant = "need" | "want" | "unknown";
+
+export type Urgency = "low" | "medium" | "high";
+
+/** Where a motive field came from. Default means the shopper did not say. */
+export type MotiveSource = SignalSource | "default";
+
+export type MotiveSources = {
+  needVsWant: MotiveSource;
+  urgency: MotiveSource;
+  currentPhoneBroken: MotiveSource;
+  reasonText: MotiveSource;
+};
+
 export type Signals = {
   deviceAgeMonths: number;
   condition: Condition;
@@ -12,6 +26,13 @@ export type Signals = {
   problemText: string;
   /** Problems named in the shopper's words. Empty when they did not name one. */
   problems: ProblemTag[];
+  /** Whether this purchase is a need, a want, or not stated. */
+  needVsWant: NeedVsWant;
+  urgency: Urgency;
+  /** True when the shopper's current phone is broken or unusable. */
+  currentPhoneBroken: boolean;
+  /** Short reason taken from the shopper's words. */
+  reasonText: string;
   owedCents: number;
   budgetCents: number;
   /** Phone plus accessories due today. Not a monthly plan. */
@@ -99,6 +120,8 @@ export type Cart = {
   vaultUntil: string | null;
   /** Which parser produced the shopper signals used for the verdict. */
   signalSource: SignalSource | null;
+  /** Per-field source for the motive signals that can move the verdict. */
+  motiveSources: MotiveSources | null;
   /** True while Grok is reading the latest shopper message for this cart. */
   reading: boolean;
   userId: string | null;
@@ -108,8 +131,17 @@ export type Cart = {
 /** Sleep on it, or end marinating. Switches on `action` use `assertNever`. */
 export type VerdictAction = "sleep" | "unlock";
 
+/** How the motive signals moved the price-math call. `math` means they did not. */
+export type SignalEffect = "need_unlock" | "want_sleep" | "math";
+
 export type Decision = {
   action: VerdictAction;
+  /** What trade-in and financing alone would have said. */
+  mathAction: VerdictAction;
+  mathWaitMonths: number;
+  mathSavingsCents: number;
+  /** Why `action` matches or leaves `mathAction`. */
+  signalEffect: SignalEffect;
   /** Month in 1..12 where waiting saves the most. 0 when buying now is cheaper. */
   waitMonths: number;
   savingsCents: number;

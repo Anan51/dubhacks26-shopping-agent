@@ -270,8 +270,17 @@ function decisionFrom(value: Record<string, unknown>): OverlayModel["decision"] 
     }
     return [{ month: point.month, cents: point.cents }];
   });
+  const mathAction = value.mathAction === "sleep" || value.mathAction === "unlock" ? value.mathAction : value.action;
+  const signalEffect =
+    value.signalEffect === "need_unlock" || value.signalEffect === "want_sleep" || value.signalEffect === "math"
+      ? value.signalEffect
+      : "math";
   return {
     action: value.action,
+    mathAction,
+    mathWaitMonths: typeof value.mathWaitMonths === "number" ? value.mathWaitMonths : 0,
+    mathSavingsCents: typeof value.mathSavingsCents === "number" ? value.mathSavingsCents : 0,
+    signalEffect,
     waitMonths: typeof value.waitMonths === "number" ? value.waitMonths : 0,
     savingsCents: typeof value.savingsCents === "number" ? value.savingsCents : 0,
     costNowCents: typeof value.costNowCents === "number" ? value.costNowCents : 0,

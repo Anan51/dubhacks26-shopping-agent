@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { DEFAULT_XAI_MODEL, DEFAULT_XAI_TIMEOUT_MS, xaiModelFrom, xaiTimeoutFrom } from "./grok.js";
+import { withCartFacts } from "./carts.js";
 import { decide } from "./heuristic.js";
 import { extractCartCode, extractSignals, parseGrokSignalJson, pickShopperSignals } from "./extract-signals.js";
 import type { ConversationContext, Signals } from "./types.js";
@@ -132,6 +133,10 @@ function fullSignals(partial: Partial<Signals>): Signals {
     condition: partial.condition ?? "broken",
     problemText: partial.problemText ?? "my battery dies by 3pm",
     problems: partial.problems ?? ["battery"],
+    needVsWant: partial.needVsWant ?? "unknown",
+    urgency: partial.urgency ?? "medium",
+    currentPhoneBroken: partial.currentPhoneBroken ?? false,
+    reasonText: partial.reasonText ?? "",
     owedCents: partial.owedCents ?? 0,
     budgetCents: partial.budgetCents ?? 200_000,
     dueTodayCents: 82_800,
@@ -139,6 +144,91 @@ function fullSignals(partial: Partial<Signals>): Signals {
     monthlyPlanCents: 7_000,
   };
 }
+
+describe("motive flips", () => {
+  it("keywords unlock a needed broken phone and sleep on a low-urgency want", async () => {
+    const need = await extractSignals(
+      "cracked screen, battery dies by 3pm, I need it for work tomorrow",
+      context("confirm"),
+    );
+    assert.equal(need.source, "keywords");
+    assert.equal(need.signals.needVsWant, "need");
+    assert.equal(need.signals.urgency, "high");
+    assert.equal(need.signals.currentPhoneBroken, true);
+    assert.equal(need.motiveSources.needVsWant, "keywords");
+    const needed = decide(withCartFacts(need.signals, 120_000));
+    assert.equal(needed.mathAction, "sleep");
+    assert.equal(needed.action, "unlock");
+    assert.equal(needed.signalEffect, "need_unlock");
+
+    const want = await extractSignals("the new color looks nice", context("confirm"));
+    assert.equal(want.signals.needVsWant, "want");
+    assert.equal(want.signals.urgency, "low");
+    assert.equal(want.motiveSources.urgency, "keywords");
+    const wanted = decide(withCartFacts({ ...want.signals, owedCents: 0 }, 120_000));
+    assert.equal(wanted.mathAction, "unlock");
+    assert.equal(wanted.action, "sleep");
+    assert.equal(wanted.signalEffect, "want_sleep");
+  });
+
+  it("mocked Grok flips both calls, and a bad response falls back to keywords", async () => {
+    const needText = "cracked screen, battery dies by 3pm, I need it for work tomorrow";
+    const grokNeed = await extractSignals(needText, context("confirm"), {
+      apiKey: "test-key",
+      fetchImpl: async () =>
+        Response.json({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  needVsWant: "need",
+                  urgency: "high",
+                  currentPhoneBroken: true,
+                  reasonText: "needs a working phone for work tomorrow",
+                  condition: "broken",
+                  problems: ["screen", "battery"],
+                }),
+              },
+            },
+          ],
+        }),
+    });
+    assert.equal(grokNeed.source, "grok");
+    assert.equal(grokNeed.motiveSources.currentPhoneBroken, "grok");
+    assert.equal(decide(withCartFacts(grokNeed.signals, 120_000)).action, "unlock");
+
+    const grokWant = await extractSignals("the new color looks nice", context("confirm"), {
+      apiKey: "test-key",
+      fetchImpl: async () =>
+        Response.json({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  needVsWant: "want",
+                  urgency: "low",
+                  currentPhoneBroken: false,
+                  reasonText: "likes the new color",
+                }),
+              },
+            },
+          ],
+        }),
+    });
+    assert.equal(grokWant.motiveSources.needVsWant, "grok");
+    const wanted = decide(withCartFacts({ ...grokWant.signals, owedCents: 0 }, 120_000));
+    assert.equal(wanted.action, "sleep");
+    assert.equal(wanted.signalEffect, "want_sleep");
+
+    const fallback = await extractSignals(needText, context("confirm"), {
+      apiKey: "test-key",
+      fetchImpl: async () => Response.json({ choices: [{ message: { content: "nope" } }] }),
+    });
+    assert.equal(fallback.source, "keywords");
+    assert.equal(fallback.motiveSources.needVsWant, "keywords");
+    assert.equal(decide(withCartFacts(fallback.signals, 120_000)).signalEffect, "need_unlock");
+  });
+});
 
 describe("Grok defaults", () => {
   it("uses the non-reasoning model and an 8 second timeout unless overridden", () => {

@@ -181,9 +181,10 @@ async function fillDecision(session: Session, cart: Cart, input: ApplyInput): Pr
   const signals = withCartFacts(session.signals, cart.totalCents);
   const decision = decide(signals);
   cart.signalSource = extraction.source;
+  cart.motiveSources = extraction.motiveSources;
   cart.signals = signals;
   cart.decision = decision;
-  cart.explanation = phraseDecision(decision, signals, extraction.source);
+  cart.explanation = phraseDecision(decision, signals, extraction.source, extraction.motiveSources);
   session.signals = signals;
 }
 

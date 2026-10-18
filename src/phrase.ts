@@ -1,14 +1,19 @@
 import { formatUsd } from "./format.js";
 import { DEFAULT_XAI_MODEL, DEFAULT_XAI_TIMEOUT_MS, grokChat } from "./grok.js";
 import { MONTHLY_PAYMENT_CENTS } from "./heuristic.js";
-import { assertNever, type Decision, type SignalSource, type Signals } from "./types.js";
+import { assertNever, type Decision, type MotiveSources, type SignalSource, type Signals } from "./types.js";
 
 /** Plain-language verdict. Does not choose sleep versus unlock. */
-export function phraseDecision(decision: Decision, signals: Signals, source: SignalSource | null = "keywords"): string {
+export function phraseDecision(
+  decision: Decision,
+  signals: Signals,
+  source: SignalSource | null = "keywords",
+  motiveSources: MotiveSources | null = null,
+): string {
   const lead = verdictLead(decision);
-  const numbers = `Buying now is ${formatUsd(decision.costNowCents)} (the ${formatUsd(decision.newDeviceCents)} bag, plus ${formatUsd(decision.financingNowCents)} still owed, minus ${formatUsd(decision.tradeInNowCents)} trade-in). In ${decision.waitMonths || 0} months it is ${formatUsd(decision.costLaterCents)}, with trade-in at ${formatUsd(decision.tradeInLaterCents)} and ${formatUsd(decision.financingLaterCents)} left on the old phone if you keep paying ${formatUsd(MONTHLY_PAYMENT_CENTS)} a month.`;
-  const said = signals.problemText.length > 0 ? `You said "${signals.problemText}".` : "";
-  return [lead, numbers, said, parsedLine(source), "Trade-in values and the $35 financing are example data, not a carrier quote."].filter((part) => part.length > 0).join("\n\n");
+  const numbers = `Buying now is ${formatUsd(decision.costNowCents)} (the ${formatUsd(decision.newDeviceCents)} bag, plus ${formatUsd(decision.financingNowCents)} still owed, minus ${formatUsd(decision.tradeInNowCents)} trade-in). In ${decision.mathWaitMonths || decision.waitMonths || 0} months it is ${formatUsd(decision.costLaterCents)}, with trade-in at ${formatUsd(decision.tradeInLaterCents)} and ${formatUsd(decision.financingLaterCents)} left on the old phone if you keep paying ${formatUsd(MONTHLY_PAYMENT_CENTS)} a month.`;
+  const said = signals.reasonText.length > 0 ? `You said "${signals.reasonText}".` : signals.problemText.length > 0 ? `You said "${signals.problemText}".` : "";
+  return [lead, numbers, said, signalReport(decision, signals, source, motiveSources), "Trade-in values and the $35 financing are example data, not a carrier quote."].filter((part) => part.length > 0).join("\n\n");
 }
 
 export async function polishPhrase(
@@ -43,6 +48,19 @@ export async function polishPhrase(
 }
 
 function verdictLead(decision: Decision): string {
+  switch (decision.signalEffect) {
+    case "need_unlock":
+      return "Unlock — you need a working phone, so the savings do not decide this.";
+    case "want_sleep":
+      return "Waiting — this is a want with low urgency. Sleep on it?";
+    case "math":
+      return mathLead(decision);
+    default:
+      return assertNever(decision.signalEffect);
+  }
+}
+
+function mathLead(decision: Decision): string {
   switch (decision.action) {
     case "sleep":
       return `Waiting ${decision.waitMonths} months saves you ${formatUsd(decision.savingsCents)}. Sleep on it?`;
@@ -53,16 +71,33 @@ function verdictLead(decision: Decision): string {
   }
 }
 
-function parsedLine(source: SignalSource | null): string {
-  switch (source) {
-    case "grok":
-      return "Parsed with Grok.";
-    case "keywords":
-      return "Parsed with keywords.";
-    case null:
-      return "Using example trade-in and financing until you reply.";
+function signalReport(decision: Decision, signals: Signals, source: SignalSource | null, motiveSources: MotiveSources | null): string {
+  const sources = motiveSources ?? {
+    needVsWant: source ?? "default",
+    urgency: source ?? "default",
+    currentPhoneBroken: source ?? "default",
+    reasonText: source ?? "default",
+  };
+  const lines = [
+    `Need vs want: ${signals.needVsWant} (${sources.needVsWant}).`,
+    `Urgency: ${signals.urgency} (${sources.urgency}).`,
+    `Current phone broken: ${signals.currentPhoneBroken ? "yes" : "no"} (${sources.currentPhoneBroken}).`,
+    `Reason: ${signals.reasonText.length > 0 ? signals.reasonText : "none"} (${sources.reasonText}).`,
+    effectLine(decision),
+  ];
+  return lines.join(" ");
+}
+
+function effectLine(decision: Decision): string {
+  switch (decision.signalEffect) {
+    case "need_unlock":
+      return `Price math said ${decision.mathAction} (${formatUsd(decision.mathSavingsCents)} over ${decision.mathWaitMonths} months). A needed, broken phone with high urgency unlocked it.`;
+    case "want_sleep":
+      return `Price math said ${decision.mathAction}. A want with low urgency kept it marinating.`;
+    case "math":
+      return "Price math decided this. The motive signals did not override it.";
     default:
-      return assertNever(source);
+      return assertNever(decision.signalEffect);
   }
 }
 

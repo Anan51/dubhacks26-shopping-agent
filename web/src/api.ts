@@ -2,6 +2,10 @@ export type CurvePoint = { month: number; cents: number };
 
 export type Decision = {
   action: "sleep" | "unlock";
+  mathAction: "sleep" | "unlock";
+  mathWaitMonths: number;
+  mathSavingsCents: number;
+  signalEffect: "need_unlock" | "want_sleep" | "math";
   waitMonths: number;
   savingsCents: number;
   costNowCents: number;
@@ -39,9 +43,19 @@ export type CartResponse = {
     deviceAgeMonths?: number;
     condition?: string;
     problemText?: string;
+    needVsWant?: "need" | "want" | "unknown";
+    urgency?: "low" | "medium" | "high";
+    currentPhoneBroken?: boolean;
+    reasonText?: string;
     owedCents?: number;
     problems?: string[];
   };
+  motiveSources: {
+    needVsWant: "grok" | "keywords" | "default";
+    urgency: "grok" | "keywords" | "default";
+    currentPhoneBroken: "grok" | "keywords" | "default";
+    reasonText: "grok" | "keywords" | "default";
+  } | null;
   decision: Decision | null;
   explanation: string | null;
   lastPing: CheckoutPing | null;

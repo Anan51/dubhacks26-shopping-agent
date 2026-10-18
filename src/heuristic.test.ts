@@ -10,6 +10,10 @@ function signals(overrides: Partial<Signals> = {}): Signals {
     condition: "fine",
     problemText: "",
     problems: [],
+    needVsWant: "unknown",
+    urgency: "medium",
+    currentPhoneBroken: false,
+    reasonText: "",
     owedCents: EXAMPLE_OWED_CENTS,
     budgetCents: 0,
     dueTodayCents: 100_000,
@@ -52,6 +56,37 @@ describe("decide", () => {
     assert.equal(decision.waitMonths, 0);
     assert.ok(decision.savingsCents <= 0);
     assert.equal(decision.costLaterCents, decision.costNowCents);
+  });
+
+  it("unlocks a needed broken phone even when waiting saves money", () => {
+    const decision = decide(
+      signals({
+        needVsWant: "need",
+        urgency: "high",
+        currentPhoneBroken: true,
+        reasonText: "cracked screen, battery dies by 3pm, I need it for work tomorrow",
+      }),
+    );
+    assert.equal(decision.mathAction, "sleep");
+    assert.equal(decision.action, "unlock");
+    assert.equal(decision.signalEffect, "need_unlock");
+    assert.ok(decision.mathSavingsCents > 0);
+  });
+
+  it("sleeps on a low-urgency want even when waiting saves nothing", () => {
+    const decision = decide(
+      signals({
+        owedCents: 0,
+        deviceAgeMonths: 24,
+        needVsWant: "want",
+        urgency: "low",
+        currentPhoneBroken: false,
+        reasonText: "the new color looks nice",
+      }),
+    );
+    assert.equal(decision.mathAction, "unlock");
+    assert.equal(decision.action, "sleep");
+    assert.equal(decision.signalEffect, "want_sleep");
   });
 
   it("uses the bag price and ignores chat-only fields", () => {
