@@ -1,4 +1,4 @@
-import { readPageBag, type BagLineItem, type PageBag } from "./bag-dom.js";
+import { readPageBag, totalLineQuantity, type BagLineItem, type PageBag } from "./bag-dom.js";
 import type { Bag, StoreAdapter } from "./stores/adapter.js";
 
 /**
@@ -42,7 +42,7 @@ export function pageBagFromStore(bag: Bag | null): PageBag | null {
   return {
     items,
     itemNames: items.map((item) => item.name),
-    quantity: items[0]?.quantity ?? bag.quantity ?? null,
+    quantity: totalLineQuantity(items) ?? bag.quantity ?? null,
     subtotalCents: bag.total,
     totalCents: bag.total,
     parsed: true,

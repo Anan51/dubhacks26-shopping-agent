@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import { DEMO_REPLY_PRESETS } from "../../src/demo-reply-presets.js";
 import { formatUsd } from "../../src/format.js";
+import { cartItemLines } from "../../src/item-name.js";
 import { overlayClockText, type GlanceItem, type GlanceSignals, type GlanceSources } from "../../src/glance.js";
 import { offersSleep } from "../../src/score-band.js";
 import { pauseSentence, priceLine, simmerKicker } from "../../src/overlay-copy.js";
@@ -106,12 +107,21 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
   const clock = overlayClockText(glance, now, remaining);
   const showLockControls = model.necessity !== "necessary" && !unreadable;
   const unlinked = !model.pingDelivered && model.pingReason !== "send_failed" && model.linkMessage;
+  const lines = cartItemLines(model.itemNames);
+  const showItems = !unreadable && model.quantity != null && lines.shown.length > 0;
   return (
     <div className="panel">
       <section className="card" role="dialog" aria-labelledby="simmer-title">
         <p className="kicker">{simmerKicker(model.fallbackPage)}</p>
         <h1 id="simmer-title">{title}</h1>
-        {unreadable ? null : model.quantity != null && model.itemNames[0] ? <p>{model.itemNames[0]}</p> : null}
+        {showItems ? (
+          <ul className="bag-items">
+            {lines.shown.map((name, index) => (
+              <li key={`${index}:${name}`}>{name}</li>
+            ))}
+            {lines.more > 0 ? <li className="fine">+{lines.more} more</li> : null}
+          </ul>
+        ) : null}
         {unreadable ? null : (
           <p>
             {model.quantity != null

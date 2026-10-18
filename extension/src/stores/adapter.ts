@@ -11,7 +11,7 @@ export interface Bag {
   items: BagItem[];
   /** Bag total in integer cents. */
   total: number;
-  /** Units of the first line, for the same card Apple shows. */
+  /** Units of the first line. The card sums every line's quantity. */
   quantity?: number;
 }
 

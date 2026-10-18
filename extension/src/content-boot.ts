@@ -1,3 +1,4 @@
+import { postedItemNames } from "../../src/item-name.js";
 import { applePage, hostOptedOut, isFallbackBag } from "../../src/sites.js";
 import { bagContentKey, bagParseKey, bagReadAction, watchBagDom, type BagWatch, type PageBag } from "./bag-dom.js";
 import { bindCheckoutClicks } from "./checkout-record.js";
@@ -337,7 +338,7 @@ function start(site: StoreAdapter): Running {
         "/api/carts",
         {
           userId: settings.userId,
-          itemNames: bag.items.map((item) => item.item).slice(0, 1),
+          itemNames: postedItemNames(bag.items.map((item) => item.item)),
           totalCents: bag.total,
           parsed: true,
           pageHost: page.location.hostname,
