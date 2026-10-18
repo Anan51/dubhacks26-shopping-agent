@@ -2,10 +2,10 @@ import express, { type Request, type RequestHandler, type Response, type Router 
 
 import type { BackboardClient } from "../memory/backboard.js";
 import { type MemoryRuntime, type RememberInput } from "../memory/runtime.js";
-import { assistantForUser, ScopeError } from "../memory/service.js";
+import { assistantForUser, authenticatedUserId, refuseClientScope, ScopeError } from "../memory/service.js";
 import { AccountError, logIn, publicUser, signUp, type AccountDirectory, type AccountUser } from "./accounts.js";
 import { mongoState, mongoUnavailableMessage } from "./db.js";
-import { requireUser, setSessionCookie, signSession } from "./session.js";
+import { requireUser, setSessionCookie, signSession, tokenFromRequest, readSession } from "./session.js";
 
 export type AuthRouteDeps = {
   jwtSecret: string | null;
@@ -19,6 +19,7 @@ export type AuthRouteDeps = {
 export type MemoryRouteDeps = {
   authenticate: RequestHandler;
   list: MemoryRuntime["list"];
+  search: MemoryRuntime["search"];
   add: (req: Request) => Promise<unknown>;
 };
 
@@ -52,6 +53,7 @@ export function attachAccounts(
     createMemoryRouter({
       authenticate,
       list: (req) => options.memory.list(req),
+      search: (req) => options.memory.search(req),
       add: (req) => addFromRequest(req, options.memory),
     }),
   );
@@ -105,6 +107,34 @@ export function createAuthRouter(deps: AuthRouteDeps): Router {
     }
   });
 
+  if (deps.jwtSecret) {
+    const jwtSecret = deps.jwtSecret;
+    router.get("/me", async (req, res) => {
+      if (!deps.ready()) {
+        res.status(503).json({ error: deps.unavailableMessage() });
+        return;
+      }
+      const token = tokenFromRequest(req);
+      const session = token ? await readSession(token, jwtSecret) : null;
+      if (!session) {
+        res.status(401).json({ error: "Authentication required." });
+        return;
+      }
+      req.user = session;
+      try {
+        refuseClientScope(req, authenticatedUserId(req));
+        const user = await deps.directory.findById(session.id);
+        if (!user) {
+          res.status(401).json({ error: "Authentication required." });
+          return;
+        }
+        res.json({ user: publicUser(user) });
+      } catch (error: unknown) {
+        sendScopeError(res, error);
+      }
+    });
+  }
+
   return router;
 }
 
@@ -113,6 +143,22 @@ export function createMemoryRouter(deps: MemoryRouteDeps): Router {
   router.use(deps.authenticate);
 
   router.get("/", async (req, res) => {
+    try {
+      res.json({ memories: await deps.list(req) });
+    } catch (error: unknown) {
+      sendScopeError(res, error);
+    }
+  });
+
+  router.post("/search", async (req, res) => {
+    try {
+      res.json({ memories: await deps.search(req) });
+    } catch (error: unknown) {
+      sendScopeError(res, error);
+    }
+  });
+
+  router.get("/:userId", async (req, res) => {
     try {
       res.json({ memories: await deps.list(req) });
     } catch (error: unknown) {

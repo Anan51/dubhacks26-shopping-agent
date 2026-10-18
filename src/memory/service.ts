@@ -31,7 +31,39 @@ const ASSISTANT_PROMPT = "You remember one shopper's regrets, goals, and items t
 export async function getMemoriesForCurrentUser(req: Request, index: MemoryIndex): Promise<MemoryRecord[]> {
   const userId = authenticatedUserId(req);
   refuseClientScope(req, userId);
-  return index.list(userId);
+  const memories = await index.list(userId);
+  return memories.filter((memory) => memory.userId === userId);
+}
+
+/**
+ * Search is scoped the same way as list: req.user.id, then that user's assistant.
+ * Client-supplied ids are refused before either store is touched.
+ */
+export async function searchMemoriesForCurrentUser(
+  req: Request,
+  deps: {
+    directory: AccountDirectory;
+    client: BackboardClient;
+    index: MemoryIndex;
+    remote: boolean;
+  },
+): Promise<MemoryRecord[]> {
+  const userId = authenticatedUserId(req);
+  refuseClientScope(req, userId);
+  const query = readSearchQuery(req);
+  if (!query) {
+    throw new ScopeError("query is required.");
+  }
+  const user = await deps.directory.findById(userId);
+  if (!user) {
+    throw new ScopeError("Authentication required.");
+  }
+  const owned = (await deps.index.list(userId)).filter((memory) => memory.userId === userId);
+  if (deps.remote && user.backboardAssistantId) {
+    await deps.client.searchMemories(user.backboardAssistantId, query, 10);
+  }
+  const needle = query.toLowerCase();
+  return owned.filter((memory) => memory.text.toLowerCase().includes(needle) || memoryContent(memory.type, memory.text).toLowerCase().includes(needle));
 }
 
 export function authenticatedUserId(req: Request): string {
@@ -222,6 +254,13 @@ function latest(memories: MemoryRecord[], type: MemoryKind): MemoryRecord | unde
 function clip(text: string): string {
   const trimmed = text.trim();
   return trimmed.length > 160 ? `${trimmed.slice(0, 157)}...` : trimmed;
+}
+
+function readSearchQuery(req: Request): string | null {
+  const fromBody = isRecord(req.body) && typeof req.body.query === "string" ? req.body.query.trim() : "";
+  const fromQuery = typeof req.query.query === "string" ? req.query.query.trim() : "";
+  const query = fromBody || fromQuery;
+  return query.length > 0 ? query : null;
 }
 
 function supplied(req: Request, names: string[]): string | null {

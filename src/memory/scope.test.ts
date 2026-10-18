@@ -145,6 +145,9 @@ describe("memory scope", () => {
             },
           });
         },
+        search() {
+          throw new Error("not used");
+        },
         add() {
           throw new Error("not used");
         },

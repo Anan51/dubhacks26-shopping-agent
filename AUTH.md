@@ -8,7 +8,7 @@ Simmer issues a **JWT in the httpOnly cookie `simmer_token`** (HS256, 7 days, `S
 
 `SESSION_SECRET` is unused while this cookie is the session.
 
-`POST /auth/signup` and `POST /auth/login` take `{ email, password }`. Passwords are hashed with argon2id before they are stored. The `User` document has `email`, `passwordHash`, an optional `backboardAssistantId`, and timestamps. There is no Google sign-in.
+`POST /auth/signup` and `POST /auth/login` take `{ email, password }`. Passwords are hashed with argon2id before they are stored. `GET /auth/me` reads the signed-in user from the JWT. The `User` document has `email`, `passwordHash`, an optional `backboardAssistantId`, and timestamps. There is no Google sign-in.
 
 Both routes answer `503` with a clear message when MongoDB or `JWT_SECRET` is missing, and the process still boots.
 
@@ -16,7 +16,7 @@ Both routes answer `503` with a clear message when MongoDB or `JWT_SECRET` is mi
 
 Backboard scopes memory to an **assistant**, not a user. Threads on one assistant share that assistant's memories. Simmer does **not** use one shared assistant. On signup (when the API key is set) or on the first memory write, the server calls `POST /assistants` and stores `assistant_id` on that user's Mongo document.
 
-`GET /memories` and `POST /memories` take the user id from the verified JWT (`req.user.id`). A `userId` or `assistantId` in the query, body, or path is refused. The assistant id passed to Backboard is read from that Mongo user only.
+`GET /memories`, `POST /memories`, and `POST /memories/search` take the user id from the verified JWT (`req.user.id`). A `userId` or `assistantId` in the query, body, or path is refused. Search calls Backboard with the assistant id stored on that user. The assistant id passed to Backboard is read from that Mongo user only.
 
 Each memory is one of `regret`, `goal`, or `returned`. The text is written to that user's assistant and copied into the `MemoryNote` collection, keyed by the Mongo `_id`, so listing does not spend model credit.
 
