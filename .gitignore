@@ -83,7 +83,7 @@ out
 dist
 .output
 
-# WaitMate cart store
+# Simmer cart store
 data/
 
 # Gatsby files
