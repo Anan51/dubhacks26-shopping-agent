@@ -58,6 +58,7 @@ export type CartResponse = {
   guardEnabled: boolean;
   buyAnywayAt: string | null;
   signalSource: "grok" | "keywords" | null;
+  reading: boolean;
   selectedAlternativeId: string | null;
   demo: boolean;
   decision: Decision | null;
@@ -80,6 +81,7 @@ export type PublicConfig = {
   cooldownChoicesMs: number[];
   demoReminderMs: number;
   demoDefault: boolean;
+  grokEnabled: boolean;
 };
 
 export type TranscriptTurn = {
@@ -140,11 +142,10 @@ export async function getCart(code: string): Promise<CartResponse> {
   return request<CartResponse>(`/api/carts/${code}`);
 }
 
-export async function getTranscript(conversationId: string): Promise<TranscriptTurn[]> {
-  const body = await request<{ turns: TranscriptTurn[] }>(
+export async function getTranscript(conversationId: string): Promise<{ turns: TranscriptTurn[]; reading: boolean }> {
+  return request<{ turns: TranscriptTurn[]; reading: boolean }>(
     `/api/dev/messages?conversationId=${encodeURIComponent(conversationId)}`,
   );
-  return body.turns;
 }
 
 export async function sendDeskMessage(conversationId: string, text: string): Promise<TranscriptTurn[]> {

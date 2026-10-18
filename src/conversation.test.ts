@@ -201,4 +201,37 @@ describe("applyTurn", async () => {
     assert.equal(second.reply, null);
     assert.equal(second.session.turns.length, first.session.turns.length);
   });
+
+  it("marks the cart as reading while Grok is in flight", async () => {
+    const cart = sampleCart("READ22");
+    let sawReading = false;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pending = applyTurn({
+      session: null,
+      conversationId: "desk:test",
+      messageId: "read-1",
+      text: "Hey WaitMate, cart READ22",
+      now: NOW,
+      demoReminderMs: 60_000,
+      loadCart: () => cart,
+      extract: {
+        apiKey: "test-key",
+        fetchImpl: async () => {
+          await gate;
+          return Response.json({ choices: [{ message: { content: '{"problems":["battery"]}' } }] });
+        },
+      },
+      markReading: (readingCart) => {
+        sawReading = readingCart.reading;
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(sawReading, true);
+    release();
+    const finished = await pending;
+    assert.equal(finished.cart?.reading, false);
+  });
 });

@@ -22,6 +22,8 @@ export type ApplyInput = {
   demoReminderMs: number;
   loadCart: (code: string) => Cart | undefined;
   extract?: ExtractOptions;
+  /** Persist the cart while Grok is in flight so other pages can show it. */
+  markReading?: (cart: Cart) => void;
 };
 
 export type ApplyResult = {
@@ -106,7 +108,19 @@ export async function applyTurn(input: ApplyInput): Promise<ApplyResult> {
     signals: session.signals,
     turns: session.turns.slice(0, -1),
   };
-  const extraction = await extractSignals(input.text, context, input.extract ?? {});
+  const useGrok = Boolean(input.extract?.apiKey);
+  if (useGrok) {
+    cart.reading = true;
+    input.markReading?.(cart);
+  }
+  let extraction;
+  try {
+    extraction = await extractSignals(input.text, context, input.extract ?? {});
+  } finally {
+    if (useGrok) {
+      cart.reading = false;
+    }
+  }
   session.signalSource = extraction.source;
   const patch = pickShopperSignals(extraction.signals);
   const changed = signalsChanged(session.signals, patch);

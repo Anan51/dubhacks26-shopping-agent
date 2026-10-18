@@ -1,4 +1,4 @@
-import { xaiModelFrom } from "./grok.js";
+import { xaiModelFrom, xaiTimeoutFrom } from "./grok.js";
 
 /** Docs default. Socket.IO and the HTTP client both use this origin, not a /v1 suffix. */
 export const DEFAULT_API_ORIGIN = "https://api.photon.codes";
@@ -43,6 +43,7 @@ export type AppConfig = {
   channel: "auto" | "photon" | "stub";
   xaiApiKey?: string;
   xaiModel: string;
+  xaiTimeoutMs: number;
   agentHandle: string | null;
 };
 
@@ -62,6 +63,7 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     channel,
     ...(xaiApiKey ? { xaiApiKey } : {}),
     xaiModel: xaiModelFrom(env),
+    xaiTimeoutMs: xaiTimeoutFrom(env),
     agentHandle: env.PHOTON_AGENT_HANDLE?.trim() || null,
   };
 }

@@ -32,6 +32,7 @@ export type AppDeps = {
   photon: PhotonChannel | null;
   xaiApiKey?: string;
   xaiModel: string;
+  xaiTimeoutMs: number;
   now?: () => Date;
   polish?: (template: string, action: Decision["action"]) => Promise<string>;
 };
@@ -72,10 +73,13 @@ export function createApp(deps: AppDeps): RunningApp {
     send: (message) => routeSend(message),
     armReminder: (cart) => scheduler.arm(cart),
     disarmReminder: (code) => scheduler.disarm(code),
-    polish: deps.polish ?? ((template, action) => polishPhrase(template, action, deps.xaiApiKey, fetch, deps.xaiModel)),
+    polish:
+      deps.polish ??
+      ((template, action) => polishPhrase(template, action, deps.xaiApiKey, fetch, deps.xaiModel, deps.xaiTimeoutMs)),
     extract: {
       ...(deps.xaiApiKey ? { apiKey: deps.xaiApiKey } : {}),
       model: deps.xaiModel,
+      timeoutMs: deps.xaiTimeoutMs,
     },
   });
 
@@ -103,6 +107,7 @@ export function createApp(deps: AppDeps): RunningApp {
     res.json({
       synthetic: true,
       channel: deps.photon ? "photon" : "stub",
+      grokEnabled: Boolean(deps.xaiApiKey),
       agentHandle: deps.agentHandle,
       coolingMs: deps.coolingMs,
       lockThresholdCents: deps.lockThresholdCents,
@@ -266,7 +271,9 @@ export function createApp(deps: AppDeps): RunningApp {
       res.status(400).json({ error: "conversationId must look like desk:<id>." });
       return;
     }
-    res.json({ turns: deps.store.getSession(conversationId)?.turns ?? [] });
+    const session = deps.store.getSession(conversationId);
+    const linked = session?.cartCode ? deps.store.getCart(session.cartCode) : undefined;
+    res.json({ turns: session?.turns ?? [], reading: linked?.reading === true });
   });
 
   app.post("/api/dev/messages", settle(async (req, res) => {

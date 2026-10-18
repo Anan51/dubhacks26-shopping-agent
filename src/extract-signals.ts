@@ -11,6 +11,7 @@ export type Extraction = {
 export type ExtractOptions = {
   apiKey?: string;
   model?: string;
+  timeoutMs?: number;
   fetchImpl?: typeof fetch;
 };
 
@@ -315,7 +316,7 @@ export function mergeSignalPatches(keyword: Partial<Signals>, llm: Partial<Signa
 
 /** Parse a Grok message body into shopper signals. Invalid JSON or no usable fields returns null. */
 export function parseGrokSignalJson(raw: string): Partial<Signals> | null {
-  const trimmed = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const trimmed = unwrapJsonFence(raw);
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmed) as unknown;
@@ -369,6 +370,7 @@ async function grokExtract(text: string, conversation: ConversationContext, opti
   const raw = await grokChat({
     apiKey: options.apiKey,
     model: options.model ?? DEFAULT_XAI_MODEL,
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     prompt,
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
   });
@@ -400,6 +402,19 @@ function stripEmpty(patch: Partial<Signals>): Partial<Signals> {
 
 function uniqueProblems(tags: readonly ProblemTag[]): ProblemTag[] {
   return PROBLEM_TAGS.filter((tag) => tags.includes(tag));
+}
+
+/** Pull a JSON object out of a reply, including one wrapped in ```json fences. */
+export function unwrapJsonFence(raw: string): string {
+  const trimmed = raw.trim();
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const body = fenced?.[1]?.trim() ?? trimmed;
+  const start = body.indexOf("{");
+  const end = body.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    return body.slice(start, end + 1);
+  }
+  return body;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

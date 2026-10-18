@@ -63,6 +63,7 @@ export async function startServer(): Promise<void> {
     photon,
     ...(appConfig.xaiApiKey ? { xaiApiKey: appConfig.xaiApiKey } : {}),
     xaiModel: appConfig.xaiModel,
+    xaiTimeoutMs: appConfig.xaiTimeoutMs,
   });
 
   await attachClient(running.app);

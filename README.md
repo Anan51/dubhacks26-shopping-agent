@@ -74,7 +74,7 @@ Set `WAITMATE_PUBLIC_ORIGIN` to the origin you want inside reminder texts. At th
 - The desk chat (`/dev`) stands in for iMessage until a Photon key is set.
 - Trade-in values are a fixed curve in `src/heuristic.ts`, and the payoff math assumes $35 a month.
 - Demo mode compresses the reminder to about a minute (`WAITMATE_DEMO_REMINDER_MS`, default 60000). The date in the message is still six months out.
-- `XAI_API_KEY` is optional. If it is unset, or Grok changes the buy/wait call, the template is sent. The key never goes in git.
+- `XAI_API_KEY` is optional. If it is unset, or Grok changes the buy/wait call, the template is sent. The key never goes in git. Empty `XAI_MODEL` uses `grok-4.20-0309-non-reasoning`. Empty `XAI_TIMEOUT_MS` waits 8 seconds. While that call runs, the chat and the checkout Why panel say “reading your reply...”.
 - The webhook still does not verify Photon’s signature. Beta docs don’t name the header or algorithm. See the TODO in `api/webhook.ts`.
 
 Shopper text becomes signals only in `extractSignals` (`src/extract-signals.ts`). `decide` does not read raw text. Phrasing does not choose the call. A later change can replace the keyword extractor with Grok (`XAI_API_KEY`) without rewriting the heuristic.

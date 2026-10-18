@@ -340,6 +340,7 @@ function LockedCheckout({
       </section>
       <aside className="summary lock">
         <Clock remaining={remaining} progress={progress} />
+        {cart.reading ? <p className="reading" role="status">reading your reply...</p> : null}
         {cart.decision ? <Why cart={cart} /> : <p>Text WaitMate the cart code. It will ask a few questions before it picks buy, wait, or a better option.</p>}
         <AlternativeOffer cart={cart} alternatives={alternatives} busy={bypassing} onSwitch={onSwitch} />
         {error ? <p className="form-error">{error}</p> : null}

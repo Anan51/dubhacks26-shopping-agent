@@ -1,6 +1,6 @@
 import { alternativeById } from "./alternatives.js";
 import { formatUsd } from "./format.js";
-import { DEFAULT_XAI_MODEL, grokChat } from "./grok.js";
+import { DEFAULT_XAI_MODEL, DEFAULT_XAI_TIMEOUT_MS, grokChat } from "./grok.js";
 import { MONTHLY_PAYMENT_CENTS } from "./heuristic.js";
 import { assertNever, type Decision, type ReasonCode, type SignalSource, type Signals } from "./types.js";
 
@@ -33,6 +33,7 @@ export async function polishPhrase(
   apiKey: string | undefined,
   fetchImpl: typeof fetch = fetch,
   model: string = DEFAULT_XAI_MODEL,
+  timeoutMs: number = DEFAULT_XAI_TIMEOUT_MS,
 ): Promise<string> {
   if (!apiKey) {
     return template;
@@ -40,6 +41,7 @@ export async function polishPhrase(
   const text = await grokChat({
     apiKey,
     model,
+    timeoutMs,
     fetchImpl,
     prompt: [
       "Rewrite this text message in a warm, brief voice.",

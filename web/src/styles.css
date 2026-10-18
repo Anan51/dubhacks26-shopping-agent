@@ -481,6 +481,12 @@ h2 {
   color: #d7efe4;
 }
 
+.reading,
+.bubble.reading {
+  color: var(--muted);
+  font-style: italic;
+}
+
 label {
   display: block;
   margin-bottom: 0.35rem;

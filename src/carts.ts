@@ -91,6 +91,7 @@ export function createCart(input: {
     buyAnywayAt: null,
     signalSource: null,
     selectedAlternativeId: null,
+    reading: false,
   };
   if (!input.lock) {
     cart.status = "completed";

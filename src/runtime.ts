@@ -31,6 +31,9 @@ export function createRuntime(deps: {
       demoReminderMs: deps.demoReminderMs,
       loadCart: (code) => deps.store.getCart(code),
       ...(deps.extract ? { extract: deps.extract } : {}),
+      markReading: (readingCart) => {
+        deps.store.saveCart(readingCart);
+      },
     });
     if (result.duplicate || !result.reply) {
       return;

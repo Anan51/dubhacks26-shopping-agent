@@ -91,6 +91,8 @@ export type Cart = {
   signalSource: SignalSource | null;
   /** Set when the shopper switches the cart to a synthetic alternative. */
   selectedAlternativeId: string | null;
+  /** True while Grok is reading the latest shopper message for this cart. */
+  reading: boolean;
 };
 
 export type ReasonCode =

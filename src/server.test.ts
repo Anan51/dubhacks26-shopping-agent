@@ -44,7 +44,8 @@ describe("checkout demo", () => {
       demoDefault: false,
       agentHandle: "+15550001111",
       photon: null,
-      xaiModel: "grok-4-fast",
+      xaiModel: "grok-4.20-0309-non-reasoning",
+      xaiTimeoutMs: 8_000,
       polish: async (template) => template,
     });
     const server = createServer(running.app);

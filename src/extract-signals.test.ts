@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { DEFAULT_XAI_MODEL, DEFAULT_XAI_TIMEOUT_MS, xaiModelFrom, xaiTimeoutFrom } from "./grok.js";
 import { decide } from "./heuristic.js";
 import { extractCartCode, extractSignals, parseGrokSignalJson, pickShopperSignals } from "./extract-signals.js";
 import type { ConversationContext, Signals } from "./types.js";
@@ -69,6 +70,10 @@ describe("parseGrokSignalJson", () => {
       condition: "broken",
       problemText: "my battery dies by 3pm",
     });
+    assert.deepEqual(
+      parseGrokSignalJson('Here is the read:\n```json\n{"problems":["battery"],"condition":"broken"}\n```'),
+      { problems: ["battery"], condition: "broken" },
+    );
     assert.equal(parseGrokSignalJson("not json"), null);
     assert.equal(parseGrokSignalJson('{"condition":"mint"}'), null);
   });
@@ -136,6 +141,17 @@ function fullSignals(partial: Partial<Signals>): Signals {
     monthlyPlanCents: 7_000,
   };
 }
+
+describe("Grok defaults", () => {
+  it("uses the non-reasoning model and an 8 second timeout unless overridden", () => {
+    assert.equal(DEFAULT_XAI_MODEL, "grok-4.20-0309-non-reasoning");
+    assert.equal(xaiModelFrom({}), DEFAULT_XAI_MODEL);
+    assert.equal(xaiModelFrom({ XAI_MODEL: "grok-4-fast" }), "grok-4-fast");
+    assert.equal(DEFAULT_XAI_TIMEOUT_MS, 8_000);
+    assert.equal(xaiTimeoutFrom({}), 8_000);
+    assert.equal(xaiTimeoutFrom({ XAI_TIMEOUT_MS: "12000" }), 12_000);
+  });
+});
 
 describe("extractCartCode", () => {
   it("reads a labeled code or a message that is only the code", () => {

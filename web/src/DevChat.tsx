@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { getTranscript, sendDeskMessage, type TranscriptTurn } from "./api.js";
+import { getConfig, getTranscript, sendDeskMessage, type TranscriptTurn } from "./api.js";
 
 const STORAGE_KEY = "waitmate-desk-id";
 
@@ -9,6 +9,8 @@ export function DevChat() {
   const [conversationId] = useState(() => (cart ? `desk:cart-${cart}` : deskId()));
   const [draft, setDraft] = useState(cart ? `Hey WaitMate, cart ${cart}` : "");
   const [turns, setTurns] = useState<TranscriptTurn[]>([]);
+  const [reading, setReading] = useState(false);
+  const [grokEnabled, setGrokEnabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -18,7 +20,8 @@ export function DevChat() {
       getTranscript(conversationId)
         .then((next) => {
           if (!cancel) {
-            setTurns(next);
+            setTurns(next.turns);
+            setReading(next.reading);
           }
         })
         .catch((cause: unknown) => {
@@ -34,6 +37,24 @@ export function DevChat() {
       window.clearInterval(timer);
     };
   }, [conversationId]);
+
+  useEffect(() => {
+    let cancel = false;
+    getConfig()
+      .then((config) => {
+        if (!cancel) {
+          setGrokEnabled(config.grokEnabled);
+        }
+      })
+      .catch(() => {
+        if (!cancel) {
+          setGrokEnabled(false);
+        }
+      });
+    return () => {
+      cancel = true;
+    };
+  }, []);
 
   return (
     <div className="desk">
@@ -70,6 +91,12 @@ export function DevChat() {
               {turn.text}
             </li>
           ))}
+          {reading || (busy && grokEnabled) ? (
+            <li className="bubble reading" role="status">
+              <span className="who">WaitMate</span>
+              reading your reply...
+            </li>
+          ) : null}
         </ol>
         <form
           onSubmit={(event) => {
@@ -104,6 +131,7 @@ export function DevChat() {
       for (const line of lines) {
         next = await sendDeskMessage(conversationId, line);
         setTurns(next);
+        setReading(false);
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Message failed.");
