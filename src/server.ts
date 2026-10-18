@@ -15,6 +15,7 @@ import { createApp } from "./app.js";
 import { PhotonChannel } from "./channels/photon.js";
 import { photonConfigured, readAppConfig, readConfig } from "./config.js";
 import { createMemoryRuntime } from "./memory/runtime.js";
+import { mongoConnectOptions, warnIfMongoWithoutJwt } from "./mongo-startup.js";
 import { createOnboardingRouter, createSettingsRouter } from "./onboarding/routes.js";
 import { createPurchaseRouter } from "./purchases/routes.js";
 import { createDefaultStore } from "./store.js";
@@ -53,8 +54,9 @@ export async function startServer(): Promise<void> {
   loadEnvFile();
   const accountConfig = readAccountConfig();
   if (accountConfig.mongodbUri) {
+    warnIfMongoWithoutJwt(accountConfig);
     try {
-      await connectMongo(accountConfig.mongodbUri);
+      await connectMongo(accountConfig.mongodbUri, mongoConnectOptions());
     } catch (error: unknown) {
       console.error(redactMongoUri(error instanceof Error ? error.message : "MongoDB connection failed."));
     }
