@@ -15,13 +15,14 @@ import type { AccountDirectory } from "../auth/accounts.js";
 import { connectMongo } from "../auth/db.js";
 import { attachAccounts, provisionAssistant } from "../auth/routes.js";
 import { readOptionalUser, requireUser, SESSION_COOKIE } from "../auth/session.js";
+import { MemoryNote } from "../auth/user.js";
 import { CheckIn } from "../checkins/model.js";
 import { InMemoryBackboardClient, type BackboardClient } from "../memory/backboard.js";
 import { createMemoryRuntime } from "../memory/runtime.js";
 import { createMemoryStore } from "../store.js";
 import { PurchaseRecord } from "./model.js";
 import { createPurchaseRouter } from "./routes.js";
-import { hasRegrettedPurchase, purchaseVoteLine } from "./service.js";
+import { countRegrets, hasRegrettedPurchase, purchaseVoteLine, weeklySpend } from "./service.js";
 
 const SECRET = "purchase-test-secret".padEnd(32, "x");
 let base = "";
@@ -423,7 +424,302 @@ describe("purchase feedback", () => {
       await server.close();
     }
   });
+
+  it("deletes the owner's purchase and drops it from regrets, history, and spend", async () => {
+    const ada = await signup("ada-delete@example.com");
+    await PurchaseRecord.create({
+      userId: ada.id,
+      item: "USB-C cable",
+      category: "cable",
+      price: 19,
+      verdict: null,
+      feedback: "kept",
+      isExample: false,
+      source: "checkout",
+    });
+    const regretted = await PurchaseRecord.create({
+      userId: ada.id,
+      item: "AirPods",
+      category: "audio",
+      price: 179,
+      verdict: null,
+      feedback: null,
+      isExample: false,
+      source: "survey",
+    });
+    const keptLine = purchaseVoteLine("kept", "AirPods", "audio", 179);
+    const regretLine = purchaseVoteLine("regretted", "AirPods", "audio", 179);
+    await MemoryNote.create({
+      userId: ada.id,
+      type: "goal",
+      text: keptLine,
+      meta: { category: "audio", feedback: "kept" },
+    });
+    await MemoryNote.create({
+      userId: ada.id,
+      type: "goal",
+      text: "hourly rate: $30",
+      meta: { field: "hourlyRate" },
+    });
+    const before = writes.length;
+    const rated = await post(`/purchases/${regretted._id.toString()}/feedback`, { feedback: "regretted" }, ada.cookie);
+    assert.equal(rated.status, 200);
+    assert.equal(writes.at(-1), regretLine);
+    assert.equal(await countRegrets(ada.id), 1);
+    assert.equal(await countRegrets(ada.id, "audio"), 1);
+    assert.equal(await hasRegrettedPurchase(ada.id, "audio"), true);
+    assert.equal(await weeklySpend(ada.id), 198);
+    assert.equal(await MemoryNote.countDocuments({ userId: ada.id, text: regretLine }), 1);
+
+    const removed = await del(`/purchases/${regretted._id.toString()}`, ada.cookie);
+    assert.equal(removed.status, 204);
+    assert.equal(removed.body, null);
+    assert.equal(await PurchaseRecord.countDocuments({ _id: regretted._id }), 0);
+    assert.equal(await countRegrets(ada.id), 0);
+    assert.equal(await countRegrets(ada.id, "audio"), 0);
+    assert.equal(await hasRegrettedPurchase(ada.id, "audio"), false);
+    assert.equal(await weeklySpend(ada.id), 19);
+    assert.equal(await MemoryNote.countDocuments({ userId: ada.id, text: { $in: [regretLine, keptLine] } }), 0);
+    assert.equal(await MemoryNote.countDocuments({ userId: ada.id, text: "hourly rate: $30" }), 1);
+    assert.equal(writes.length, before + 1);
+
+    const history = await get("/purchases/history", ada.cookie);
+    const items = (history.body.purchases as { item: string }[]).map((row) => row.item);
+    assert.deepEqual(items, ["USB-C cable"]);
+  });
+
+  it("returns 404 when another user deletes a purchase", async () => {
+    const ada = await signup("ada-delete-other@example.com");
+    const blake = await signup("blake-delete-other@example.com");
+    const row = await PurchaseRecord.create({
+      userId: ada.id,
+      item: "Ada phone",
+      category: "phone",
+      price: 20,
+      feedback: "regretted",
+      isExample: false,
+    });
+    const denied = await del(`/purchases/${row._id.toString()}`, blake.cookie);
+    assert.equal(denied.status, 404);
+    assert.equal((denied.body as { error: string }).error, "Purchase not found.");
+    assert.equal(await PurchaseRecord.countDocuments({ _id: row._id }), 1);
+    assert.equal(await countRegrets(ada.id), 1);
+    assert.equal(await hasRegrettedPurchase(ada.id, "phone"), true);
+  });
+
+  it("returns 404 when the purchase id is missing or unknown", async () => {
+    const ada = await signup("ada-delete-missing@example.com");
+    const malformed = await del("/purchases/not-an-id", ada.cookie);
+    assert.equal(malformed.status, 404);
+    assert.equal((malformed.body as { error: string }).error, "Purchase not found.");
+    const absent = await del("/purchases/64b0000000000000000000ff", ada.cookie);
+    assert.equal(absent.status, 404);
+    assert.equal((absent.body as { error: string }).error, "Purchase not found.");
+  });
+
+  it("returns 401 when a delete has no signed-in user", async () => {
+    const ada = await signup("ada-delete-anon@example.com");
+    const row = await PurchaseRecord.create({
+      userId: ada.id,
+      item: "Anon phone",
+      category: "phone",
+      price: 15,
+      feedback: "regretted",
+      isExample: false,
+    });
+    const anonymous = await del(`/purchases/${row._id.toString()}`);
+    assert.equal(anonymous.status, 401);
+    assert.equal((anonymous.body as { error: string }).error, "Authentication required.");
+    assert.equal(await PurchaseRecord.countDocuments({ _id: row._id }), 1);
+    assert.equal(await countRegrets(ada.id), 1);
+  });
+
+  it("deletes an owned example row", async () => {
+    const ada = await signup("ada-example-delete@example.com");
+    const blake = await signup("blake-example-delete@example.com");
+    const example = await PurchaseRecord.create({
+      userId: ada.id,
+      item: "Fake phone",
+      category: "phone",
+      price: 799,
+      feedback: "regretted",
+      isExample: true,
+      source: "survey",
+    });
+    const real = await PurchaseRecord.create({
+      userId: ada.id,
+      item: "Real phone",
+      category: "phone",
+      price: 10,
+      feedback: "regretted",
+      isExample: false,
+    });
+    assert.equal(await countRegrets(ada.id, "phone"), 1);
+    const denied = await del(`/purchases/${example._id.toString()}`, blake.cookie);
+    assert.equal(denied.status, 404);
+    assert.equal(await PurchaseRecord.countDocuments({ _id: example._id }), 1);
+
+    const removed = await del(`/purchases/${example._id.toString()}`, ada.cookie);
+    assert.equal(removed.status, 204);
+    assert.equal(await PurchaseRecord.countDocuments({ _id: example._id }), 0);
+    assert.equal(await countRegrets(ada.id, "phone"), 1);
+    assert.equal(await hasRegrettedPurchase(ada.id, "phone"), true);
+    assert.equal(await PurchaseRecord.countDocuments({ _id: real._id }), 1);
+    assert.equal(await weeklySpend(ada.id), 10);
+  });
+
+  it("keeps the other identical purchase's vote note", async () => {
+    const ada = await signup("ada-dup-note@example.com");
+    const first = await PurchaseRecord.create(identicalPurchase(ada.id));
+    const second = await PurchaseRecord.create(identicalPurchase(ada.id));
+    const line = purchaseVoteLine("regretted", "AirPods", "audio", 179);
+    const ratedFirst = await post(`/purchases/${first._id.toString()}/feedback`, { feedback: "regretted" }, ada.cookie);
+    const ratedSecond = await post(`/purchases/${second._id.toString()}/feedback`, { feedback: "regretted" }, ada.cookie);
+    assert.equal(ratedFirst.status, 200);
+    assert.equal(ratedSecond.status, 200);
+    const before = await MemoryNote.find({ userId: ada.id, text: line });
+    assert.equal(before.length, 2);
+    assert.deepEqual(
+      before.map((note) => notePurchaseId(note.meta)).sort(),
+      [first._id.toString(), second._id.toString()].sort(),
+    );
+
+    const removed = await del(`/purchases/${first._id.toString()}`, ada.cookie);
+    assert.equal(removed.status, 204);
+    const after = await MemoryNote.find({ userId: ada.id, text: line });
+    assert.equal(after.length, 1);
+    assert.equal(notePurchaseId(after[0]?.meta), second._id.toString());
+  });
+
+  it("keeps a legacy vote note while another identical purchase remains", async () => {
+    const ada = await signup("ada-legacy-note@example.com");
+    const first = await PurchaseRecord.create(identicalPurchase(ada.id));
+    const second = await PurchaseRecord.create(identicalPurchase(ada.id));
+    const line = purchaseVoteLine("regretted", "AirPods", "audio", 179);
+    await MemoryNote.create({
+      userId: ada.id,
+      type: "regret",
+      text: line,
+      meta: { category: "audio", feedback: "regretted" },
+    });
+
+    const removed = await del(`/purchases/${first._id.toString()}`, ada.cookie);
+    assert.equal(removed.status, 204);
+    assert.equal(await MemoryNote.countDocuments({ userId: ada.id, text: line }), 1);
+    assert.equal(await PurchaseRecord.countDocuments({ _id: second._id }), 1);
+
+    const last = await del(`/purchases/${second._id.toString()}`, ada.cookie);
+    assert.equal(last.status, 204);
+    assert.equal(await MemoryNote.countDocuments({ userId: ada.id, text: line }), 0);
+  });
+
+  it("drops the week check-in when the purchase is removed", async () => {
+    const ada = await signup("ada-checkin-delete@example.com");
+    const row = await PurchaseRecord.create({
+      userId: ada.id,
+      item: "Cable",
+      category: "cable",
+      price: 19,
+      feedback: null,
+      isExample: false,
+    });
+    await CheckIn.create({ userId: ada.id, purchaseId: row._id, dueAt: new Date() });
+    assert.equal(await CheckIn.countDocuments({ purchaseId: row._id, userId: ada.id }), 1);
+    const removed = await del(`/purchases/${row._id.toString()}`, ada.cookie);
+    assert.equal(removed.status, 204);
+    assert.equal(await PurchaseRecord.countDocuments({ _id: row._id }), 0);
+    assert.equal(await CheckIn.countDocuments({ purchaseId: row._id }), 0);
+  });
+
+  it("returns 204 when vote note cleanup fails after the purchase is gone", async () => {
+    const ada = await signup("ada-note-fail@example.com");
+    const row = await PurchaseRecord.create({
+      userId: ada.id,
+      item: "Case",
+      category: "case",
+      price: 25,
+      feedback: "regretted",
+      isExample: false,
+    });
+    const logged: string[] = [];
+    const originalDelete = MemoryNote.deleteMany;
+    const originalError = console.error;
+    MemoryNote.deleteMany = (() => {
+      throw new Error("note cleanup failed");
+    }) as typeof MemoryNote.deleteMany;
+    console.error = (message?: unknown) => {
+      logged.push(String(message));
+    };
+    try {
+      const removed = await del(`/purchases/${row._id.toString()}`, ada.cookie);
+      assert.equal(removed.status, 204);
+      assert.equal(removed.body, null);
+      assert.equal(await PurchaseRecord.countDocuments({ _id: row._id }), 0);
+      assert.equal(logged.includes("note cleanup failed"), true);
+    } finally {
+      MemoryNote.deleteMany = originalDelete;
+      console.error = originalError;
+    }
+  });
+
+  it("deletes the check-in when vote note cleanup throws", async () => {
+    const ada = await signup("ada-note-fail-checkin@example.com");
+    const row = await PurchaseRecord.create({
+      userId: ada.id,
+      item: "Cable",
+      category: "cable",
+      price: 19,
+      feedback: null,
+      isExample: false,
+    });
+    await CheckIn.create({ userId: ada.id, purchaseId: row._id, dueAt: new Date() });
+    const originalDelete = MemoryNote.deleteMany;
+    const originalError = console.error;
+    MemoryNote.deleteMany = (() => {
+      throw new Error("note cleanup failed");
+    }) as typeof MemoryNote.deleteMany;
+    console.error = () => undefined;
+    try {
+      const removed = await del(`/purchases/${row._id.toString()}`, ada.cookie);
+      assert.equal(removed.status, 204);
+      assert.equal(await PurchaseRecord.countDocuments({ _id: row._id }), 0);
+      assert.equal(await CheckIn.countDocuments({ purchaseId: row._id }), 0);
+    } finally {
+      MemoryNote.deleteMany = originalDelete;
+      console.error = originalError;
+    }
+  });
 });
+
+function identicalPurchase(userId: string): {
+  userId: string;
+  item: string;
+  category: string;
+  price: number;
+  verdict: null;
+  feedback: null;
+  isExample: false;
+  source: "checkout";
+} {
+  return {
+    userId,
+    item: "AirPods",
+    category: "audio",
+    price: 179,
+    verdict: null,
+    feedback: null,
+    isExample: false,
+    source: "checkout",
+  };
+}
+
+function notePurchaseId(meta: unknown): string | null {
+  if (!meta || typeof meta !== "object" || !("purchaseId" in meta)) {
+    return null;
+  }
+  const id = (meta as { purchaseId?: unknown }).purchaseId;
+  return typeof id === "string" ? id : null;
+}
 
 function demoDeps() {
   return {
@@ -457,6 +753,16 @@ async function signup(email: string): Promise<{ id: string; cookie: string; toke
 async function get(path: string, cookie: string): Promise<{ status: number; body: Record<string, unknown> }> {
   const response = await fetch(`${base}${path}`, { headers: { cookie: `${SESSION_COOKIE}=${cookie}` } });
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+}
+
+async function del(path: string, cookie?: string): Promise<{ status: number; body: Record<string, unknown> | null }> {
+  const headers: Record<string, string> = {};
+  if (cookie) {
+    headers.cookie = `${SESSION_COOKIE}=${cookie}`;
+  }
+  const response = await fetch(`${base}${path}`, { method: "DELETE", headers });
+  const text = await response.text();
+  return { status: response.status, body: text ? (JSON.parse(text) as Record<string, unknown>) : null };
 }
 
 async function post(path: string, body: unknown, cookie: string): Promise<{ status: number; body: Record<string, unknown> }> {

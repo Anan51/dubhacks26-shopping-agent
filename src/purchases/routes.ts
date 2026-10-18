@@ -7,7 +7,7 @@ import type { BackboardClient } from "../memory/backboard.js";
 import { isRecord } from "../record.js";
 import { rememberCheckIn } from "../checkins/ensure.js";
 import type { Cart } from "../types.js";
-import { historyLimit, insertRealPurchase, listPurchases, PurchaseError, recordCheckedOutBag, setPurchaseFeedback, type PurchaseFeedback } from "./service.js";
+import { deletePurchase, historyLimit, insertRealPurchase, listPurchases, PurchaseError, recordCheckedOutBag, setPurchaseFeedback, type PurchaseFeedback } from "./service.js";
 
 const CART_CODE = /^[A-HJ-NP-Z2-9]{6}$/;
 
@@ -50,6 +50,17 @@ export function createPurchaseRouter(deps: {
       refuseClientScope(req, userId);
       const purchases = await listPurchases(userId, historyLimit(req.query.limit));
       res.json({ purchases });
+    } catch (error: unknown) {
+      sendPurchaseError(res, error);
+    }
+  });
+
+  router.delete("/:id", async (req, res) => {
+    try {
+      const userId = authenticatedUserId(req);
+      refuseClientScope(req, userId);
+      await deletePurchase(userId, req.params.id ?? "");
+      res.status(204).end();
     } catch (error: unknown) {
       sendPurchaseError(res, error);
     }

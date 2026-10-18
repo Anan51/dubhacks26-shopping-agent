@@ -7,6 +7,7 @@ import { assistantForUser } from "../memory/service.js";
 import { isRecord } from "../record.js";
 import { waitForMemoryWrite, type BackboardClient, type MemoryKind } from "../memory/backboard.js";
 import { rememberCheckIn } from "../checkins/ensure.js";
+import { CheckIn } from "../checkins/model.js";
 import { PurchaseRecord } from "./model.js";
 
 export type PurchaseFeedback = "regretted" | "kept";
@@ -236,7 +237,7 @@ export async function setPurchaseFeedback(
   }
   if (doc.feedback === feedback) {
     if (feedback) {
-      await rememberVoteIfMissing(userId, doc.item, doc.category, doc.price, feedback, deps);
+      await rememberVoteIfMissing(userId, doc._id.toString(), doc.item, doc.category, doc.price, feedback, deps);
     }
     return toView(doc);
   }
@@ -244,9 +245,60 @@ export async function setPurchaseFeedback(
   doc.ratedAt = feedback ? new Date() : null;
   await doc.save();
   if (feedback) {
-    await writeVoteMemory(userId, doc.item, doc.category, doc.price, feedback, deps);
+    await writeVoteMemory(userId, doc._id.toString(), doc.item, doc.category, doc.price, feedback, deps);
   }
   return toView(doc);
+}
+
+/** Owner-scoped hard delete. Unknown ids answer 404. Example rows are included. */
+export async function deletePurchase(userId: string, purchaseId: string): Promise<void> {
+  if (!/^[a-f0-9]{24}$/i.test(purchaseId) || !/^[a-f0-9]{24}$/i.test(userId)) {
+    throw new PurchaseError(404, "Purchase not found.");
+  }
+  const doc = await PurchaseRecord.findOneAndDelete({ _id: purchaseId, userId });
+  if (!doc) {
+    throw new PurchaseError(404, "Purchase not found.");
+  }
+  try {
+    await forgetPurchaseVoteNotes(userId, purchaseId, doc.item, doc.category, doc.price);
+  } catch (error: unknown) {
+    console.error(error instanceof Error ? error.message : "Purchase vote notes were not removed.");
+  }
+  try {
+    await CheckIn.deleteMany({ userId, purchaseId });
+  } catch (error: unknown) {
+    console.error(error instanceof Error ? error.message : "Purchase check-in was not removed.");
+  }
+}
+
+async function forgetPurchaseVoteNotes(
+  userId: string,
+  purchaseId: string,
+  item: string,
+  category: string,
+  price: number,
+): Promise<void> {
+  await MemoryNote.deleteMany({ userId, "meta.purchaseId": purchaseId });
+  const sibling = await PurchaseRecord.exists({ userId, item, category, price });
+  if (sibling) {
+    return;
+  }
+  const lines = [purchaseVoteLine("regretted", item, category, price), purchaseVoteLine("kept", item, category, price)];
+  const notes = await MemoryNote.find({ userId, text: { $in: lines } }).select("_id meta");
+  const legacyIds = notes.flatMap((note) => (storedPurchaseId(note.meta) ? [] : [note._id]));
+  if (legacyIds.length === 0) {
+    return;
+  }
+  await MemoryNote.deleteMany({ _id: { $in: legacyIds } });
+  // TODO: BackboardClient has no per-memory delete. resetMemories wipes the assistant,
+  // and deleteAssistant removes the assistant. The vote line written with addMemory stays on Backboard.
+}
+
+function storedPurchaseId(meta: unknown): string | null {
+  if (!isRecord(meta) || typeof meta.purchaseId !== "string" || meta.purchaseId.length === 0) {
+    return null;
+  }
+  return meta.purchaseId;
 }
 
 export async function recordCheckedOutBag(userId: string, cart: Cart): Promise<{ purchase: PurchaseView; created: boolean }> {
@@ -290,6 +342,7 @@ export async function recordCheckedOutBag(userId: string, cart: Cart): Promise<{
 
 async function rememberVoteIfMissing(
   userId: string,
+  purchaseId: string,
   item: string,
   category: string,
   price: number,
@@ -301,11 +354,12 @@ async function rememberVoteIfMissing(
   if (saved) {
     return;
   }
-  await writeVoteMemory(userId, item, category, price, feedback, deps);
+  await writeVoteMemory(userId, purchaseId, item, category, price, feedback, deps);
 }
 
 async function writeVoteMemory(
   userId: string,
+  purchaseId: string,
   item: string,
   category: string,
   price: number,
@@ -318,7 +372,7 @@ async function writeVoteMemory(
   }
   const line = purchaseVoteLine(feedback, item, category, price);
   const kind: MemoryKind = feedback === "regretted" ? "regret" : "goal";
-  await writeUserMemoryLine(userId, line, kind, deps, { category, feedback });
+  await writeUserMemoryLine(userId, line, kind, deps, { category, feedback, purchaseId });
 }
 
 export async function writeUserMemoryLine(
