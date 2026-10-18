@@ -169,6 +169,122 @@ describe("purchase history popup", () => {
     assert.equal(document.body.textContent?.includes("Fresh phone"), true);
   });
 
+  it("asks before removing a purchase and leaves the row when declined", async () => {
+    globalThis.document = dom.window.document;
+    const methods: string[] = [];
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      methods.push(init?.method ?? "GET");
+      return historyResponse([purchase("64b000000000000000000011", "AirPods")]);
+    }) as typeof fetch;
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    attachPurchaseHistory(parent, "http://127.0.0.1:4321").show();
+    await waitFor(() => document.body.textContent?.includes("AirPods") === true);
+    const remove = removeButton();
+    assert.ok(remove);
+    assert.equal(remove.closest("li")?.contains(remove), true);
+    assert.match(document.querySelector("style")?.textContent ?? "", /flex-wrap:\s*wrap/);
+    remove.click();
+    assert.match(document.body.textContent ?? "", /Remove this purchase\?/);
+    const no = confirmButton("No");
+    assert.ok(no);
+    no.click();
+    assert.equal(document.body.textContent?.includes("Remove this purchase?"), false);
+    assert.equal(methods.includes("DELETE"), false);
+    assert.match(document.body.textContent ?? "", /AirPods/);
+  });
+
+  it("removes the row after Yes and sends the auth token", async () => {
+    globalThis.document = dom.window.document;
+    let authorization: string | null = null;
+    let deleted = "";
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        authorization = new Headers(init.headers).get("authorization");
+        deleted = String(input);
+        return new Response(null, { status: 204 });
+      }
+      return historyResponse([purchase("64b000000000000000000012", "Phone")]);
+    }) as typeof fetch;
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    attachPurchaseHistory(parent, "http://127.0.0.1:4321", async () => "jwt-remove").show();
+    await waitFor(() => document.body.textContent?.includes("Phone") === true);
+    removeButton()?.click();
+    confirmButton("Yes")?.click();
+    await waitFor(() => document.body.textContent?.includes("No purchases yet.") === true);
+    assert.equal(document.body.textContent?.includes("Phone"), false);
+    assert.equal(deleted, "http://127.0.0.1:4321/purchases/64b000000000000000000012");
+    assert.equal(authorization, "Bearer jwt-remove");
+  });
+
+  it("keeps the row and shows an inline error when remove fails", async () => {
+    globalThis.document = dom.window.document;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        return new Response(JSON.stringify({ error: "Purchase request failed." }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return historyResponse([purchase("64b000000000000000000013", "Watch")]);
+    }) as typeof fetch;
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    attachPurchaseHistory(parent, "http://127.0.0.1:4321", async () => "jwt-remove").show();
+    await waitFor(() => document.body.textContent?.includes("Watch") === true);
+    removeButton()?.click();
+    confirmButton("Yes")?.click();
+    await waitFor(() => document.body.textContent?.includes("Could not remove that purchase.") === true);
+    const row = document.querySelector("#simmer-purchases li");
+    assert.ok(row);
+    assert.match(row.textContent ?? "", /Watch/);
+    assert.match(row.textContent ?? "", /Could not remove that purchase\./);
+  });
+
+  it("ignores a late remove response after a newer list loads", async () => {
+    globalThis.document = dom.window.document;
+    let historyCalls = 0;
+    let releaseDelete = (): void => undefined;
+    let releaseFresh = (): void => undefined;
+    const deleteGate = new Promise<void>((resolve) => {
+      releaseDelete = resolve;
+    });
+    const freshGate = new Promise<void>((resolve) => {
+      releaseFresh = resolve;
+    });
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        await deleteGate;
+        return new Response(null, { status: 204 });
+      }
+      historyCalls += 1;
+      if (historyCalls === 1) {
+        return historyResponse([purchase("64b000000000000000000021", "Stale cable")]);
+      }
+      await freshGate;
+      return historyResponse([purchase("64b000000000000000000022", "Fresh phone")]);
+    }) as typeof fetch;
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    const history = attachPurchaseHistory(parent, "http://127.0.0.1:4321", async () => "jwt-remove");
+    history.show();
+    await waitFor(() => document.body.textContent?.includes("Stale cable") === true);
+    removeButton()?.click();
+    confirmButton("Yes")?.click();
+    history.show();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    releaseDelete();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.match(document.body.textContent ?? "", /Stale cable/);
+    assert.equal(document.body.textContent?.includes("No purchases yet."), false);
+    assert.equal(document.body.textContent?.includes("Could not remove that purchase."), false);
+    releaseFresh();
+    await waitFor(() => document.body.textContent?.includes("Fresh phone") === true);
+    assert.equal(document.body.textContent?.includes("Stale cable"), false);
+    assert.equal(document.body.textContent?.includes("Could not remove that purchase."), false);
+  });
+
   it("clears the session when the history request is rejected", async () => {
     globalThis.document = dom.window.document;
     let cleared = false;
@@ -182,6 +298,32 @@ describe("purchase history popup", () => {
     assert.equal(document.body.textContent?.includes("Could not load purchases."), false);
   });
 });
+
+function purchase(id: string, item: string): {
+  _id: string;
+  item: string;
+  category: string;
+  price: number;
+  feedback: null;
+  isExample: false;
+} {
+  return { _id: id, item, category: "other", price: 19, feedback: null, isExample: false };
+}
+
+function historyResponse(purchases: unknown[]): Response {
+  return new Response(JSON.stringify({ purchases }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function removeButton(): HTMLButtonElement | undefined {
+  return [...document.querySelectorAll("button")].find((button) => button.textContent === "Remove");
+}
+
+function confirmButton(label: "Yes" | "No"): HTMLButtonElement | undefined {
+  return [...document.querySelectorAll(".confirm button")].find((button) => button.textContent === label);
+}
 
 async function waitFor(ready: () => boolean): Promise<void> {
   const start = Date.now();
