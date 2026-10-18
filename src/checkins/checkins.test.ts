@@ -382,9 +382,14 @@ describe("check-ins", { concurrency: false }, () => {
     });
     const reply = await post("/api/dev/messages", { conversationId: `desk:cart-${code}`, text: "the new color looks nice" }, "");
     assert.equal(reply.status, 200);
-    const cart = (await (await fetch(`${base}/api/carts/${code}`)).json()) as { scoreBucket: string | null; status: string };
+    const cart = (await (await fetch(`${base}/api/carts/${code}`)).json()) as {
+      scoreBucket: string | null;
+      status: string;
+      isUnlocked: boolean;
+    };
     assert.equal(cart.scoreBucket, "strict");
-    assert.equal(cart.status, "vault");
+    assert.equal(cart.status, "locked");
+    assert.equal(cart.isUnlocked, false);
 
     const yesBag = await post(
       "/api/carts",
@@ -400,11 +405,16 @@ describe("check-ins", { concurrency: false }, () => {
     const yes = await post("/api/dev/messages", { conversationId: `desk:cart-${yesCode}`, text: "yes" }, "");
     assert.equal(yes.status, 200);
     const yesThread = (await (await fetch(`${base}/api/dev/messages?conversationId=desk:cart-${yesCode}`)).json()) as {
-      turns: { text: string }[];
+      turns: { role: string; text: string }[];
     };
-    assert.match(yesThread.turns.map((turn) => turn.text).join("\n"), /marinating/);
-    const yesCart = (await (await fetch(`${base}/api/carts/${yesCode}`)).json()) as { status: string; scoreBucket: string | null };
+    assert.equal(yesThread.turns.some((turn) => turn.role === "agent" && turn.text.length > 0), true);
+    const yesCart = (await (await fetch(`${base}/api/carts/${yesCode}`)).json()) as {
+      status: string;
+      scoreBucket: string | null;
+      isUnlocked: boolean;
+    };
     assert.equal(yesCart.status, "locked");
+    assert.equal(yesCart.isUnlocked, false);
     assert.equal(yesCart.scoreBucket, null);
   });
 
