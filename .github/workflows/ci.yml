@@ -17,6 +17,7 @@ jobs:
   ci:
     name: Node 24
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -41,3 +42,11 @@ jobs:
 
       - name: Build demo
         run: npm run build:demo
+
+      - name: Browser smoke
+        timeout-minutes: 10
+        run: |
+          set -x
+          npx playwright install --with-deps chromium
+          npm run test:e2e
+          npm run test:zoom

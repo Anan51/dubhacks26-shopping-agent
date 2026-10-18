@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src", "zoom-card.test.ts"]
+  "include": ["src", "zoom-card.test.ts", "e2e-smoke.test.ts"]
 }
