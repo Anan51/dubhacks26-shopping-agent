@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
+
+import argon2 from "argon2";
 
 import { logIn, publicUser, signUp, type AccountDirectory, type AccountUser } from "./accounts.js";
+import { ARGON } from "./password.js";
 
-describe("email signup", () => {
+describe("email signup", { concurrency: false }, () => {
   it("persists an argon2 hash and never the password", async () => {
     const saved: AccountUser[] = [];
     const directory = memoryDirectory(saved);
@@ -30,33 +33,39 @@ describe("email signup", () => {
   it("spends a password verify when the email is unknown", async () => {
     const saved: AccountUser[] = [];
     const directory = memoryDirectory(saved);
-    await signUp(directory, { email: "ada@example.com", password: "correct horse battery" });
-    await logIn(directory, { email: "missing@example.com", password: "warmup-password" }).catch(() => undefined);
-
-    const wrongMs = await medianElapsed(() =>
-      logIn(directory, { email: "ada@example.com", password: "wrong horse battery" }).catch(() => undefined),
-    );
-    const unknownMs = await medianElapsed(() =>
-      logIn(directory, { email: "missing@example.com", password: "wrong horse battery" }).catch(() => undefined),
-    );
-    assert.ok(unknownMs > wrongMs * 0.5, `unknown ${unknownMs}ms, wrong password ${wrongMs}ms`);
+    const user = await signUp(directory, { email: "ada@example.com", password: "correct horse battery" });
+    const verify = mock.method(argon2, "verify");
+    const hash = mock.method(argon2, "hash");
+    try {
+      await assert.rejects(
+        () => logIn(directory, { email: "missing@example.com", password: "wrong horse battery" }),
+        /Invalid email or password/,
+      );
+      await assert.rejects(
+        () => logIn(directory, { email: "ada@example.com", password: "wrong horse battery" }),
+        /Invalid email or password/,
+      );
+      assert.equal(hash.mock.calls.length, 0);
+      assert.equal(verify.mock.calls.length, 2);
+      const unknownCall = verify.mock.calls[0];
+      const wrongCall = verify.mock.calls[1];
+      assert.ok(unknownCall);
+      assert.ok(wrongCall);
+      const unknownHash = unknownCall.arguments[0];
+      const wrongHash = wrongCall.arguments[0];
+      const unknownAlgorithm = unknownHash.split("$")[1];
+      const storedAlgorithm = user.passwordHash.split("$")[1];
+      assert.equal(wrongHash, user.passwordHash);
+      assert.ok(unknownAlgorithm);
+      assert.equal(unknownAlgorithm, storedAlgorithm);
+      assert.equal(argon2.needsRehash(unknownHash, ARGON), false);
+      assert.equal(argon2.needsRehash(user.passwordHash, ARGON), false);
+    } finally {
+      verify.mock.restore();
+      hash.mock.restore();
+    }
   });
 });
-
-async function elapsed(run: () => Promise<unknown>): Promise<number> {
-  const start = performance.now();
-  await run();
-  return performance.now() - start;
-}
-
-async function medianElapsed(run: () => Promise<unknown>): Promise<number> {
-  const samples: number[] = [];
-  for (let sample = 0; sample < 3; sample += 1) {
-    samples.push(await elapsed(run));
-  }
-  samples.sort((left, right) => left - right);
-  return samples[1] ?? 0;
-}
 
 function memoryDirectory(saved: AccountUser[]): AccountDirectory {
   return {
