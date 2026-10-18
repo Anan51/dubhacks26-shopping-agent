@@ -30,11 +30,12 @@ export const BLOCKED_BUTTON_CSS = `
 
 /**
  * Checkout and express-pay controls only.
- * A catch-all of `a` or `[role=button]` also matches nav, footers, and the
- * page shell Apple wraps around the bag. Those containers then swallow every click.
+ * `[role=button]` is not here: Apple wraps the bag in that role, and the shell's
+ * text includes Check Out. A bare `<a>Check Out</a>` still matches, then
+ * `isControlContainer` drops any anchor that wraps other controls.
  */
 export const PAY_CONTROLS =
-  "button, input[type='submit'], input[type='button'], input[type='image'], apple-pay-button, [data-autom='checkout'], [data-autom='checkout-with-apple-pay']";
+  "button, a, input[type='submit'], input[type='button'], input[type='image'], apple-pay-button, [data-autom='checkout'], [data-autom='checkout-with-apple-pay']";
 
 const NESTED_INTERACTIVE = "a, button, input, select, textarea, apple-pay-button, [role='button']";
 

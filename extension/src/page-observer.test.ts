@@ -100,7 +100,7 @@ describe("locked bag observer", () => {
     watch.disconnect();
   });
 
-  it("does not repaint itself while Apple toggles classes, attributes, and labels", async () => {
+  it("does not repaint itself while Apple edits text and inserts nodes", async () => {
     const html = readFileSync(FALLBACK_HTML, "utf8");
     const document = new JSDOM(html, { url: "https://www.apple.com/shop/bag" }).window.document;
     const checkout = document.querySelector("#checkout");
@@ -132,14 +132,21 @@ describe("locked bag observer", () => {
     assert.equal(checkout.getAttribute("data-simmer-blocked"), "1");
     assert.equal(nav.hasAttribute("data-simmer-blocked"), false);
 
+    const noise = document.createElement("p");
+    noise.id = "live-copy";
+    noise.textContent = "Store hours";
+    nav.parentElement?.append(noise);
     for (let tick = 0; tick < 20; tick += 1) {
       await new Promise((resolve) => setTimeout(resolve, 0));
-      checkout.classList.toggle("button-block");
-      applePay.classList.toggle("rs-applepay");
-      checkout.setAttribute("aria-busy", tick % 2 === 0 ? "true" : "false");
-      shell.setAttribute("data-render", String(tick));
-      nav.classList.toggle("globalnav-link");
-      label.textContent = tick % 2 === 0 ? "Check Out" : "Check Out";
+      // characterData. The previous storm set the same string twice, so it never
+      // notified, and class/attribute edits are not what the old observer watched.
+      noise.textContent = `Store hours ${tick}`;
+      label.textContent = tick % 2 === 0 ? "Check Out" : "Check Out ";
+      const extra = document.createElement("span");
+      extra.className = "apple-live";
+      extra.textContent = `tick ${tick}`;
+      shell.append(extra);
+      extra.remove();
     }
     await flush();
     assert.ok(paints <= 3, `paints during an Apple edit storm: ${paints}`);

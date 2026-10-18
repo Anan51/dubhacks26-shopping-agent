@@ -124,6 +124,7 @@ describe("checkout gate", () => {
       <button type="button" id="apple">Apple Pay</button>
       <apple-pay-button id="pay"></apple-pay-button>
       <button type="button" id="card">Pay with Apple Card</button>
+      <a id="plain-checkout" href="/shop/bagx/checkout_now">Check Out</a>
       <a id="learn" href="/apple-card/">Learn more about Apple Card Monthly Installments</a>
     </body></html>`).window.document;
     const gate = installGate(document, "bag");
@@ -134,7 +135,7 @@ describe("checkout gate", () => {
       assert.equal(node.hasAttribute("data-simmer-blocked"), false, id);
       assert.equal(click(node).defaultPrevented, false, id);
     }
-    for (const id of ["checkout", "apple", "pay", "card"]) {
+    for (const id of ["checkout", "apple", "pay", "card", "plain-checkout"]) {
       const node = document.querySelector(`#${id}`);
       assert.ok(node);
       assert.equal(node.getAttribute("data-simmer-blocked"), "1", id);
