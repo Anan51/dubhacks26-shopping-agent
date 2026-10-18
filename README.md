@@ -20,6 +20,12 @@ The server listens on 127.0.0.1 unless `HOST` is set. The extension and `npm run
 
 `npm run typecheck` and `npm run build` compile the server, the desk, and the extension.
 
+## CI
+
+Pull requests and pushes to `main` run [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on Node 24 (`ubuntu-latest`): `npm ci`, `npm test`, `npm run typecheck`, `npm run build`, then `npm run build:demo`. Those steps do not need MongoDB, Backboard, xAI, or Photon credentials.
+
+![CI](https://github.com/Anan51/dubhacks26-shopping-agent/actions/workflows/ci.yml/badge.svg)
+
 ## Demo mode
 
 Demo mode is off unless you opt in.
