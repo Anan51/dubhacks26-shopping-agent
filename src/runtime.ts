@@ -118,7 +118,6 @@ export function createRuntime(deps: {
         logSendFailure(undefined);
       }
     } catch (error) {
-      console.error((error as any)?.status, (error as any)?.message, (error as any)?.rawBody);
       logSendFailure(error);
       delivered = false;
     }
