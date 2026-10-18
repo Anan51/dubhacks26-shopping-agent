@@ -5,6 +5,7 @@ import type { AccountDirectory } from "../auth/accounts.js";
 import { authenticatedUserId, refuseClientScope, ScopeError } from "../memory/service.js";
 import type { BackboardClient } from "../memory/backboard.js";
 import { isRecord } from "../record.js";
+import { rememberCheckIn } from "../checkins/ensure.js";
 import { historyLimit, insertRealPurchase, listPurchases, PurchaseError, setPurchaseFeedback, type PurchaseFeedback } from "./service.js";
 
 export function createPurchaseRouter(deps: {
@@ -22,6 +23,7 @@ export function createPurchaseRouter(deps: {
       refuseClientScope(req, userId);
       refuseAnyUserId(req);
       const purchase = await insertRealPurchase({ userId, feedback: null, ...readCompletedPurchase(req) });
+      await rememberCheckIn(userId, purchase._id);
       res.status(201).json({ purchase });
     } catch (error: unknown) {
       sendPurchaseError(res, error);

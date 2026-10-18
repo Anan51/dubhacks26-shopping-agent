@@ -91,6 +91,15 @@ export async function startServer(): Promise<void> {
       ? { personalizeNudge: (text: string, userId: string) => memory.personalize(text, userId) }
       : {}),
     ...(jwtSecret && mongoState() === "ready" ? { recordPurchase: recordUnlockedPurchase } : {}),
+    ...(jwtSecret && mongoState() === "ready"
+      ? {
+          checkIns: {
+            directory: memory.directory,
+            client: memory.client,
+            remote: memory.remote,
+          },
+        }
+      : {}),
   });
   attachAccounts(running.app, {
     jwtSecret,
@@ -127,6 +136,7 @@ export async function startServer(): Promise<void> {
       console.error(error instanceof Error ? error.message : "Photon shutdown failed.");
     });
     running.scheduler.stop();
+    running.stopCheckIns();
     server.close();
   };
   process.once("SIGINT", shutdown);

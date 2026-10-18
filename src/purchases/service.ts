@@ -6,6 +6,7 @@ import { MemoryNote, User } from "../auth/user.js";
 import { assistantForUser } from "../memory/service.js";
 import { isRecord } from "../record.js";
 import { waitForMemoryWrite, type BackboardClient, type MemoryKind } from "../memory/backboard.js";
+import { rememberCheckIn } from "../checkins/ensure.js";
 import { PurchaseRecord } from "./model.js";
 
 export type PurchaseFeedback = "regretted" | "kept";
@@ -166,6 +167,15 @@ export async function hasRegrettedPurchase(userId: string, category: string): Pr
   return found != null;
 }
 
+/**
+ * Recent real purchases for the impulsiveness score.
+ * Uses the same isExample:false filter as popup history, so survey rows count and seeded examples do not.
+ */
+export async function getPurchaseHistory(userId: string, limit: number): Promise<PurchaseView[]> {
+  const capped = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 50) : 50;
+  return listPurchases(userId, capped);
+}
+
 /** Real purchases only. Survey rows the shopper entered are already isExample false. Example rows stay hidden. */
 export async function listPurchases(userId: string, limit: number): Promise<PurchaseView[]> {
   const docs = await PurchaseRecord.find({ userId, isExample: false }).sort({ createdAt: -1 }).limit(limit);
@@ -225,6 +235,9 @@ export async function setPurchaseFeedback(
     throw new PurchaseError(404, "Purchase not found.");
   }
   if (doc.feedback === feedback) {
+    if (feedback) {
+      await rememberVoteIfMissing(userId, doc.item, doc.category, doc.price, feedback, deps);
+    }
     return toView(doc);
   }
   doc.feedback = feedback;
@@ -239,10 +252,11 @@ export async function setPurchaseFeedback(
 export async function recordUnlockedPurchase(userId: string, cart: Cart): Promise<void> {
   const existing = await PurchaseRecord.findOne({ userId, cartCode: cart.code });
   if (existing) {
+    await rememberCheckIn(userId, existing._id.toString());
     return;
   }
   const item = cart.items[0]?.name ?? "Apple bag";
-  await PurchaseRecord.create({
+  const doc = await PurchaseRecord.create({
     userId,
     item,
     category: categoryForItem(item),
@@ -253,6 +267,23 @@ export async function recordUnlockedPurchase(userId: string, cart: Cart): Promis
     ratedAt: null,
     cartCode: cart.code,
   });
+  await rememberCheckIn(userId, doc._id.toString());
+}
+
+async function rememberVoteIfMissing(
+  userId: string,
+  item: string,
+  category: string,
+  price: number,
+  feedback: PurchaseFeedback,
+  deps: { directory: AccountDirectory; client: BackboardClient; remote: boolean },
+): Promise<void> {
+  const line = purchaseVoteLine(feedback, item, category, price);
+  const saved = await MemoryNote.exists({ userId, text: line });
+  if (saved) {
+    return;
+  }
+  await writeVoteMemory(userId, item, category, price, feedback, deps);
 }
 
 async function writeVoteMemory(

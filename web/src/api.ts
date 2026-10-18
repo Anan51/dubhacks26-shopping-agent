@@ -75,6 +75,13 @@ export type CartResponse = {
   purchaseScore: number | null;
   scoreBucket: "free" | "soft" | "strict" | null;
   scoreReason: string | null;
+  impulse?: {
+    score1to8: number;
+    band: "free" | "soft" | "strict";
+    why: string | null;
+  } | null;
+  hoursOfWork?: { hours: number; hourlyRate: number } | null;
+  hoursOfWorkText?: string | null;
   lastPing: CheckoutPing | null;
   smsLink: string;
   linkMessage: string | null;

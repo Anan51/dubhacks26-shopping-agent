@@ -3,6 +3,7 @@ import type { ExtractOptions } from "./extract-signals.js";
 import { unwrapJsonFence } from "./extract-signals.js";
 import { formatUsd } from "./format.js";
 import { grokChat, DEFAULT_XAI_MODEL, DEFAULT_XAI_TIMEOUT_MS } from "./grok.js";
+import { formatImpulseScore } from "./scoring/lockBand.js";
 import { assertNever, type Cart, type Decision, type ScoreBucket, type SignalSource } from "./types.js";
 
 export type { ScoreBucket };
@@ -159,9 +160,15 @@ export function scoreReply(input: {
   bucket: ScoreBucket;
   gradeSource: SignalSource;
   alternative: string;
+  /** 1–8 impulsiveness, when the cart has a backboard reading. */
+  impulseScore1to8?: number | null;
+  impulseWhy?: string | null;
 }): string {
   const signed = input.grade > 0 ? `+${input.grade}` : String(input.grade);
-  const math = `Purchase score ${input.score} = impulse ${input.impulse} + grade ${signed} (${input.gradeSource}).`;
+  const math =
+    input.impulseScore1to8 != null
+      ? `Purchase score ${input.score} (${input.gradeSource} grade ${signed}). Impulsiveness ${formatImpulseScore(input.impulseScore1to8)} of 8.${input.impulseWhy ? ` ${input.impulseWhy}` : ""}`
+      : `Purchase score ${input.score} = impulse ${input.impulse} + grade ${signed} (${input.gradeSource}).`;
   switch (input.bucket) {
     case "free":
       return `${math} Score ${input.score} unlocks the bag. Apple's button works again. Simmer will not click it.`;
@@ -203,6 +210,8 @@ export function applyPurchaseScore(
     bucket,
     gradeSource: grade.source,
     alternative: decision ? alternativeLine(decision) : "Alternative: not ready yet.",
+    impulseScore1to8: cart.impulse?.score1to8 ?? null,
+    impulseWhy: cart.impulse?.why ?? null,
   });
   cart.scoreReason = grade.reason;
   const phrase = withoutScorePreface(cart.explanation);

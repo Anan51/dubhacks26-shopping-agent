@@ -1,4 +1,8 @@
+import { mongooseDirectory } from "./auth/accounts.js";
+import { mongoState } from "./auth/db.js";
+import { takeCheckInReply } from "./checkins/service.js";
 import { readAppConfig, readConfig } from "./config.js";
+import { createBackboardClient } from "./memory/backboard.js";
 import { polishPhrase } from "./phrase.js";
 import { sendPhotonMessage } from "./photon-send.js";
 import { ReminderScheduler } from "./reminders.js";
@@ -22,7 +26,7 @@ export function getWebhookRuntime(): Runtime {
     now,
     send: (message) => sendPhotonMessage(photonConfig, message),
   });
-  cached = createRuntime({
+  const inner = createRuntime({
     store,
     now,
     demoReminderMs: appConfig.demoReminderMs,
@@ -37,6 +41,24 @@ export function getWebhookRuntime(): Runtime {
       timeoutMs: appConfig.xaiTimeoutMs,
     },
   });
+  const backboard = mongoState() === "ready" ? createBackboardClient() : null;
+  cached = {
+    async enqueue(message) {
+      if (backboard) {
+        const link = store.findPhoneLinkByConversation(message.conversationId);
+        const taken = await takeCheckInReply(link?.userId ?? null, message.text, {
+          directory: mongooseDirectory(),
+          client: backboard.client,
+          remote: backboard.remote,
+        });
+        if (taken) {
+          store.rememberInbound(message.id);
+          return;
+        }
+      }
+      await inner.enqueue(message);
+    },
+  };
   scheduler.armPending();
   return cached;
 }
