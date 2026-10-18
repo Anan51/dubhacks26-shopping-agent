@@ -10,7 +10,13 @@ import { MemoryNote, User } from "../auth/user.js";
 import { InMemoryBackboardClient, type BackboardClient, type MemorySearchHit } from "../memory/backboard.js";
 import { PurchaseRecord } from "../purchases/model.js";
 import { insertRealPurchase, purchaseVoteLine, setPurchaseFeedback, writeUserMemoryLine } from "../purchases/service.js";
-import { computeImpulseScore, REGRET_SEARCH_LIMIT, regretSearchQuery, type ImpulseItem } from "./backboardScore.js";
+import {
+  computeImpulseScore,
+  REGRET_SEARCH_LIMIT,
+  REGRET_SEARCH_TIMEOUT_MS,
+  regretSearchQuery,
+  type ImpulseItem,
+} from "./backboardScore.js";
 
 const HASH = "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHQ$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -272,6 +278,59 @@ describe("regret search scoring", { concurrency: false }, () => {
         process.env.REGRET_SEARCH_MIN_SCORE = previous;
       }
     }
+  });
+
+  it("raises a same-category regret and ignores a cross-category hit above 0.9", async () => {
+    const ada = await User.create({
+      email: "search-category@example.com",
+      passwordHash: HASH,
+      hourlyRate: 30,
+      weeklyBudget: 500,
+      backboardAssistantId: "asst-category",
+    });
+    const phoneRegret = hit("regretted purchase: iPhone (phone, $999)", 0.905);
+    const phone: ImpulseItem = { item: "iPhone", category: "phone", price: 40, necessary: false };
+    const socks: ImpulseItem = { item: "wool socks", category: "other", price: 12, necessary: false };
+
+    const same = await computeImpulseScore(ada.id, phone, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [phoneRegret]),
+    });
+    assert.ok(same.score > 4.5);
+    assert.equal(same.why, "You regretted a similar purchase before.");
+
+    const cross = await computeImpulseScore(ada.id, socks, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [phoneRegret]),
+    });
+    assert.equal(cross.score, 4.5);
+    assert.equal(cross.why, null);
+
+    const socksRegret = hit("regretted purchase: wool socks (other, $12)", 0.95);
+    const socksRaised = await computeImpulseScore(ada.id, socks, undefined, {
+      backboardEnabled: true,
+      client: scriptedClient(async () => [socksRegret]),
+    });
+    assert.ok(socksRaised.score > 4.5);
+  });
+
+  it("falls back to 4.5 when the regret search times out", async () => {
+    assert.equal(REGRET_SEARCH_TIMEOUT_MS, 3_500);
+    const ada = await User.create({
+      email: "search-timeout@example.com",
+      passwordHash: HASH,
+      hourlyRate: 30,
+      weeklyBudget: 500,
+      backboardAssistantId: "asst-timeout",
+    });
+    const hanging = scriptedClient(() => new Promise<MemorySearchHit[]>(() => undefined));
+    const timed = await computeImpulseScore(ada.id, buds, undefined, {
+      backboardEnabled: true,
+      client: hanging,
+      searchTimeoutMs: 30,
+    });
+    assert.equal(timed.score, 4.5);
+    assert.equal(timed.why, null);
   });
 
   it("leaves price and hours alone when the key is unset", async () => {

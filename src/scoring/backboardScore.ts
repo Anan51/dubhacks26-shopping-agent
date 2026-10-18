@@ -3,7 +3,13 @@ import mongoose from "mongoose";
 import { readAccountConfig } from "../auth/config.js";
 import { User } from "../auth/user.js";
 import type { BackboardClient, MemorySearchHit } from "../memory/backboard.js";
-import { getBudgetProfile, getSavedGoals, type BudgetProfile, type SavedGoal } from "../purchases/service.js";
+import {
+  categoryForItem,
+  getBudgetProfile,
+  getSavedGoals,
+  type BudgetProfile,
+  type SavedGoal,
+} from "../purchases/service.js";
 import { clampImpulseScale } from "./lockBand.js";
 
 export type ImpulseItem = {
@@ -124,7 +130,12 @@ export type ImpulseScoreOptions = {
 
 /** Enough hits to reach the similar-regret cap without a long wait. */
 export const REGRET_SEARCH_LIMIT = 5;
-const REGRET_SEARCH_TIMEOUT_MS = 1_200;
+/**
+ * Live search often takes longer than 1.2s, so a real match used to time out
+ * and leave the score at 4.5. 3.5s covers that. A timeout still returns no hits.
+ * The search stays on the cart response: the score is part of the reply.
+ */
+export const REGRET_SEARCH_TIMEOUT_MS = 3_500;
 /** Under a known relevant match (0.615) and above likely noise. */
 export const DEFAULT_REGRET_SEARCH_MIN_SCORE = 0.5;
 
@@ -197,19 +208,50 @@ export async function computeImpulseScore(
 }
 
 /**
- * Sum of closeness for regret hits at or above the similarity floor.
+ * Sum of closeness for regret hits in the same product category as the bag.
+ * Category equality is the gate. The similarity floor is only a second guard:
+ * a cross-category hit can still score above 0.9.
  * A missing score counts as one hit. A score in (0, 1) counts as that fraction,
  * so a closer hit weighs more. Non-regret memories add nothing.
  */
-function similarRegretWeight(hits: readonly MemorySearchHit[], minScore: number): number {
+function similarRegretWeight(hits: readonly MemorySearchHit[], minScore: number, bagItem: string): number {
+  const bagCategory = categoryForItem(bagItem);
   let weight = 0;
   for (const hit of hits) {
-    if (!isRegretContent(hit.content) || !clearsScoreFloor(hit.score, minScore)) {
+    if (!isRegretContent(hit.content) || categoryOfMemory(hit.content) !== bagCategory) {
+      continue;
+    }
+    if (!clearsScoreFloor(hit.score, minScore)) {
       continue;
     }
     weight += hitCloseness(hit.score);
   }
   return weight;
+}
+
+/**
+ * Search hits return content and a score, not metadata.
+ * A vote memory is already `regretted purchase: {item} ({category}, {price})`
+ * from purchaseVoteLine, so the item name is taken from that text and mapped
+ * with categoryForItem, the same function used for the bag. A `Regret:` line
+ * with no vote shape is mapped from its text. A hit counts only when the two
+ * categories are equal.
+ */
+function categoryOfMemory(content: string): string {
+  return categoryForItem(memorySubject(content));
+}
+
+function memorySubject(content: string): string {
+  const trimmed = content.trim();
+  const vote = trimmed.match(/^regretted purchase:\s*(.+?)\s+\([^)]*\)\s*$/i);
+  if (vote?.[1]?.trim()) {
+    return vote[1].trim();
+  }
+  const prefixed = trimmed.match(/^regret:\s*(.+)$/i);
+  if (prefixed?.[1]?.trim()) {
+    return prefixed[1].trim();
+  }
+  return trimmed;
 }
 
 function memoryOn(options: ImpulseScoreOptions | undefined): boolean {
@@ -238,7 +280,7 @@ async function searchRegretWeight(
       REGRET_SEARCH_LIMIT,
       options?.searchTimeoutMs ?? REGRET_SEARCH_TIMEOUT_MS,
     );
-    return similarRegretWeight(hits, regretSearchMinScore());
+    return similarRegretWeight(hits, regretSearchMinScore(), input.item);
   } catch {
     return 0;
   }
