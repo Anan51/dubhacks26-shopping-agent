@@ -86,8 +86,11 @@ type ApiResult = {
 
 function start(site: StoreAdapter): Running {
   let stopped = false;
-  onContextDead = () => {
+  let endSession = (): void => {
     stopped = true;
+  };
+  onContextDead = () => {
+    endSession();
   };
   const page = active;
   if (!extensionContextAlive(page.runtime())) {
@@ -100,10 +103,19 @@ function start(site: StoreAdapter): Running {
     userId: "user-local",
     cartCode: "",
   };
-  const settingsReady = loadSettings(page).then((loaded) => {
+  const settingsReady = loadSettings(page, (value) => {
+    if (stopped) {
+      return;
+    }
+    const loaded = settingsFrom(value);
+    settings = loaded;
+    if (hostOptedOut(page.location.hostname, loaded.optOut)) {
+      endSession();
+    }
+  }).then((loaded) => {
     settings = loaded;
     if (!stopped && hostOptedOut(page.location.hostname, loaded.optOut)) {
-      shutdown();
+      endSession();
     }
     return loaded;
   });
@@ -130,6 +142,7 @@ function start(site: StoreAdapter): Running {
       return;
     }
     stopped = true;
+    endSession = () => undefined;
     page.view.clearInterval(pollTimer);
     page.view.clearTimeout(fallbackTimer);
     page.view.clearTimeout(retryTimer);
@@ -141,6 +154,7 @@ function start(site: StoreAdapter): Running {
     stopCheckout();
     sessions().delete(page.document);
   };
+  endSession = shutdown;
   onContextDead = shutdown;
 
   const releasePage = () => {
@@ -212,6 +226,15 @@ function start(site: StoreAdapter): Running {
       show(emptyModel(settings, code, "Simmer can't reach the local server."));
       return;
     }
+    applyDecision(cart);
+  };
+
+  const applyDecision = (cart: Record<string, unknown>) => {
+    if (stopped) {
+      return;
+    }
+    page.view.clearTimeout(retryTimer);
+    retryTimer = 0;
     const unlocked = cart.isUnlocked === true && cart.status === "unlocked";
     bagOpen = unlocked;
     if (unlocked) {
@@ -230,6 +253,36 @@ function start(site: StoreAdapter): Running {
       return;
     }
     show(modelFrom(cart, null, settings, null, quantity));
+  };
+
+  const acceptCart = async (created: Record<string, unknown>, interpreted: PageBag) => {
+    if (stopped || typeof created.code !== "string") {
+      return;
+    }
+    const previous = code;
+    code = created.code;
+    postedKey = bagContentKey(interpreted);
+    if (previous !== "" && previous === code) {
+      await refresh();
+      return;
+    }
+    applyDecision(created);
+    if (stopped) {
+      return;
+    }
+    if (previous !== code) {
+      void rememberCart(page, code);
+    }
+    if (!watching && card && !stopped) {
+      watching = true;
+      pollTimer = page.view.setInterval(() => {
+        if (stopped || !extensionContextAlive(page.runtime())) {
+          shutdown();
+          return;
+        }
+        void refresh();
+      }, 1000);
+    }
   };
 
   let scheduleRetry = (): void => undefined;
@@ -279,13 +332,23 @@ function start(site: StoreAdapter): Running {
         }
         return;
       }
-      const created = await post(page, "/api/carts", {
-        userId: settings.userId,
-        itemNames: bag.items.map((item) => item.item).slice(0, 1),
-        totalCents: bag.total,
-        parsed: true,
-        pageHost: page.location.hostname,
-      });
+      const created = await post(
+        page,
+        "/api/carts",
+        {
+          userId: settings.userId,
+          itemNames: bag.items.map((item) => item.item).slice(0, 1),
+          totalCents: bag.total,
+          parsed: true,
+          pageHost: page.location.hostname,
+        },
+        (value) => {
+          const body = unwrap(value);
+          if (isRecord(body) && typeof body.code === "string") {
+            void acceptCart(body, interpreted);
+          }
+        },
+      );
       if (stopped) {
         return;
       }
@@ -297,42 +360,7 @@ function start(site: StoreAdapter): Running {
         }
         return;
       }
-      const previous = code;
-      code = created.code;
-      postedKey = bagContentKey(interpreted);
-      if (previous !== code) {
-        await rememberCart(page, code);
-      }
-      if (stopped) {
-        return;
-      }
-      const opened = created.isUnlocked === true && created.status === "unlocked";
-      bagOpen = opened;
-      if (opened) {
-        showBlock = false;
-        gate.lift();
-      } else {
-        showBlock = true;
-        paintLock();
-      }
-      if (previous !== "" && previous === code) {
-        await refresh();
-      } else {
-        show(modelFrom(created, { turns: [] }, settings, null, quantity));
-        if (opened && created.necessity !== "necessary") {
-          releasePage();
-        }
-      }
-      if (!watching && card) {
-        watching = true;
-        pollTimer = page.view.setInterval(() => {
-          if (stopped || !extensionContextAlive(page.runtime())) {
-            shutdown();
-            return;
-          }
-          void refresh();
-        }, 1000);
-      }
+      await acceptCart(created, interpreted);
     } finally {
       posting = false;
     }
@@ -613,24 +641,26 @@ function emptyModel(settings: Settings, code: string, error: string): OverlayMod
   };
 }
 
-function loadSettings(host: BootHost): Promise<Settings> {
-  return message(host, { type: "simmer", action: "settings" }).then((value) => {
-    const record = isRecord(value) ? value : {};
-    return {
-      origin: typeof record.origin === "string" ? record.origin : "http://127.0.0.1:4321",
-      optOut: Array.isArray(record.optOut) ? record.optOut.filter((item): item is string => typeof item === "string") : [],
-      userId: typeof record.userId === "string" ? record.userId : "user-local",
-      cartCode: typeof record.cartCode === "string" ? record.cartCode : "",
-    };
-  });
+function loadSettings(host: BootHost, onLate?: (value: unknown) => void): Promise<Settings> {
+  return message(host, { type: "simmer", action: "settings" }, onLate).then((value) => settingsFrom(value));
+}
+
+function settingsFrom(value: unknown): Settings {
+  const record = isRecord(value) ? value : {};
+  return {
+    origin: typeof record.origin === "string" ? record.origin : "http://127.0.0.1:4321",
+    optOut: Array.isArray(record.optOut) ? record.optOut.filter((item): item is string => typeof item === "string") : [],
+    userId: typeof record.userId === "string" ? record.userId : "user-local",
+    cartCode: typeof record.cartCode === "string" ? record.cartCode : "",
+  };
 }
 
 function rememberCart(host: BootHost, code: string): Promise<void> {
   return message(host, { type: "simmer", action: "remember-cart", code }).then(() => undefined);
 }
 
-function post(host: BootHost, path: string, body?: unknown): Promise<unknown> {
-  return message(host, { type: "simmer", action: "api", method: "POST", path, body }).then(unwrap);
+function post(host: BootHost, path: string, body?: unknown, onLate?: (value: unknown) => void): Promise<unknown> {
+  return message(host, { type: "simmer", action: "api", method: "POST", path, body }, onLate).then(unwrap);
 }
 
 function recordCheckout(host: BootHost, cartCode: string): Promise<void> {
@@ -641,8 +671,8 @@ function recordCheckout(host: BootHost, cartCode: string): Promise<void> {
   });
 }
 
-function getJson(host: BootHost, path: string): Promise<unknown> {
-  return message(host, { type: "simmer", action: "api", method: "GET", path }).then(unwrap);
+function getJson(host: BootHost, path: string, onLate?: (value: unknown) => void): Promise<unknown> {
+  return message(host, { type: "simmer", action: "api", method: "GET", path }, onLate).then(unwrap);
 }
 
 function unwrap(value: unknown): unknown {
@@ -652,21 +682,31 @@ function unwrap(value: unknown): unknown {
   return value.body ?? null;
 }
 
-function message(host: BootHost, payload: unknown): Promise<unknown> {
+function message(host: BootHost, payload: unknown, onLate?: (value: unknown) => void): Promise<unknown> {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (value: unknown) => {
       if (settled) {
+        onLate?.(value);
         return;
       }
       settled = true;
       resolve(value);
     };
-    const timer = host.view.setTimeout(() => finish(null), 2500);
+    const timer = host.view.setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(null);
+    }, 2500);
     void deliverExtensionMessage(host.runtime(), payload, () => {
       host.view.clearTimeout(timer);
       sessions().get(host.document)?.stop();
-      finish(null);
+      if (!settled) {
+        settled = true;
+        resolve(null);
+      }
     }).then(
       (value) => {
         host.view.clearTimeout(timer);
@@ -674,7 +714,10 @@ function message(host: BootHost, payload: unknown): Promise<unknown> {
       },
       () => {
         host.view.clearTimeout(timer);
-        finish(null);
+        if (!settled) {
+          settled = true;
+          resolve(null);
+        }
       },
     );
   });

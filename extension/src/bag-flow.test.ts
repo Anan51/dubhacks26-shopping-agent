@@ -118,9 +118,59 @@ describe("bag card reliability", () => {
       necessary.close();
     }
   });
+
+  it("applies settings and cart replies that arrive after the 2.5s fallback", async () => {
+    const bag = SHELL.replace("</body>", `${LATE_BAG}</body>`);
+    const optedOut = open("https://www.apple.com/shop/bag", bag, {
+      replyDelayMs: 3000,
+      optOut: ["apple.com"],
+      cart: { necessity: "necessary", isUnlocked: true, status: "unlocked" },
+    });
+    try {
+      await wait(2700);
+      assert.equal(optedOut.root()?.isConnected, true);
+      assert.equal(optedOut.document.querySelector("#checkout")?.getAttribute("data-simmer-blocked"), "1");
+      await wait(900);
+      assert.equal(optedOut.root(), null);
+      assert.equal(optedOut.document.querySelector("#checkout")?.hasAttribute("data-simmer-blocked"), false);
+    } finally {
+      optedOut.close();
+    }
+
+    const necessary = open("https://www.apple.com/shop/bag", bag, {
+      replyDelayMs: 3000,
+      cart: { necessity: "necessary", isUnlocked: true, status: "unlocked", replied: false },
+    });
+    try {
+      await wait(2700);
+      assert.equal(necessary.document.querySelector("#checkout")?.getAttribute("data-simmer-blocked"), "1");
+      await wait(3300);
+      assert.equal(necessary.root()?.isConnected, true);
+      assert.equal(necessary.document.querySelector("#checkout")?.hasAttribute("data-simmer-blocked"), false);
+    } finally {
+      necessary.close();
+    }
+
+    const locked = open("https://www.apple.com/shop/bag", bag, {
+      replyDelayMs: 3000,
+      cart: { necessity: "unnecessary", isUnlocked: false, status: "locked", replied: false },
+    });
+    try {
+      await wait(6000);
+      assert.equal(locked.root()?.isConnected, true);
+      assert.equal(locked.button("Unlock"), null);
+      assert.equal(locked.document.querySelector("#checkout")?.getAttribute("data-simmer-blocked"), "1");
+    } finally {
+      locked.close();
+    }
+  });
 });
 
-function open(url: string, html: string, options: { hangSettings?: boolean; cart?: Record<string, unknown> }) {
+function open(
+  url: string,
+  html: string,
+  options: { hangSettings?: boolean; cart?: Record<string, unknown>; replyDelayMs?: number; optOut?: string[] },
+) {
   const dom = new JSDOM(html, { url });
   const view = dom.window;
   view.setInterval = (() => 0) as typeof view.setInterval;
@@ -146,17 +196,29 @@ function open(url: string, html: string, options: { hangSettings?: boolean; cart
     sendMessage(message: unknown, callback?: (value: unknown) => void) {
       const payload = isPayload(message) ? message : {};
       sent.push(payload);
-      if (payload.action === "settings") {
-        if (!options.hangSettings) {
-          callback?.({ origin: "http://127.0.0.1:4321", optOut: [], userId: "user-local", cartCode: "" });
+      const reply = () => {
+        if (payload.action === "settings") {
+          if (!options.hangSettings) {
+            callback?.({
+              origin: "http://127.0.0.1:4321",
+              optOut: options.optOut ?? [],
+              userId: "user-late-reply",
+              cartCode: "",
+            });
+          }
+          return;
         }
+        if (payload.action === "remember-cart") {
+          callback?.({ ok: true });
+          return;
+        }
+        callback?.({ ok: true, body: cart });
+      };
+      if (options.replyDelayMs !== undefined && options.replyDelayMs > 0) {
+        setTimeout(reply, options.replyDelayMs);
         return;
       }
-      if (payload.action === "remember-cart") {
-        callback?.({ ok: true });
-        return;
-      }
-      callback?.({ ok: true, body: cart });
+      reply();
     },
   };
   const host: BootHost = {
