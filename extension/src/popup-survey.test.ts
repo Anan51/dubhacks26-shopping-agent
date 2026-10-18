@@ -226,8 +226,10 @@ describe("popup survey", () => {
     email.value = "ada@example.com";
     password.value = "correct horse battery";
     document.querySelectorAll("button")[0]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
-    await waitFor(() => document.body.textContent?.includes("No purchases yet.") === true);
-    assert.equal(stored.simmer_token, "jwt-from-signup");
+    await waitFor(() => {
+      const empty = [...document.querySelectorAll("p")].find((node) => node.textContent === "No purchases yet.");
+      return stored.simmer_token === "jwt-from-signup" && empty?.hidden === false;
+    });
     assert.equal(document.getElementById("simmer-auth")?.textContent?.includes("Sign out"), true);
 
     const settingsTab = [...document.querySelectorAll("button")].find((button) => button.textContent === "Settings");
