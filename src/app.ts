@@ -5,7 +5,7 @@ import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 
 import { handleWebhook } from "../api/webhook.js";
-import { assignAuthUser, readAuthUserId, scopedCarts } from "./current-cart.js";
+import { assignAuthUser, cartReadableBy, readAuthUserId, scopedCarts } from "./current-cart.js";
 import { demoReplyOpen, devRoutesOpen, manualUnlockOpen } from "./dev-access.js";
 import { offersSleep } from "./score-band.js";
 import {
@@ -333,7 +333,7 @@ export function createApp(deps: AppDeps): RunningApp {
 
   app.get("/api/carts/:code", (req, res) => {
     const cart = loadCart(req.params.code);
-    if (!cart) {
+    if (!cart || !cartReadableBy(cart, req.user?.id ?? null)) {
       res.status(404).json({ error: "Cart not found." });
       return;
     }

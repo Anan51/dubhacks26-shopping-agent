@@ -177,6 +177,101 @@ describe("cart account scope", () => {
     const loggedOut = await get("/api/carts?userId=user-device-claim");
     assert.deepEqual(loggedOut.body.carts, []);
   });
+
+  it("returns a cart by code to its owner and 404s for another account", async () => {
+    const created = await post(
+      "/api/carts",
+      {
+        userId: "user-device-owner",
+        itemNames: ["iPad"],
+        totalCents: 49_900,
+        parsed: true,
+        pageHost: "www.apple.com",
+        demo: true,
+      },
+      tokenA,
+    );
+    assert.equal(created.status, 201);
+    const cart = created.body as ListedCart;
+
+    const owner = await get(`/api/carts/${cart.code}`, tokenA);
+    assert.equal(owner.status, 200);
+    const owned = owner.body as unknown as ListedCart;
+    assert.equal(owned.code, cart.code);
+    assert.equal(owned.authUserId, "account-a");
+
+    const other = await get(`/api/carts/${cart.code}`, tokenB);
+    assert.equal(other.status, 404);
+    assert.deepEqual(other.body, { error: "Cart not found." });
+
+    const missing = await get("/api/carts/ZZZZZZ", tokenB);
+    assert.equal(missing.status, 404);
+    assert.deepEqual(missing.body, other.body);
+  });
+});
+
+describe("cart by code without auth", () => {
+  let demoBase = "";
+  let close: () => Promise<void>;
+
+  before(async () => {
+    const running = createApp({
+      store: createMemoryStore(),
+      origin: "http://127.0.0.1",
+      lockMs: 600_000,
+      demoReminderMs: 60_000,
+      demoDefault: true,
+      agentHandle: null,
+      photon: null,
+      xaiModel: "grok-4.20-0309-non-reasoning",
+      xaiTimeoutMs: 8_000,
+      polish: async (template) => template,
+      env: {},
+    });
+    const server = createServer(running.app);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address() as AddressInfo;
+    demoBase = `http://127.0.0.1:${address.port}`;
+    close = () =>
+      new Promise((resolve, reject) => {
+        running.scheduler.stop();
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+  });
+
+  after(async () => {
+    await close();
+  });
+
+  it("returns the cart by code when auth is not configured", async () => {
+    const created = await fetch(`${demoBase}/api/carts`, {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify({
+        userId: "user-demo-desk",
+        itemNames: ["USB-C Charge Cable"],
+        totalCents: 1_900,
+        parsed: true,
+        demo: true,
+      }),
+    });
+    assert.equal(created.status, 201);
+    const cart = (await created.json()) as ListedCart;
+
+    const open = await fetch(`${demoBase}/api/carts/${cart.code}`, { headers: { accept: "application/json" } });
+    assert.equal(open.status, 200);
+    const body = (await open.json()) as ListedCart;
+    assert.equal(body.code, cart.code);
+    assert.equal(body.userId, "user-demo-desk");
+
+    const strayToken = await fetch(`${demoBase}/api/carts/${cart.code}`, {
+      headers: { accept: "application/json", authorization: "Bearer not-a-session" },
+    });
+    assert.equal(strayToken.status, 200);
+    assert.equal(((await strayToken.json()) as ListedCart).code, cart.code);
+  });
 });
 
 async function post(path: string, body: unknown, token?: string): Promise<{ status: number; body: Record<string, unknown> }> {
