@@ -159,13 +159,110 @@ describe("mixed bag impulse item", { concurrency: false }, () => {
     assert.equal(reading.hoursOfWork, null);
     assert.ok(reading.impulse.score1to8 > 4.5);
   });
+
+  it("scores an itemsForBag cable plus iPhone from the iPhone at the bag total", async () => {
+    const totalCents = 4_000;
+    const cart = bagFromNames(["Lightning cable", "iPhone 16 Pro"], totalCents);
+    assert.deepEqual(
+      cart.items.map((item) => ({ name: item.name, priceCents: item.priceCents })),
+      [
+        { name: "Lightning cable", priceCents: totalCents },
+        { name: "iPhone 16 Pro", priceCents: 0 },
+      ],
+    );
+
+    const queries: string[] = [];
+    const reading = await readingForCart(userId, cart, regretOptions(queries));
+    const phoneOnly = await readingForCart(userId, bagFromNames(["iPhone 16 Pro"], totalCents), regretOptions());
+    const direct = await scoredDirect(userId, "iPhone 16 Pro", totalCents);
+
+    assert.equal(queries[0], "iPhone 16 Pro phone");
+    assert.deepEqual(reading.impulse, phoneOnly.impulse);
+    assert.equal(reading.impulse.score1to8, direct.score);
+    assert.equal(reading.impulse.why, direct.why);
+    assert.equal(reading.impulse.why, PHONE_REGRET);
+    assert.ok(reading.impulse.score1to8 > 4.5);
+    assert.equal(reading.hoursOfWork, null);
+  });
+
+  it("scores an itemsForBag AirPods plus iPhone from the iPhone, not the total line", async () => {
+    const totalCents = 4_000;
+    const cart = bagFromNames(["AirPods Pro", "iPhone 16 Pro"], totalCents);
+    assert.equal(cart.items[0]?.name, "AirPods Pro");
+    assert.equal(cart.items[0]?.priceCents, totalCents);
+    assert.equal(cart.items[1]?.priceCents, 0);
+
+    const queries: string[] = [];
+    const reading = await readingForCart(userId, cart, regretOptions(queries));
+    const phoneOnly = await readingForCart(userId, bagFromNames(["iPhone 16 Pro"], totalCents), regretOptions());
+
+    assert.equal(queries[0], "iPhone 16 Pro phone");
+    assert.deepEqual(reading.impulse, phoneOnly.impulse);
+    assert.equal(reading.impulse.why, PHONE_REGRET);
+    assert.ok(reading.impulse.score1to8 > 4.5);
+    assert.equal(reading.hoursOfWork, null);
+  });
+
+  it("keeps the priciest unnecessary line when each item has its own price", async () => {
+    const queries: string[] = [];
+    const cart = pricedCart([line("AirPods Pro", 20_000), line("iPhone 16 Pro", 10_000)], 4_000);
+    const reading = await readingForCart(userId, cart, regretOptions(queries));
+
+    assert.equal(queries[0], "AirPods Pro audio");
+    assert.equal(reading.impulse.score1to8, 4.5);
+    assert.equal(reading.impulse.why, null);
+    assert.equal(reading.hoursOfWork, null);
+  });
+
+  it("scores the first unnecessary name when an itemsForBag has no phone", async () => {
+    const queries: string[] = [];
+    const cart = bagFromNames(["USB-C charger", "Headphones"], 4_000);
+    const reading = await readingForCart(userId, cart, regretOptions(queries));
+
+    assert.equal(cart.items[0]?.priceCents, 4_000);
+    assert.equal(cart.items[1]?.priceCents, 0);
+    assert.equal(queries[0], "Headphones audio");
+    assert.equal(reading.impulse.score1to8, 4.5);
+    assert.equal(reading.impulse.why, null);
+  });
+
+  it("falls back to the first itemsForBag line when every name is necessary", async () => {
+    const queries: string[] = [];
+    const cart = bagFromNames(["Lightning cable", "20W USB-C Power Adapter"], 4_000);
+    const reading = await readingForCart(userId, cart, regretOptions(queries));
+
+    assert.equal(queries[0], "Lightning cable cable");
+    assert.equal(reading.impulse.score1to8, 4.5);
+    assert.equal(reading.impulse.why, null);
+  });
 });
 
-function regretOptions() {
+function regretOptions(queries?: string[]) {
   return {
     backboardEnabled: true as const,
-    client: scriptedClient(async () => [hit("regretted purchase: iPhone 16 (phone, $999)", 0.2)]),
+    client: scriptedClient(async (_assistantId, query) => {
+      queries?.push(query);
+      return [hit("regretted purchase: iPhone 16 (phone, $999)", 0.2)];
+    }),
   };
+}
+
+function bagFromNames(names: readonly string[], totalCents: number): Cart {
+  return pricedCart(itemsForBag(names, totalCents, true), totalCents);
+}
+
+async function scoredDirect(userId: string, item: string, totalCents: number) {
+  return computeImpulseScore(
+    userId,
+    {
+      item,
+      category: categoryForItem(item),
+      price: totalCents / 100,
+      necessary: false,
+    },
+    undefined,
+    regretOptions(),
+  );
 }
 
 function pricedCart(items: CartItem[], totalCents: number): Cart {
