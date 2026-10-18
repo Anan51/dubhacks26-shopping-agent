@@ -70,7 +70,7 @@ export function readIncomingMessage(
   if (config.platform === "imessage" && space.kind !== "direct") {
     return ignore("not-direct");
   }
-  if (sentBy.kind !== "human" || sentBy.id === receivedBy.id) {
+  if (sentBy.kind !== "human" || sentBy.id === receivedBy.id || sentBy.handle === config.agentHandle) {
     return ignore("not-human");
   }
   if (receivedBy.kind !== "agent" || receivedBy.handle !== config.agentHandle) {

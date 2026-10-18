@@ -75,4 +75,49 @@ describe("Photon inbound replies", () => {
     assert.match(sent[1] ?? "", /24 hours/);
     assert.equal(store.getCart("AB23CD")?.scoreBucket, "strict");
   });
+
+  it("sends at most one outbound when the same inbound id is processed twice", async () => {
+    const store = createMemoryStore();
+    const cart = startLockedCart({
+      items: itemsForBag(["Example phone"], 120_000, true),
+      totalCents: 120_000,
+      parsedFromPage: true,
+      pageHost: "www.apple.com",
+      fingerprint: "user-impulsive|120000|example phone",
+      now: NOW,
+      demo: true,
+      lockMs: 600_000,
+      userId: "user-impulsive",
+      code: "CD34EF",
+    });
+    cart.necessity = "unnecessary";
+    cart.userImpulseScore = 2;
+    store.saveCart(cart);
+    store.savePhoneLink({
+      userId: "user-impulsive",
+      conversationId: SPACE,
+      linkedAt: NOW.toISOString(),
+    });
+    const sent: string[] = [];
+    const runtime = createRuntime({
+      store,
+      now: () => NOW,
+      demoReminderMs: 60_000,
+      send: async (message) => {
+        sent.push(message.text);
+      },
+      armReminder: () => undefined,
+      disarmReminder: () => undefined,
+      polish: async (template) => template,
+    });
+    const inbound = {
+      id: "pho_msg_once",
+      conversationId: SPACE,
+      text: "the new color looks nice",
+      agentSenderId: "pho_usr_agent",
+    };
+    await Promise.all([runtime.enqueue(inbound), runtime.enqueue(inbound)]);
+    assert.equal(sent.length, 1);
+    assert.equal(store.hasHandledInbound("pho_msg_once"), true);
+  });
 });

@@ -25,6 +25,8 @@ export function createRuntime(deps: {
     if (deps.store.hasHandledInbound(message.id)) {
       return;
     }
+    // Claim the id before any await so a replay cannot send a second reply.
+    deps.store.rememberInbound(message.id);
     const result = await applyTurn({
       session: deps.store.getSession(message.conversationId) ?? null,
       conversationId: message.conversationId,
@@ -67,7 +69,6 @@ export function createRuntime(deps: {
       parentMessageId: message.id,
       idempotencyKey: `simmer:${message.id}`,
     });
-    deps.store.rememberInbound(message.id);
     deps.store.saveSession(result.session);
     if (result.cart) {
       deps.store.saveCart(result.cart);

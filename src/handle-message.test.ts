@@ -87,5 +87,10 @@ describe("readIncomingMessage", () => {
     const agentRecord = agent as { data: { object: { sentBy: { kind: string } } } };
     agentRecord.data.object.sentBy.kind = "agent";
     assert.deepEqual(readIncomingMessage(agent, config), { action: "ignore", reason: "not-human" });
+
+    const ownLine = event();
+    const ownRecord = ownLine as { data: { object: { sentBy: { handle: string } } } };
+    ownRecord.data.object.sentBy.handle = "+15550001111";
+    assert.deepEqual(readIncomingMessage(ownLine, config), { action: "ignore", reason: "not-human" });
   });
 });
