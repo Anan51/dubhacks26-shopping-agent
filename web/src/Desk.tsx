@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { pausedLinkLine } from "../../src/links.js";
 import {
   getConfig,
   listCarts,
@@ -360,7 +361,7 @@ function MathPanel({
       {cart.lastPing?.delivered ? <p>Last ping landed in the linked thread.</p> : null}
       {cart.lastPing && !cart.lastPing.delivered ? (
         <p>
-          Ping {cart.lastPing.reason}. Text {cart.linkMessage ?? "link <userId>"} to Simmer's iMessage number.
+          Ping {cart.lastPing.reason}. {pausedLinkLine(cart.linkMessage, config?.agentHandle ?? null)}
         </p>
       ) : null}
     </div>

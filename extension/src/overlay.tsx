@@ -6,6 +6,7 @@ import { formatUsd } from "../../src/format.js";
 import { cartItemLines, readHiddenItemCount } from "../../src/item-name.js";
 import { overlayClockText, type GlanceItem, type GlanceSignals, type GlanceSources } from "../../src/glance.js";
 import { offersSleep } from "../../src/score-band.js";
+import { pausedLinkLine } from "../../src/links.js";
 import { pauseSentence, priceLine, simmerKicker } from "../../src/overlay-copy.js";
 import type { Decision } from "../../src/types.js";
 
@@ -30,6 +31,8 @@ export type OverlayModel = {
   reading: boolean;
   userId: string;
   linkMessage: string | null;
+  /** Agent iMessage handle from GET /api/config. Empty when PHOTON_AGENT_HANDLE is unset. */
+  agentHandle?: string | null;
   fallbackPage: boolean;
   replied: boolean;
   advice: string | null;
@@ -111,6 +114,7 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
   const clock = overlayClockText(glance, now, remaining);
   const showLockControls = model.necessity !== "necessary" && !unreadable;
   const unlinked = !model.pingDelivered && model.pingReason !== "send_failed" && model.linkMessage;
+  const linkLine = unlinked ? pausedLinkLine(model.linkMessage, model.agentHandle ?? null) : null;
   const lines = cartItemLines(model.itemNames);
   const more = Math.max(lines.more, readHiddenItemCount(model.hiddenItemCount));
   const showItems = !unreadable && model.quantity != null && lines.shown.length > 0;
@@ -143,7 +147,7 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
         )}
         {showLockControls && !model.replied ? <p>Reply to Simmer's iMessage to unlock.</p> : null}
         {showLockControls && model.replied && model.advice ? <p>{model.advice}</p> : null}
-        {showLockControls && unlinked ? <p>Text {model.linkMessage} to Simmer's iMessage number.</p> : null}
+        {showLockControls && linkLine ? <p>{linkLine}</p> : null}
         <div className="row">
           {showLockControls && model.replied ? (
             <button type="button" onClick={actions.unlock}>

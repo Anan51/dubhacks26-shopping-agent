@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
+import { linkCodeForUser } from "./links.js";
 import type { Cart, Session } from "./types.js";
 
 export type PhoneLink = {
@@ -25,12 +26,16 @@ export type Store = {
   getPhoneLink(userId: string): PhoneLink | undefined;
   savePhoneLink(link: PhoneLink): void;
   findPhoneLinkByConversation(conversationId: string): PhoneLink | undefined;
+  /** Map a shopper id to its short link code. Returns the code. */
+  rememberLinkCode(userId: string): string;
+  /** Shopper id for a short code texted to Simmer, if one was registered. */
+  userIdForLinkCode(code: string): string | undefined;
   /** True when this inbound id already produced an outbound reply. */
   hasHandledInbound(messageId: string): boolean;
   rememberInbound(messageId: string): void;
   /** Drop a claimed id when the outbound send failed, so the same text can be retried. */
   forgetInbound(messageId: string): void;
-  /** Clears carts, sessions, phone links, and remembered inbound messages. */
+  /** Clears carts, sessions, phone links, link codes, and remembered inbound messages. */
   reset(): void;
 };
 
@@ -38,6 +43,7 @@ type Snapshot = {
   carts: Record<string, Cart>;
   sessions: Record<string, Session>;
   phoneLinks: Record<string, PhoneLink>;
+  linkCodes?: Record<string, string>;
   handledInboundIds?: string[];
 };
 
@@ -68,6 +74,7 @@ class MemoryStore implements Store {
   private carts = new Map<string, Cart>();
   private sessions = new Map<string, Session>();
   private phoneLinks = new Map<string, PhoneLink>();
+  private linkCodes = new Map<string, string>();
   private handledInboundIds: string[] = [];
 
   getCart(code: string): Cart | undefined {
@@ -107,6 +114,19 @@ class MemoryStore implements Store {
     );
   }
 
+  rememberLinkCode(userId: string): string {
+    const code = linkCodeForUser(userId);
+    const existing = this.linkCodes.get(code);
+    if (!existing) {
+      this.linkCodes.set(code, userId);
+    }
+    return code;
+  }
+
+  userIdForLinkCode(code: string): string | undefined {
+    return this.linkCodes.get(code.trim().toUpperCase());
+  }
+
   hasHandledInbound(messageId: string): boolean {
     return this.handledInboundIds.includes(messageId);
   }
@@ -123,6 +143,7 @@ class MemoryStore implements Store {
     this.carts.clear();
     this.sessions.clear();
     this.phoneLinks.clear();
+    this.linkCodes.clear();
     this.handledInboundIds = [];
   }
 }
@@ -138,10 +159,11 @@ class FileStore implements Store {
         carts: parsed.carts ?? {},
         sessions: parsed.sessions ?? {},
         phoneLinks: parsed.phoneLinks ?? {},
+        linkCodes: parsed.linkCodes ?? {},
         handledInboundIds: parsed.handledInboundIds ?? [],
       };
     } catch {
-      this.snapshot = { carts: {}, sessions: {}, phoneLinks: {}, handledInboundIds: [] };
+      this.snapshot = { carts: {}, sessions: {}, phoneLinks: {}, linkCodes: {}, handledInboundIds: [] };
     }
   }
 
@@ -185,6 +207,21 @@ class FileStore implements Store {
     );
   }
 
+  rememberLinkCode(userId: string): string {
+    const code = linkCodeForUser(userId);
+    const codes = this.snapshot.linkCodes ?? {};
+    if (codes[code]) {
+      return code;
+    }
+    this.snapshot.linkCodes = { ...codes, [code]: userId };
+    this.persist();
+    return code;
+  }
+
+  userIdForLinkCode(code: string): string | undefined {
+    return this.snapshot.linkCodes?.[code.trim().toUpperCase()];
+  }
+
   hasHandledInbound(messageId: string): boolean {
     return (this.snapshot.handledInboundIds ?? []).includes(messageId);
   }
@@ -200,7 +237,7 @@ class FileStore implements Store {
   }
 
   reset(): void {
-    this.snapshot = { carts: {}, sessions: {}, phoneLinks: {}, handledInboundIds: [] };
+    this.snapshot = { carts: {}, sessions: {}, phoneLinks: {}, linkCodes: {}, handledInboundIds: [] };
     this.persist();
   }
 

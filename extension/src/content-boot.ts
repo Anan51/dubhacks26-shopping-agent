@@ -1,4 +1,5 @@
 import { cartItemLines, readHiddenItemCount } from "../../src/item-name.js";
+import { linkMessageForCard, linkPhoneText } from "../../src/links.js";
 import { applePage, hostOptedOut, isFallbackBag } from "../../src/sites.js";
 import { bagContentKey, bagParseKey, bagReadAction, watchBagDom, type BagWatch, type PageBag } from "./bag-dom.js";
 import { bindCheckoutClicks } from "./checkout-record.js";
@@ -118,6 +119,9 @@ function start(site: StoreAdapter): Running {
     if (!stopped && hostOptedOut(page.location.hostname, loaded.optOut)) {
       endSession();
     }
+    if (!stopped) {
+      void getJson(page, `/api/phone-link?userId=${encodeURIComponent(loaded.userId)}`);
+    }
     return loaded;
   });
   const gate = installGate(page.document, () => buttonsToBlock(site, page.document));
@@ -136,6 +140,8 @@ function start(site: StoreAdapter): Running {
   let bagWatch: BagWatch | null = null;
   let pageWatch: PageWatch | null = null;
   let lastParsed: string | null = null;
+  let agentHandle: string | null = null;
+  let shown: OverlayModel | null = null;
   let stopCheckout = (): void => undefined;
 
   const shutdown = () => {
@@ -207,12 +213,25 @@ function start(site: StoreAdapter): Running {
   };
 
   const show = (model: OverlayModel) => {
+    const next = { ...model, agentHandle };
+    shown = next;
     if (!card) {
-      card = mountSimmerCard(site, page.document, page.css, model, actions);
+      card = mountSimmerCard(site, page.document, page.css, next, actions);
       return;
     }
-    card.update(model);
+    card.update(next);
   };
+
+  void getJson(page, "/api/config").then((body) => {
+    if (stopped || !isRecord(body)) {
+      return;
+    }
+    const handle = typeof body.agentHandle === "string" ? body.agentHandle.trim() : "";
+    agentHandle = handle.length > 0 ? handle : null;
+    if (shown) {
+      show(shown);
+    }
+  });
 
   const refresh = async () => {
     if (!code || stopped) {
@@ -513,7 +532,7 @@ function modelFrom(
     motiveSources: sourcesFrom(cart.motiveSources),
     reading: cart.reading === true,
     userId: settings.userId,
-    linkMessage: typeof cart.linkMessage === "string" ? cart.linkMessage : `link ${settings.userId}`,
+    linkMessage: linkMessageForCard(typeof cart.linkMessage === "string" ? cart.linkMessage : null, settings.userId),
     fallbackPage: isFallbackBag(pageHref()),
     pingDelivered: ping?.delivered === true,
     pingReason: ping?.reason === "send_failed" || ping?.reason === "unlinked" ? ping.reason : null,
@@ -626,7 +645,7 @@ function emptyModel(settings: Settings, code: string, error: string): OverlayMod
     motiveSources: null,
     reading: false,
     userId: settings.userId,
-    linkMessage: `link ${settings.userId}`,
+    linkMessage: linkPhoneText(settings.userId),
     fallbackPage: isFallbackBag(pageHref()),
     pingDelivered: false,
     pingReason: "unlinked",

@@ -22,6 +22,8 @@ export type ApplyInput = {
   loadCart: (code: string) => Cart | undefined;
   /** Phone thread with no cart code in the text. Photon replies land here. */
   resolveCart?: (conversationId: string) => Cart | undefined;
+  /** Short link code from a text, mapped back to the shopper id registered with a cart. */
+  resolveLinkCode?: (code: string) => string | null;
   extract?: ExtractOptions;
   /** Persist the cart while Grok is in flight so other pages can show it. */
   markReading?: (cart: Cart) => void;
@@ -77,9 +79,13 @@ export async function applyTurn(input: ApplyInput): Promise<ApplyResult> {
   if (/^link\b/i.test(input.text.trim()) && !link) {
     return say(session, "link <userId>");
   }
+  const linkedUserId = linkedUserFrom(link, input.resolveLinkCode);
+  if (link?.code && !linkedUserId) {
+    return say(session, "link <userId>");
+  }
   const phoneLink = link
     ? {
-        userId: link.userId ?? threadUserId(input.conversationId),
+        userId: linkedUserId ?? threadUserId(input.conversationId),
         conversationId: input.conversationId,
         ...(input.agentSenderId ? { agentSenderId: input.agentSenderId } : {}),
         linkedAt: nowIso,
@@ -210,6 +216,20 @@ function glanceFromCart(cart: Cart): GlanceItem {
     scoreBucket: cart.scoreBucket,
     scoreReason: cart.scoreReason,
   };
+}
+
+function linkedUserFrom(
+  link: { userId: string | null; code: string | null } | null,
+  resolveLinkCode: ((code: string) => string | null) | undefined,
+): string | null {
+  if (!link) {
+    return null;
+  }
+  if (link.code) {
+    const resolved = resolveLinkCode?.(link.code) ?? null;
+    return resolved && resolved.trim().length > 0 ? resolved : null;
+  }
+  return link.userId;
 }
 
 function withoutCartLabel(text: string): string {
