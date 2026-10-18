@@ -546,7 +546,196 @@ describe("popup survey", () => {
     await waitFor(() => reopenedIncome.value === "55" && reopenedBudget.value === "90");
   });
 
+  it("saves an hourly rate when no past purchases were added", async () => {
+    const posted = installSurveyFetch(dom, () => json({ completed: true, hourlyRate: 42, weeklyBudget: null, purchases: [] }, 201));
+    await signUpToSurvey(dom);
+    const hourly = document.querySelector<HTMLInputElement>("input[name='hourlyRate']");
+    assert.ok(hourly);
+    hourly.value = "42";
+    clickButton("Save survey");
+    await waitFor(() => document.getElementById("simmer-survey")?.hidden === true);
+    const surveyPost = posted.find((call) => call.url.endsWith("/onboarding/survey"));
+    assert.ok(surveyPost);
+    assert.deepEqual(surveyPost.body, { hourlyRate: 42, weeklyBudget: null, recentPurchases: [] });
+    assert.equal(surveyPost.authorization, "Bearer jwt-from-signup");
+    assert.equal(document.querySelector("#simmer-survey .error")?.hasAttribute("hidden"), true);
+  });
+
+  it("saves an hourly rate and a purchase priced like $12.99", async () => {
+    const posted = installSurveyFetch(dom, () => json({ completed: true, hourlyRate: 18, weeklyBudget: 90, purchases: [] }, 201));
+    await signUpToSurvey(dom);
+    const hourly = document.querySelector<HTMLInputElement>("input[name='hourlyRate']");
+    const weekly = document.querySelector<HTMLInputElement>("input[name='weeklyBudget']");
+    assert.ok(hourly && weekly);
+    hourly.value = "$18";
+    weekly.value = "90";
+    clickButton("Add a recent purchase");
+    clickButton("Add a recent purchase");
+    const items = [...document.querySelectorAll<HTMLInputElement>("input[aria-label='Recent purchase item']")];
+    const prices = [...document.querySelectorAll<HTMLInputElement>("input[aria-label='Recent purchase price']")];
+    const boxes = [...document.querySelectorAll<HTMLInputElement>("#simmer-survey input[type='checkbox']")];
+    assert.equal(items.length, 2);
+    assert.ok(items[0] && items[1] && prices[0] && prices[1] && boxes[0] && boxes[1]);
+    items[0].value = "AirPods";
+    prices[0].value = "$12.99";
+    boxes[0].checked = true;
+    items[1].value = "Cable";
+    prices[1].value = "12,99";
+    boxes[1].checked = false;
+    clickButton("Save survey");
+    await waitFor(() => document.getElementById("simmer-survey")?.hidden === true);
+    const surveyPost = posted.find((call) => call.url.endsWith("/onboarding/survey"));
+    assert.ok(surveyPost);
+    assert.deepEqual(surveyPost.body, {
+      hourlyRate: 18,
+      weeklyBudget: 90,
+      recentPurchases: [
+        { item: "AirPods", price: 12.99, regretted: true },
+        { item: "Cable", price: 12.99, regretted: false },
+      ],
+    });
+  });
+
+  it("reloads the survey and says it is already completed on 409", async () => {
+    globalThis.document = dom.window.document;
+    installChrome();
+    const calls: { url: string; method: string }[] = [];
+    let posts = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url.endsWith("/auth/me")) {
+        return json({ error: "Authentication required." }, 401);
+      }
+      if (url.endsWith("/auth/signup")) {
+        return json({ user: { id: "user-1", email: "ada@example.com" }, token: "jwt-from-signup" });
+      }
+      if (url.endsWith("/onboarding/survey") && method === "POST") {
+        posts += 1;
+        return json({ error: "Survey already completed." }, 409);
+      }
+      if (url.endsWith("/onboarding/survey")) {
+        return json({ completed: posts > 0, hourlyRate: posts > 0 ? 10 : null, weeklyBudget: null });
+      }
+      if (url.includes("/purchases/history")) {
+        return json({ purchases: [] });
+      }
+      return json({ error: "missing" }, 404);
+    }) as typeof fetch;
+    await signUpToSurvey(dom);
+    const getsBefore = calls.filter((call) => call.url.endsWith("/onboarding/survey") && call.method === "GET").length;
+    const hourly = document.querySelector<HTMLInputElement>("input[name='hourlyRate']");
+    assert.ok(hourly);
+    hourly.value = "99";
+    clickButton("Save survey");
+    await waitFor(() => document.querySelector("#simmer-survey .error")?.textContent === "Survey already completed.");
+    const getsAfter = calls.filter((call) => call.url.endsWith("/onboarding/survey") && call.method === "GET").length;
+    assert.equal(getsAfter, getsBefore + 1);
+    const surveyError = document.querySelector("#simmer-survey .error");
+    assert.equal(surveyError?.hasAttribute("hidden"), false);
+    assert.equal(surveyError?.textContent?.includes("Could not save the survey."), false);
+    const savedNote = [...document.querySelectorAll("#simmer-settings p")].find((node) => node.textContent === "Saved.");
+    assert.equal(savedNote?.hasAttribute("hidden"), true);
+    assert.equal(document.getElementById("simmer-settings")?.hidden, true);
+    assert.equal(document.getElementById("simmer-purchases")?.hidden, true);
+    assert.equal(document.getElementById("simmer-survey")?.hidden, false);
+    const save = [...document.querySelectorAll("button")].find((button) => button.textContent === "Save survey");
+    assert.ok(save instanceof dom.window.HTMLButtonElement);
+    assert.equal(save.hidden, true);
+    assert.equal(save.disabled, true);
+    assert.equal(hourly.hidden || hourly.disabled, true);
+  });
+
+  it("shows the server status and error when the survey save is refused", async () => {
+    installSurveyFetch(dom, () => json({ error: "User not found." }, 404));
+    await signUpToSurvey(dom);
+    const hourly = document.querySelector<HTMLInputElement>("input[name='hourlyRate']");
+    assert.ok(hourly);
+    hourly.value = "42";
+    clickButton("Save survey");
+    await waitFor(() => document.querySelector("#simmer-survey .error")?.textContent === "404 User not found.");
+    assert.equal(document.getElementById("simmer-survey")?.hidden, false);
+  });
+
+  it("does not send a purchase that has an item and no valid price", async () => {
+    const posted = installSurveyFetch(dom, () => json({ completed: true, hourlyRate: 42, weeklyBudget: null, purchases: [] }, 201));
+    await signUpToSurvey(dom);
+    const hourly = document.querySelector<HTMLInputElement>("input[name='hourlyRate']");
+    assert.ok(hourly);
+    hourly.value = "42";
+    clickButton("Add a recent purchase");
+    const item = document.querySelector<HTMLInputElement>("input[aria-label='Recent purchase item']");
+    const price = document.querySelector<HTMLInputElement>("input[aria-label='Recent purchase price']");
+    assert.ok(item && price);
+    item.value = "Mug";
+    price.value = "";
+    clickButton("Save survey");
+    await waitFor(() => document.querySelector(".purchase .row-error")?.textContent === "Enter a price.");
+    assert.equal(posted.some((call) => call.url.endsWith("/onboarding/survey")), false);
+    assert.equal(document.getElementById("simmer-survey")?.hidden, false);
+  });
+
 });
+
+function installSurveyFetch(
+  dom: JSDOM,
+  onSurveyPost: () => Response,
+): { url: string; body: unknown; authorization: string | null }[] {
+  globalThis.document = dom.window.document;
+  installChrome();
+  const posted: { url: string; body: unknown; authorization: string | null }[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const headers = new Headers(init?.headers);
+    if (init?.method === "POST") {
+      posted.push({
+        url,
+        body: init.body ? JSON.parse(String(init.body)) : null,
+        authorization: headers.get("authorization"),
+      });
+    }
+    if (url.endsWith("/auth/me")) {
+      return json({ error: "Authentication required." }, 401);
+    }
+    if (url.endsWith("/auth/signup")) {
+      return json({ user: { id: "user-1", email: "ada@example.com" }, token: "jwt-from-signup" });
+    }
+    if (url.endsWith("/onboarding/survey") && init?.method === "POST") {
+      return onSurveyPost();
+    }
+    if (url.endsWith("/onboarding/survey")) {
+      return json({ completed: false, hourlyRate: null, weeklyBudget: null });
+    }
+    if (url.includes("/purchases/history")) {
+      return json({ purchases: [] });
+    }
+    return json({ error: "missing" }, 404);
+  }) as typeof fetch;
+  return posted;
+}
+
+async function signUpToSurvey(dom: JSDOM): Promise<void> {
+  const parent = document.createElement("div");
+  document.body.append(parent);
+  assert.equal(mountPopupAuth(parent, "http://127.0.0.1:4321"), true);
+  await waitFor(() => document.querySelector("#simmer-auth form") instanceof dom.window.HTMLFormElement);
+  const email = document.querySelector<HTMLInputElement>("input[name='email']");
+  const password = document.querySelector<HTMLInputElement>("input[name='password']");
+  assert.ok(email && password);
+  email.value = "ada@example.com";
+  password.value = "correct horse battery";
+  clickButton("Sign up");
+  await waitFor(() => document.getElementById("simmer-survey")?.hidden === false);
+}
+
+function clickButton(label: string): void {
+  const button = [...document.querySelectorAll("button")].find((candidate) => candidate.textContent === label);
+  assert.ok(button);
+  const view = button.ownerDocument.defaultView;
+  assert.ok(view);
+  button.dispatchEvent(new view.MouseEvent("click", { bubbles: true }));
+}
 
 function installChrome(): void {
   (globalThis as { chrome?: typeof chrome }).chrome = {

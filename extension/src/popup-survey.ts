@@ -57,11 +57,10 @@ export function attachSurvey(
   return {
     async refresh() {
       error.hidden = true;
-      const state = await loadSurvey(origin, authorization, onUnauthorized);
-      if (state === "unauthorized") {
+      const completed = await reloadSurvey();
+      if (completed === "unauthorized") {
         return "unauthorized";
       }
-      const completed = state?.completed === true;
       section.hidden = completed;
       return completed;
     },
@@ -70,21 +69,26 @@ export function attachSurvey(
     },
   };
 
+  async function reloadSurvey(): Promise<boolean | "unauthorized"> {
+    const state = await loadSurvey(origin, authorization, onUnauthorized);
+    if (state === "unauthorized") {
+      return "unauthorized";
+    }
+    return state?.completed === true;
+  }
+
   async function submit(): Promise<void> {
     if (save.disabled) {
       return;
     }
     save.disabled = true;
     error.hidden = true;
-    const recentPurchases = rows.flatMap((row) => {
-      const item = row.item.value.trim();
-      if (!item && row.price.value.trim() === "") {
-        return [];
-      }
-      const price = Number(row.price.value);
-      return [{ item, price: Number.isFinite(price) ? price : Number.NaN, regretted: row.regretted.checked }];
-    });
+    let formLocked = false;
     try {
+      const recentPurchases = readPurchaseRows();
+      if (!recentPurchases) {
+        return;
+      }
       const response = await authorizedFetch(
         `${origin}/onboarding/survey`,
         {
@@ -101,32 +105,91 @@ export function attachSurvey(
       if (!response) {
         return;
       }
+      if (response.status === 409) {
+        formLocked = true;
+        await reloadSurvey();
+        showSaveError(await completedSurveyMessage(response));
+        lockSurveyForm();
+        return;
+      }
       if (!response.ok) {
-        error.hidden = false;
-        error.textContent = "Could not save the survey.";
+        showSaveError(await describeSaveFailure(response));
         return;
       }
       section.hidden = true;
       onComplete();
-    } catch {
-      error.hidden = false;
-      error.textContent = "Could not save the survey.";
+    } catch (caught: unknown) {
+      const message = caught instanceof Error && caught.message ? caught.message : "Could not save the survey.";
+      showSaveError(message);
     } finally {
-      save.disabled = false;
+      if (!formLocked) {
+        save.disabled = false;
+      }
     }
+  }
+
+  function lockSurveyForm(): void {
+    hourly.input.disabled = true;
+    weekly.input.disabled = true;
+    hourly.label.hidden = true;
+    weekly.label.hidden = true;
+    purchases.hidden = true;
+    add.disabled = true;
+    add.hidden = true;
+    save.disabled = true;
+    save.hidden = true;
+    for (const row of rows) {
+      row.item.disabled = true;
+      row.price.disabled = true;
+      row.regretted.disabled = true;
+    }
+  }
+
+  function readPurchaseRows(): { item: string; price: number; regretted: boolean }[] | null {
+    const recentPurchases: { item: string; price: number; regretted: boolean }[] = [];
+    for (const row of rows) {
+      row.note.hidden = true;
+      row.note.textContent = "";
+      const item = row.item.value.trim();
+      const rawPrice = row.price.value.trim();
+      if (!item && rawPrice === "") {
+        continue;
+      }
+      const price = readMoney(row.price.value);
+      if (item && price === null) {
+        row.note.hidden = false;
+        row.note.textContent = "Enter a price.";
+        return null;
+      }
+      if (!item || price === null) {
+        row.note.hidden = false;
+        row.note.textContent = "Enter an item and a price.";
+        return null;
+      }
+      recentPurchases.push({ item, price, regretted: row.regretted.checked });
+    }
+    return recentPurchases;
+  }
+
+  function showSaveError(message: string): void {
+    error.hidden = false;
+    error.textContent = message;
   }
 }
 
-type PurchaseDraft = { item: HTMLInputElement; price: HTMLInputElement; regretted: HTMLInputElement };
+type PurchaseDraft = {
+  item: HTMLInputElement;
+  price: HTMLInputElement;
+  regretted: HTMLInputElement;
+  note: HTMLParagraphElement;
+};
 
 function moneyField(name: string, labelText: string): { label: HTMLLabelElement; input: HTMLInputElement } {
   const label = document.createElement("label");
   label.textContent = labelText;
   const input = document.createElement("input");
   input.name = name;
-  input.type = "number";
-  input.min = "0";
-  input.step = "0.01";
+  input.type = "text";
   input.inputMode = "decimal";
   label.append(input);
   return { label, input };
@@ -140,27 +203,72 @@ function addPurchaseRow(parent: HTMLElement): PurchaseDraft {
   item.placeholder = "Item";
   item.setAttribute("aria-label", "Recent purchase item");
   const price = document.createElement("input");
-  price.type = "number";
-  price.min = "0";
-  price.step = "0.01";
+  price.type = "text";
+  price.inputMode = "decimal";
   price.placeholder = "Price";
   price.setAttribute("aria-label", "Recent purchase price");
   const regretted = document.createElement("input");
   regretted.type = "checkbox";
   const regrettedLabel = document.createElement("label");
   regrettedLabel.append(regretted, document.createTextNode("Regretted"));
-  row.append(item, price, regrettedLabel);
+  const note = document.createElement("p");
+  note.className = "error row-error";
+  note.hidden = true;
+  row.append(item, price, regrettedLabel, note);
   parent.append(row);
-  return { item, price, regretted };
+  return { item, price, regretted, note };
 }
 
 function readOptionalMoney(value: string): number | null {
-  const trimmed = value.trim();
-  if (!trimmed) {
+  return readMoney(value);
+}
+
+/** Accepts 12, $12.99, and 12,99. Empty input stays unset. */
+function readMoney(value: string): number | null {
+  const normalized = normalizeMoney(value);
+  if (!normalized) {
     return null;
   }
-  const parsed = Number(trimmed);
+  const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeMoney(value: string): string {
+  let text = value.trim().replace(/[$€£]/g, "").replace(/\s+/g, "");
+  if (!text) {
+    return "";
+  }
+  const comma = text.lastIndexOf(",");
+  const dot = text.lastIndexOf(".");
+  if (comma >= 0 && dot >= 0) {
+    text = comma > dot ? text.replace(/\./g, "").replace(",", ".") : text.replace(/,/g, "");
+  } else if (comma >= 0) {
+    const fraction = text.slice(comma + 1);
+    text = fraction.length > 0 && fraction.length <= 2 ? text.replace(",", ".") : text.replace(/,/g, "");
+  }
+  return text;
+}
+
+async function completedSurveyMessage(response: Response): Promise<string> {
+  const detail = await readErrorText(response);
+  return detail.length > 0 ? detail : "Survey already completed.";
+}
+
+async function describeSaveFailure(response: Response): Promise<string> {
+  const detail = await readErrorText(response);
+  return detail.length > 0 ? `${response.status} ${detail}` : `Could not save the survey (${response.status}).`;
+}
+
+async function readErrorText(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as unknown;
+    if (isRecord(body) && typeof body.error === "string") {
+      return body.error.trim();
+    }
+  } catch {
+    return "";
+  }
+  return "";
 }
 
 async function loadSurvey(
