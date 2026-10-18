@@ -243,47 +243,119 @@ describe("purchase history popup", () => {
     assert.match(row.textContent ?? "", /Could not remove that purchase\./);
   });
 
-  it("ignores a late remove response after a newer list loads", async () => {
+  it("disables Remove, Yes, and No while that delete is in flight", async () => {
     globalThis.document = dom.window.document;
-    let historyCalls = 0;
     let releaseDelete = (): void => undefined;
-    let releaseFresh = (): void => undefined;
     const deleteGate = new Promise<void>((resolve) => {
       releaseDelete = resolve;
-    });
-    const freshGate = new Promise<void>((resolve) => {
-      releaseFresh = resolve;
     });
     globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === "DELETE") {
         await deleteGate;
         return new Response(null, { status: 204 });
       }
-      historyCalls += 1;
-      if (historyCalls === 1) {
-        return historyResponse([purchase("64b000000000000000000021", "Stale cable")]);
-      }
-      await freshGate;
-      return historyResponse([purchase("64b000000000000000000022", "Fresh phone")]);
+      return historyResponse([purchase("64b000000000000000000041", "Watch")]);
     }) as typeof fetch;
     const parent = document.createElement("div");
     document.body.append(parent);
-    const history = attachPurchaseHistory(parent, "http://127.0.0.1:4321", async () => "jwt-remove");
-    history.show();
-    await waitFor(() => document.body.textContent?.includes("Stale cable") === true);
-    removeButton()?.click();
-    confirmButton("Yes")?.click();
-    history.show();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    attachPurchaseHistory(parent, "http://127.0.0.1:4321", async () => "jwt-remove").show();
+    await waitFor(() => document.body.textContent?.includes("Watch") === true);
+    const row = rowContaining("Watch");
+    assert.ok(row);
+    const remove = buttonLabeled(row, "Remove");
+    assert.ok(remove);
+    assert.equal(remove.disabled, false);
+    remove.click();
+    const yes = buttonLabeled(row, "Yes");
+    const no = buttonLabeled(row, "No");
+    assert.ok(yes && no);
+    assert.equal(yes.disabled, false);
+    assert.equal(no.disabled, false);
+    yes.click();
+    assert.equal(remove.disabled, true);
+    assert.equal(yes.disabled, true);
+    assert.equal(no.disabled, true);
     releaseDelete();
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    assert.match(document.body.textContent ?? "", /Stale cable/);
-    assert.equal(document.querySelector("#simmer-purchases .fine")?.hasAttribute("hidden"), true);
-    assert.equal(document.body.textContent?.includes("Could not remove that purchase."), false);
-    releaseFresh();
-    await waitFor(() => document.body.textContent?.includes("Fresh phone") === true);
-    assert.equal(document.body.textContent?.includes("Stale cable"), false);
-    assert.equal(document.body.textContent?.includes("Could not remove that purchase."), false);
+    await waitFor(() => document.querySelector("#simmer-purchases li") === null);
+  });
+
+  it("removes both rows when two deletes are in flight", async () => {
+    globalThis.document = dom.window.document;
+    let started = 0;
+    const releases: Array<() => void> = [];
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        started += 1;
+        await new Promise<void>((resolve) => {
+          releases.push(resolve);
+        });
+        return new Response(null, { status: 204 });
+      }
+      return historyResponse([
+        purchase("64b000000000000000000031", "Cable"),
+        purchase("64b000000000000000000032", "Phone"),
+      ]);
+    }) as typeof fetch;
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    attachPurchaseHistory(parent, "http://127.0.0.1:4321", async () => "jwt-remove").show();
+    await waitFor(() => document.body.textContent?.includes("Cable") === true && document.body.textContent?.includes("Phone") === true);
+    const cable = rowContaining("Cable");
+    const phone = rowContaining("Phone");
+    assert.ok(cable && phone);
+    buttonLabeled(cable, "Remove")?.click();
+    buttonLabeled(phone, "Remove")?.click();
+    buttonLabeled(cable, "Yes")?.click();
+    buttonLabeled(phone, "Yes")?.click();
+    await waitFor(() => started === 2);
+    assert.equal(buttonLabeled(cable, "Remove")?.disabled, true);
+    assert.equal(buttonLabeled(cable, "Yes")?.disabled, true);
+    assert.equal(buttonLabeled(phone, "Remove")?.disabled, true);
+    assert.equal(buttonLabeled(phone, "Yes")?.disabled, true);
+    for (const release of releases) {
+      release();
+    }
+    await waitFor(() => document.querySelector("#simmer-purchases li") === null);
+    assert.equal(document.body.textContent?.includes("Cable"), false);
+    assert.equal(document.body.textContent?.includes("Phone"), false);
+  });
+
+  it("removes the row when a 204 arrives after a rating reloads the list", async () => {
+    globalThis.document = dom.window.document;
+    const phoneId = "64b000000000000000000051";
+    let historyCalls = 0;
+    let releaseDelete = (): void => undefined;
+    const deleteGate = new Promise<void>((resolve) => {
+      releaseDelete = resolve;
+    });
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        await deleteGate;
+        return new Response(null, { status: 204 });
+      }
+      if (init?.method === "POST") {
+        return historyResponse([]);
+      }
+      historyCalls += 1;
+      const feedback = historyCalls === 1 ? null : "regretted";
+      return historyResponse([purchase(phoneId, "Phone", feedback)]);
+    }) as typeof fetch;
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    attachPurchaseHistory(parent, "http://127.0.0.1:4321", async () => "jwt-remove").show();
+    await waitFor(() => document.body.textContent?.includes("Phone") === true);
+    const row = rowContaining("Phone");
+    assert.ok(row);
+    buttonLabeled(row, "Remove")?.click();
+    buttonLabeled(row, "Yes")?.click();
+    const down = document.querySelector("button[aria-label='Thumbs down']");
+    assert.ok(down instanceof dom.window.HTMLButtonElement);
+    down.click();
+    await waitFor(() => document.querySelector("button[aria-label='Thumbs down']")?.getAttribute("aria-pressed") === "true");
+    assert.match(document.body.textContent ?? "", /Phone/);
+    releaseDelete();
+    await waitFor(() => document.querySelector(`li[data-purchase-id='${phoneId}']`) === null);
+    assert.equal(document.body.textContent?.includes("Phone"), false);
   });
 
   it("clears the session when the history request is rejected", async () => {
@@ -300,15 +372,19 @@ describe("purchase history popup", () => {
   });
 });
 
-function purchase(id: string, item: string): {
+function purchase(
+  id: string,
+  item: string,
+  feedback: "regretted" | "kept" | null = null,
+): {
   _id: string;
   item: string;
   category: string;
   price: number;
-  feedback: null;
+  feedback: "regretted" | "kept" | null;
   isExample: false;
 } {
-  return { _id: id, item, category: "other", price: 19, feedback: null, isExample: false };
+  return { _id: id, item, category: "other", price: 19, feedback, isExample: false };
 }
 
 function historyResponse(purchases: unknown[]): Response {
@@ -320,6 +396,22 @@ function historyResponse(purchases: unknown[]): Response {
 
 function removeButton(): HTMLButtonElement | undefined {
   return [...document.querySelectorAll("button")].find((button) => button.textContent === "Remove");
+}
+
+function rowContaining(item: string): HTMLLIElement | undefined {
+  const row = [...document.querySelectorAll("#simmer-purchases li")].find((node) => node.textContent?.includes(item));
+  if (!row || row.tagName !== "LI") {
+    return undefined;
+  }
+  return row as HTMLLIElement;
+}
+
+function buttonLabeled(root: ParentNode, label: string): HTMLButtonElement | undefined {
+  const button = [...root.querySelectorAll("button")].find((node) => node.textContent === label);
+  if (!button || button.tagName !== "BUTTON") {
+    return undefined;
+  }
+  return button as HTMLButtonElement;
 }
 
 function confirmButton(label: "Yes" | "No"): HTMLButtonElement | undefined {
