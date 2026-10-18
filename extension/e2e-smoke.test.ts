@@ -96,10 +96,13 @@ describe("built extension smoke", { concurrency: 1 }, () => {
     }
   });
 
-  it("shows the Simmer card on /amazon and blocks checkout", { timeout: 60_000 }, async () => {
+  it("shows both Amazon items on the card and blocks checkout", { timeout: 60_000 }, async () => {
     const page = await openBag("/amazon");
     try {
       await assertSimmerCard(page, "amazon", pageNotes.get(page) ?? []);
+      await page.getByRole("listitem").filter({ hasText: "Noise-cancelling headphones" }).waitFor({ state: "visible", timeout: 20_000 });
+      await page.getByRole("listitem").filter({ hasText: "Phone case" }).waitFor({ state: "visible" });
+      await page.getByText("3 items · $51.98").waitFor({ state: "visible" });
       await assertCheckoutStaysPut(page, "#proceed");
       await assertCheckoutStaysPut(page, "#buy-now");
     } finally {
