@@ -57,7 +57,8 @@ describe("amazon store adapter", () => {
     const page = readActiveBag(amazonAdapter, doc);
     assert.equal(page.parsed, true);
     assert.deepEqual(page.itemNames, ["Noise-cancelling headphones", "Phone case"]);
-    assert.equal(page.quantity, 2);
+    assert.equal(page.quantity, 3);
+    assert.equal(page.items[0]?.quantity, 2);
     assert.equal(page.items[1]?.quantity, 1);
     assert.equal(page.totalCents, 5198);
     assert.equal(Number.isInteger(page.totalCents), true);
@@ -65,6 +66,47 @@ describe("amazon store adapter", () => {
     assert.equal(watched.length, 1);
     assert.equal(watched[0]?.contains(doc.querySelector("#sc-active-cart")), true);
     assert.equal(watched[0]?.contains(doc.querySelector("#proceed")), false);
+  });
+
+  it("uses the total quantity across lines, in integer cents", () => {
+    const two = page(
+      "https://www.amazon.com/gp/cart/view.html",
+      `<body><div id="sc-active-cart">
+        <div data-asin="B010" class="sc-list-item">
+          <span class="sc-product-title">Notebook <span class="a-offscreen">Opens in a new tab.</span></span>
+          <span class="a-price"><span class="a-offscreen">$0.99</span></span>
+          <select name="quantity"><option value="1" selected>1</option></select>
+        </div>
+        <div data-asin="B011" class="sc-list-item">
+          <span class="sc-product-title">Pencil</span>
+          <span class="a-price"><span class="a-offscreen">$0.89</span></span>
+          <span class="a-dropdown-prompt">Qty: 1</span>
+        </div>
+      </div>
+      <span id="sc-subtotal-amount-activecart"><span class="a-offscreen">$1.88</span></span></body>`,
+    );
+    const twoBag = readActiveBag(amazonAdapter, two);
+    assert.deepEqual(twoBag.itemNames, ["Notebook", "Pencil"]);
+    assert.equal(twoBag.quantity, 2);
+    assert.equal(twoBag.totalCents, 188);
+    assert.equal(Number.isInteger(twoBag.totalCents), true);
+
+    const triple = page(
+      "https://www.amazon.com/gp/cart/view.html",
+      `<body><div id="sc-active-cart">
+        <div data-asin="B012" class="sc-list-item">
+          <span class="sc-product-title">USB-C Cable</span>
+          <span class="a-price"><span class="a-offscreen">$1.00</span></span>
+          <select name="quantity"><option value="3" selected>3</option></select>
+        </div>
+      </div>
+      <span id="sc-subtotal-amount-activecart"><span class="a-offscreen">$3.00</span></span></body>`,
+    );
+    const tripleBag = readActiveBag(amazonAdapter, triple);
+    assert.deepEqual(tripleBag.itemNames, ["USB-C Cable"]);
+    assert.equal(tripleBag.quantity, 3);
+    assert.equal(tripleBag.totalCents, 300);
+    assert.equal(Number.isInteger(tripleBag.totalCents), true);
   });
 
   it("multiplies a unit price by quantity and ignores a struck list price", () => {

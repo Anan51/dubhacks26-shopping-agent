@@ -44,7 +44,7 @@ describe("Apple bag DOM", () => {
     assert.equal(select.options[select.options.length - 1]?.text, "10+");
     assert.equal(select.value, "1");
     assert.equal(item.quantity, Number(select.value));
-    assert.equal(quantityTotalLabel(item.quantity ?? 0, bag.totalCents ?? 0), "1 · $21");
+    assert.equal(quantityTotalLabel(item.quantity ?? 0, bag.totalCents ?? 0), "1 item · $21");
 
     select.value = "10";
     const reread = readPageBag(document);
@@ -107,7 +107,7 @@ describe("apple.com cable row fixture", () => {
     assert.equal(bag.subtotalCents, 3_800);
     assert.equal(bag.parsed, true);
     assert.deepEqual(bag.itemNames, ["60W USB-C Charge Cable (1 m)"]);
-    assert.equal(quantityTotalLabel(bag.quantity ?? 0, bag.totalCents ?? 0), "2 · $42.01");
+    assert.equal(quantityTotalLabel(bag.quantity ?? 0, bag.totalCents ?? 0), "2 items · $42.01");
     assert.equal(quantitySelect(document).value, "2");
   });
 
@@ -137,7 +137,7 @@ describe("apple.com cable row fixture", () => {
     assert.equal(reread.quantity, 1);
     assert.equal(reread.items[0]?.quantity, 1);
     assert.equal(reread.totalCents, 2_100);
-    assert.equal(quantityTotalLabel(reread.quantity ?? 0, reread.totalCents ?? 0), "1 · $21");
+    assert.equal(quantityTotalLabel(reread.quantity ?? 0, reread.totalCents ?? 0), "1 item · $21");
     assert.equal(bagReadAction(postedKey, reread), "post");
     assert.equal(bagReadAction(bagContentKey(reread), reread), "keep");
     assert.equal(bagReadAction(null, reread), "post");

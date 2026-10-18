@@ -25,7 +25,25 @@ export function normalizeBagText(value: string): string {
 }
 
 export function quantityTotalLabel(quantity: number, totalCents: number): string {
-  return `${quantity} · ${formatUsd(totalCents)}`;
+  const noun = quantity === 1 ? "item" : "items";
+  return `${quantity} ${noun} · ${formatUsd(totalCents)}`;
+}
+
+/** Units across every line. A line with no quantity is skipped. Null when none are known. */
+export function totalLineQuantity(items: readonly { quantity: number | null }[]): number | null {
+  let total = 0;
+  let counted = false;
+  for (const item of items) {
+    if (item.quantity == null) {
+      continue;
+    }
+    total += item.quantity;
+    counted = true;
+  }
+  if (!counted || !Number.isSafeInteger(total) || total < 1) {
+    return null;
+  }
+  return total;
 }
 
 /**
@@ -148,7 +166,7 @@ function readStructured(root: ParentNode, rows: readonly Element[]): PageBag {
   return {
     items,
     itemNames: items.map((item) => item.name),
-    quantity: first?.quantity ?? null,
+    quantity: totalLineQuantity(items),
     subtotalCents,
     totalCents,
     parsed: totalCents !== null && totalCents > 0,
