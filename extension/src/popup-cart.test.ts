@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import type { GlanceItem } from "../../src/glance.js";
-import { EXAMPLE_NOTE, NECESSARY_LABEL, newestCart, OK_LABEL, PAUSED_LABEL, plainCartLabel, presentBreakdown } from "./popup-cart.js";
+import { awaitingShopperReply, EXAMPLE_NOTE, NECESSARY_LABEL, newestCart, OK_LABEL, OPTIONAL_PAUSE_LABEL, PAUSED_LABEL, plainCartLabel, presentBreakdown, VAULT_LABEL } from "./popup-cart.js";
 
 const NOW = Date.parse("2026-10-18T12:00:00.000Z");
 
@@ -19,19 +19,38 @@ describe("popup current bag", () => {
     ];
     assert.equal(newestCart(carts, "shopper")?.code, "iphone");
     assert.equal(newestCart(carts, "missing"), null);
-    assert.equal(newestCart(carts, "")?.code, "other");
+    assert.equal(newestCart(carts, ""), null);
+    assert.equal(newestCart(carts, "   "), null);
   });
 
   it("uses plain labels instead of impulse and score wording", () => {
-    assert.equal(
-      plainCartLabel(item({ necessity: null, status: "locked", userImpulseScore: 2, purchaseScore: null, scoreBucket: null }), NOW),
-      PAUSED_LABEL,
-    );
+    const asked = item({
+      necessity: null,
+      status: "locked",
+      justificationGrade: null,
+      lastPing: { delivered: true },
+      purchaseScore: null,
+      scoreBucket: null,
+    });
+    assert.equal(awaitingShopperReply(asked), true);
+    assert.equal(plainCartLabel(asked, NOW), PAUSED_LABEL);
     assert.equal(plainCartLabel(item({ necessity: null, purchaseScore: 5, scoreBucket: "free", status: "unlocked" }), NOW), OK_LABEL);
     assert.equal(plainCartLabel(item({ necessity: "necessary", purchaseScore: 5, scoreBucket: "free", status: "unlocked" }), NOW), NECESSARY_LABEL);
     assert.equal(plainCartLabel(item({ necessity: null, status: "unlocked", purchaseScore: null, userImpulseScore: null }), NOW), OK_LABEL);
     assert.equal(PAUSED_LABEL.includes("Impulse"), false);
     assert.equal(OK_LABEL.includes("Score"), false);
+  });
+
+  it("does not call a soft pause or a vault a reply wait", () => {
+    const soft = item({ necessity: null, status: "locked", scoreBucket: "soft", purchaseScore: 3, userImpulseScore: 2, justificationGrade: 1 });
+    const vault = item({ necessity: null, status: "vault", scoreBucket: "strict", purchaseScore: 1, vaultUntil: "2026-10-19T02:00:00.000Z" });
+    const undelivered = item({ necessity: null, status: "locked", justificationGrade: null, lastPing: { delivered: false }, scoreBucket: null });
+    assert.equal(plainCartLabel(soft, NOW), OPTIONAL_PAUSE_LABEL);
+    assert.equal(plainCartLabel(vault, NOW), VAULT_LABEL);
+    assert.equal(plainCartLabel(soft, NOW).includes("iMessage"), false);
+    assert.equal(plainCartLabel(vault, NOW).includes("iMessage"), false);
+    assert.equal(awaitingShopperReply(undelivered), false);
+    assert.equal(plainCartLabel(undelivered, NOW).includes("iMessage"), false);
   });
 
   it("keeps a wait line and shows an example note only when example figures are present", () => {
@@ -42,7 +61,7 @@ describe("popup current bag", () => {
       purchaseScore: null,
       scoreBucket: null,
     });
-    assert.equal(plainCartLabel(waiting, NOW), "Wait ~2 mo, save ~$557");
+    assert.equal(plainCartLabel(waiting, NOW), `Wait ~2 mo, save ~$557. ${EXAMPLE_NOTE}`);
     const detail = presentBreakdown(waiting, NOW);
     assert.equal(detail.exampleNote, EXAMPLE_NOTE);
     const text = detail.lines.map((line) => `${line.label} ${line.value}`).join("\n");
@@ -54,7 +73,8 @@ describe("popup current bag", () => {
     const paused = item({ necessity: null, status: "locked", userImpulseScore: 2, purchaseScore: null, decision: null });
     const plain = presentBreakdown(paused, NOW);
     assert.equal(plain.exampleNote, null);
-    assert.equal(plain.lines.some((line) => line.value === PAUSED_LABEL), true);
+    assert.equal(plain.lines.some((line) => line.value === PAUSED_LABEL), false);
+    assert.equal(plain.lines.some((line) => line.value === OK_LABEL), true);
   });
 
   it("does not ship the always-on carrier-quote note", () => {
@@ -68,7 +88,7 @@ function bag(code: string, userId: string, createdAt: string): { code: string; u
   return { code, userId, createdAt };
 }
 
-function item(overrides: Partial<GlanceItem> = {}): GlanceItem {
+function item(overrides: Partial<GlanceItem & { lastPing?: { delivered: boolean } | null }> = {}): GlanceItem & { lastPing?: { delivered: boolean } | null } {
   return {
     code: "AB23CD",
     name: "iPhone 17",

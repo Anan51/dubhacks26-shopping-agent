@@ -17,6 +17,7 @@ import { createMemoryRuntime } from "../memory/runtime.js";
 import { PurchaseRecord } from "../purchases/model.js";
 import { createPurchaseRouter } from "../purchases/routes.js";
 import { budgetMemoryLine, countRegrets, getBudgetProfile, getHourlyRate, getSavedGoals, getWeeklyBudget, hasRegrettedPurchase, purchaseVoteLine, weeklySpend, writeUserMemoryLine } from "../purchases/service.js";
+import { positiveSettingsAmount } from "./service.js";
 import { createOnboardingRouter, createSettingsRouter } from "./routes.js";
 
 const SECRET = "survey-test-secret";
@@ -389,6 +390,46 @@ describe("onboarding survey", () => {
     const foreign = await patch("/settings", { userId: "someone-else", hourlyRate: 12 }, ada.token);
     assert.equal(foreign.status, 400);
     assert.deepEqual(await getBudgetProfile(ada.id), { hourlyRate: 40, weeklyBudget: null });
+
+    assert.equal(positiveSettingsAmount(Number.NaN), null);
+    assert.equal(positiveSettingsAmount(Number.POSITIVE_INFINITY), null);
+    assert.equal(positiveSettingsAmount(Number.NEGATIVE_INFINITY), null);
+    assert.equal(positiveSettingsAmount(10_000_000), 10_000_000);
+    assert.equal(positiveSettingsAmount(10_000_000.01), null);
+    for (const body of [{ hourlyRate: "NaN" }, { hourlyRate: "Infinity" }]) {
+      const response = await patch("/settings", body, ada.token);
+      assert.equal(response.status, 400);
+    }
+    const cap = await patch("/settings", { hourlyRate: 10_000_000 }, ada.token);
+    assert.equal(cap.status, 200);
+    assert.equal((await getBudgetProfile(ada.id)).hourlyRate, 10_000_000);
+    const over = await patch("/settings", { hourlyRate: 10_000_000.01 }, ada.token);
+    assert.equal(over.status, 400);
+    assert.equal((await getBudgetProfile(ada.id)).hourlyRate, 10_000_000);
+  });
+
+  it("saves one settings field when the other is missing or zero, and keeps the save if memory fails", async () => {
+    const ada = await signup("ada-settings-one@example.com");
+    await User.updateOne({ _id: ada.id }, { $set: { hourlyRate: null, weeklyBudget: 0 } });
+    const started = writes.length;
+    const saved = await patch("/settings", { hourlyRate: 18 }, ada.token);
+    assert.equal(saved.status, 200);
+    assert.deepEqual(await getBudgetProfile(ada.id), { hourlyRate: 18, weeklyBudget: 0 });
+    assert.equal(writes.includes(budgetMemoryLine("hourly rate", 18)), true);
+    assert.equal(writes.slice(started).some((line) => line.startsWith("weekly budget:")), false);
+
+    memoryThrows = true;
+    try {
+      const kept = await patch("/settings", { weeklyBudget: 25 }, ada.token);
+      assert.equal(kept.status, 200);
+      assert.deepEqual(await getBudgetProfile(ada.id), { hourlyRate: 18, weeklyBudget: 25 });
+    } finally {
+      memoryThrows = false;
+    }
+
+    await User.deleteOne({ _id: ada.id });
+    const gone = await patch("/settings", { hourlyRate: 9 }, ada.token);
+    assert.equal(gone.status, 404);
   });
 });
 

@@ -1,7 +1,7 @@
 import { lockGlance, type GlanceItem } from "../../src/glance.js";
 import { pauseSentence, priceLine } from "../../src/overlay-copy.js";
 import { mountPopupAuth } from "./popup-auth.js";
-import { newestCart, plainCartLabel, presentBreakdown } from "./popup-cart.js";
+import { newestCart, plainCartLabel, presentBreakdown, type ReplyPing } from "./popup-cart.js";
 
 type CartPayload = {
   code: string;
@@ -24,6 +24,7 @@ type CartPayload = {
   purchaseScore?: GlanceItem["purchaseScore"];
   scoreBucket?: GlanceItem["scoreBucket"];
   scoreReason?: GlanceItem["scoreReason"];
+  lastPing?: ReplyPing;
 };
 
 const state = document.getElementById("state");
@@ -54,11 +55,11 @@ async function load(origin: string, userId: string): Promise<void> {
   list.replaceChildren();
   empty.hidden = items.length > 0;
   for (const item of items) {
-    list.append(card(item));
+    list.append(card(item, current?.lastPing ?? null));
   }
 }
 
-function card(item: GlanceItem): HTMLLIElement {
+function card(item: GlanceItem, lastPing: ReplyPing): HTMLLIElement {
   const row = document.createElement("li");
   const button = document.createElement("button");
   button.type = "button";
@@ -70,7 +71,7 @@ function card(item: GlanceItem): HTMLLIElement {
   price.textContent = ` · ${dollars(item.priceCents)}`;
   const line = document.createElement("div");
   line.className = "line";
-  line.textContent = plainCartLabel(item, Date.now());
+  line.textContent = plainCartLabel({ ...item, lastPing }, Date.now());
   button.append(title, price, line);
   const detail = document.createElement("div");
   detail.hidden = true;

@@ -261,6 +261,69 @@ describe("popup survey", () => {
     await waitFor(() => document.querySelector<HTMLFormElement>("#simmer-auth form")?.hidden === false);
     assert.equal(stored.simmer_token, "");
     assert.equal(document.getElementById("simmer-settings")?.hidden, true);
+    const logout = calls.find((call) => call.url.endsWith("/auth/logout"));
+    assert.equal(logout?.authorization, "Bearer jwt-from-signup");
+  });
+
+  it("saves only the income field when the weekly budget is still zero", async () => {
+    globalThis.document = dom.window.document;
+    installChrome();
+    const patches: unknown[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/auth/me")) {
+        return json({ error: "Authentication required." }, 401);
+      }
+      if (url.endsWith("/auth/signup")) {
+        return json({ user: { id: "user-1", email: "ada@example.com" }, token: "jwt-from-signup" });
+      }
+      if (url.endsWith("/onboarding/survey")) {
+        return json({ completed: true, hourlyRate: null, weeklyBudget: 0 });
+      }
+      if (url.endsWith("/settings") && method === "PATCH") {
+        patches.push(JSON.parse(String(init?.body)));
+        return json({ hourlyRate: 30, weeklyBudget: 0 });
+      }
+      if (url.endsWith("/settings")) {
+        return json({ hourlyRate: null, weeklyBudget: 0 });
+      }
+      if (url.includes("/purchases/history")) {
+        return json({ purchases: [] });
+      }
+      return json({ error: "missing" }, 404);
+    }) as typeof fetch;
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    mountPopupAuth(parent, "http://127.0.0.1:4321");
+    await waitFor(() => document.querySelector("#simmer-auth form") instanceof dom.window.HTMLFormElement);
+    const email = document.querySelector<HTMLInputElement>("input[name='email']");
+    const password = document.querySelector<HTMLInputElement>("input[name='password']");
+    assert.ok(email && password);
+    email.value = "ada@example.com";
+    password.value = "correct horse battery";
+    document.querySelectorAll("button")[0]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    await waitFor(() => {
+      const empty = [...document.querySelectorAll("p")].find((node) => node.textContent === "No purchases yet.");
+      return stored.simmer_token === "jwt-from-signup" && empty?.hidden === false;
+    });
+    const settingsTab = [...document.querySelectorAll("button")].find((button) => button.textContent === "Settings");
+    assert.ok(settingsTab);
+    settingsTab.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    const income = document.querySelector<HTMLInputElement>("#simmer-settings input[name='income']");
+    const budget = document.querySelector<HTMLInputElement>("#simmer-settings input[name='budget']");
+    assert.ok(income && budget);
+    await waitFor(() => budget.value === "0");
+    assert.equal(income.value, "");
+    income.value = "30";
+    settingsTab.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(income.value, "30");
+    const save = [...document.querySelectorAll("#simmer-settings button")].find((button) => button.textContent === "Save");
+    assert.ok(save);
+    save.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    await waitFor(() => patches.length === 1);
+    assert.deepEqual(patches[0], { hourlyRate: 30 });
   });
 
 });

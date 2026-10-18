@@ -1,4 +1,5 @@
 import { isRecord } from "../../src/record.js";
+import { authorizedFetch } from "./popup-fetch.js";
 
 export type SurveyState = {
   completed: boolean;
@@ -56,10 +57,8 @@ export function attachSurvey(
   return {
     async refresh() {
       error.hidden = true;
-      const token = await authorization();
-      const state = await loadSurvey(origin, authorization);
+      const state = await loadSurvey(origin, authorization, onUnauthorized);
       if (state === "unauthorized") {
-        await onUnauthorized(token);
         return "unauthorized";
       }
       const completed = state?.completed === true;
@@ -85,15 +84,21 @@ export function attachSurvey(
       const price = Number(row.price.value);
       return [{ item, price: Number.isFinite(price) ? price : Number.NaN, regretted: row.regretted.checked }];
     });
-    const token = await authorization();
     try {
-      const response = await surveyFetch(origin, "/onboarding/survey", authorization, {
-        hourlyRate: readOptionalMoney(hourly.input.value),
-        weeklyBudget: readOptionalMoney(weekly.input.value),
-        recentPurchases,
-      });
-      if (response.status === 401) {
-        await onUnauthorized(token);
+      const response = await authorizedFetch(
+        `${origin}/onboarding/survey`,
+        {
+          method: "POST",
+          body: {
+            hourlyRate: readOptionalMoney(hourly.input.value),
+            weeklyBudget: readOptionalMoney(weekly.input.value),
+            recentPurchases,
+          },
+        },
+        authorization,
+        onUnauthorized,
+      );
+      if (!response) {
         return;
       }
       if (!response.ok) {
@@ -161,9 +166,10 @@ function readOptionalMoney(value: string): number | null {
 async function loadSurvey(
   origin: string,
   authorization: () => Promise<string | null>,
+  onUnauthorized: (token: string | null) => Promise<void>,
 ): Promise<SurveyState | "unauthorized" | null> {
-  const response = await surveyFetch(origin, "/onboarding/survey", authorization);
-  if (response.status === 401) {
+  const response = await authorizedFetch(`${origin}/onboarding/survey`, undefined, authorization, onUnauthorized);
+  if (!response) {
     return "unauthorized";
   }
   if (!response.ok) {
@@ -180,21 +186,3 @@ async function loadSurvey(
   };
 }
 
-async function surveyFetch(
-  origin: string,
-  path: string,
-  authorization: () => Promise<string | null>,
-  body?: unknown,
-): Promise<Response> {
-  const token = await authorization();
-  return fetch(`${origin}${path}`, {
-    method: body === undefined ? "GET" : "POST",
-    credentials: "include",
-    headers: {
-      accept: "application/json",
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...(body === undefined ? {} : { "content-type": "application/json" }),
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-}

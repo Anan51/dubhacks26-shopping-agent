@@ -1,4 +1,5 @@
 import { isRecord } from "../../src/record.js";
+import { authorizedFetch } from "./popup-fetch.js";
 
 export function attachSettings(
   parent: HTMLElement,
@@ -25,6 +26,8 @@ export function attachSettings(
   parent.append(section);
 
   let loadId = 0;
+  let hourlyBaseline = "";
+  let weeklyBaseline = "";
   save.addEventListener("click", () => {
     void submit();
   });
@@ -45,14 +48,9 @@ export function attachSettings(
     const id = ++loadId;
     error.hidden = true;
     saved.hidden = true;
-    const token = await authorization();
     try {
-      const response = await settingsFetch(origin, "GET", authorization);
-      if (id !== loadId) {
-        return;
-      }
-      if (response.status === 401) {
-        await onUnauthorized(token);
+      const response = await authorizedFetch(`${origin}/settings`, undefined, authorization, onUnauthorized);
+      if (id !== loadId || !response) {
         return;
       }
       if (!response.ok) {
@@ -64,8 +62,8 @@ export function attachSettings(
         showError("Could not load your settings.");
         return;
       }
-      hourly.input.value = moneyValue(body.hourlyRate);
-      weekly.input.value = moneyValue(body.weeklyBudget);
+      hourlyBaseline = applyLoaded(hourly.input, hourlyBaseline, body.hourlyRate);
+      weeklyBaseline = applyLoaded(weekly.input, weeklyBaseline, body.weeklyBudget);
     } catch {
       if (id !== loadId) {
         return;
@@ -77,27 +75,43 @@ export function attachSettings(
   async function submit(): Promise<void> {
     error.hidden = true;
     saved.hidden = true;
-    const hourlyRate = readPositive(hourly.input.value);
-    const weeklyBudget = readPositive(weekly.input.value);
-    if (hourlyRate === null || weeklyBudget === null) {
-      showError("Hourly income and weekly budget need to be numbers above zero.");
+    const patch: { hourlyRate?: number; weeklyBudget?: number } = {};
+    const hourlyRate = changedAmount(hourly.input, hourlyBaseline);
+    const weeklyBudget = changedAmount(weekly.input, weeklyBaseline);
+    if (hourlyRate === "invalid") {
+      showError("Hourly income needs to be a number above zero.");
       return;
     }
-    const token = await authorization();
+    if (weeklyBudget === "invalid") {
+      showError("Weekly budget needs to be a number above zero.");
+      return;
+    }
+    if (hourlyRate !== undefined) {
+      patch.hourlyRate = hourlyRate;
+    }
+    if (weeklyBudget !== undefined) {
+      patch.weeklyBudget = weeklyBudget;
+    }
+    if (patch.hourlyRate === undefined && patch.weeklyBudget === undefined) {
+      showError("Change hourly income or weekly budget before saving.");
+      return;
+    }
     try {
-      const response = await settingsFetch(origin, "PATCH", authorization, { hourlyRate, weeklyBudget });
-      if (response.status === 401) {
-        await onUnauthorized(token);
+      const response = await authorizedFetch(`${origin}/settings`, { method: "PATCH", body: patch }, authorization, onUnauthorized);
+      if (!response) {
         return;
       }
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as unknown;
-        showError(isRecord(body) && typeof body.error === "string" ? body.error : "Could not save.");
+        const message = response.status === 400 && isRecord(body) && typeof body.error === "string" ? body.error : "Couldn't save settings.";
+        showError(message);
         return;
       }
+      hourlyBaseline = hourly.input.value;
+      weeklyBaseline = weekly.input.value;
       saved.hidden = false;
     } catch {
-      showError("Could not save.");
+      showError("Couldn't save settings.");
     }
   }
 
@@ -124,6 +138,26 @@ function moneyValue(value: unknown): string {
   return typeof value === "number" && Number.isFinite(value) ? String(value) : "";
 }
 
+function applyLoaded(input: HTMLInputElement, baseline: string, value: unknown): string {
+  const next = moneyValue(value);
+  if (input.value === baseline) {
+    input.value = next;
+    return next;
+  }
+  return baseline;
+}
+
+function changedAmount(input: HTMLInputElement, baseline: string): number | undefined | "invalid" {
+  if (input.value.trim() === baseline.trim()) {
+    return undefined;
+  }
+  const parsed = readPositive(input.value);
+  if (parsed === null) {
+    return "invalid";
+  }
+  return parsed;
+}
+
 function readPositive(value: string): number | null {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -136,21 +170,3 @@ function readPositive(value: string): number | null {
   return parsed;
 }
 
-async function settingsFetch(
-  origin: string,
-  method: "GET" | "PATCH",
-  authorization: () => Promise<string | null>,
-  body?: unknown,
-): Promise<Response> {
-  const token = await authorization();
-  return fetch(`${origin}/settings`, {
-    method,
-    credentials: "include",
-    headers: {
-      accept: "application/json",
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...(body === undefined ? {} : { "content-type": "application/json" }),
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-}

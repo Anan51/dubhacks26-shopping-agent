@@ -121,11 +121,15 @@ describe("purchase feedback", () => {
     const history = await get("/purchases/history?limit=15", ada.cookie);
     const purchases = history.body.purchases as { item: string; source: string; isExample: boolean }[];
     assert.deepEqual(
-      purchases.map((row) => row.item).sort(),
-      ["Real cable", "Survey headphones"],
+      purchases.map((row) => row.item),
+      ["Real cable"],
     );
-    assert.equal(purchases.find((row) => row.item === "Survey headphones")?.source, "survey");
-    assert.equal(purchases.some((row) => row.item === "Fake AirPods"), false);
+    assert.equal(purchases.some((row) => row.item === "Survey headphones" || row.item === "Fake AirPods"), false);
+    const example = await PurchaseRecord.findOne({ userId: ada.id, item: "Survey headphones" });
+    assert.ok(example);
+    const rated = await post(`/purchases/${example._id.toString()}/feedback`, { feedback: "regretted" }, ada.cookie);
+    assert.equal(rated.status, 404);
+    assert.equal((rated.body as { error: string }).error, "Purchase not found.");
   });
 
   it("saves, changes, and clears a rating and writes one Backboard line per change", async () => {
@@ -206,16 +210,15 @@ describe("purchase feedback", () => {
     assert.equal(foreignList.status, 400);
 
     await post(`/purchases/${adaRow._id}/feedback`, { feedback: "regretted" }, ada.cookie);
-    assert.equal(await hasRegrettedPurchase(ada.id, adaRow.category), false);
-    await PurchaseRecord.create({
-      userId: ada.id,
-      item: "Real item",
-      category: adaRow.category,
-      price: 10,
-      feedback: "regretted",
-      isExample: false,
-    });
     assert.equal(await hasRegrettedPurchase(ada.id, adaRow.category), true);
+    await PurchaseRecord.create({
+      userId: blake.id,
+      item: "Example phone",
+      category: adaRow.category,
+      price: 1,
+      feedback: "regretted",
+      isExample: true,
+    });
     assert.equal(await hasRegrettedPurchase(blake.id, adaRow.category), false);
     assert.equal(await hasRegrettedPurchase(ada.id, "not-a-category"), false);
   });

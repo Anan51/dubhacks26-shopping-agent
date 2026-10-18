@@ -1,9 +1,26 @@
 import { breakdownLines, oneLineVerdict, type BreakdownLine, type GlanceItem } from "../../src/glance.js";
 
 export const PAUSED_LABEL = "Paused — reply to Simmer's iMessage";
+export const OPTIONAL_PAUSE_LABEL = "Paused (optional)";
+export const VAULT_LABEL = "In the vault";
 export const OK_LABEL = "OK to buy";
 export const NECESSARY_LABEL = "Necessary buy";
 export const EXAMPLE_NOTE = "Example figures.";
+
+export type ReplyPing = { delivered: boolean } | null;
+
+/**
+ * Cart has no field named "awaiting reply".
+ * `lastPing` is the outbound checkout ping. `justificationGrade` stays null until the shopper answers.
+ * The reply line is only for a delivered ping on a bag that is still locked and still unanswered.
+ */
+export function awaitingShopperReply(item: {
+  status: GlanceItem["status"];
+  justificationGrade?: number | null;
+  lastPing?: ReplyPing;
+}): boolean {
+  return item.status === "locked" && item.justificationGrade == null && item.lastPing?.delivered === true;
+}
 
 const HIDDEN_BREAKDOWN = new Set(["Impulse", "Grade", "Purchase score", "Time limit"]);
 
@@ -14,12 +31,16 @@ export type PopupDetail = {
   exampleNote: string | null;
 };
 
-/** The popup shows one bag: the newest cart for this shopper. */
+/** The popup shows one bag: the newest cart for this shopper. An unknown shopper sees none. */
 export function newestCart<T extends { userId: string | null; createdAt?: string }>(
   carts: readonly T[],
   userId: string,
 ): T | null {
-  const mine = carts.filter((cart) => userId.length === 0 || cart.userId === userId);
+  const id = userId.trim();
+  if (id.length === 0) {
+    return null;
+  }
+  const mine = carts.filter((cart) => cart.userId === id);
   const first = mine[0];
   if (!first) {
     return null;
@@ -28,21 +49,31 @@ export function newestCart<T extends { userId: string | null; createdAt?: string
 }
 
 /** Plain status for the current bag. Score and impulse numbers stay off this line. */
-export function plainCartLabel(item: GlanceItem, nowMs: number): string {
+export function plainCartLabel(item: GlanceItem & { lastPing?: ReplyPing }, nowMs: number): string {
   if (item.necessity === "necessary") {
     return NECESSARY_LABEL;
   }
+  if (awaitingShopperReply(item)) {
+    return PAUSED_LABEL;
+  }
+  if (item.status === "vault") {
+    return VAULT_LABEL;
+  }
+  if (item.scoreBucket === "soft") {
+    return OPTIONAL_PAUSE_LABEL;
+  }
   if (item.scoreBucket === "free" || item.status === "unlocked") {
     return OK_LABEL;
-  }
-  if (item.purchaseScore != null || item.status === "vault" || (item.status === "locked" && item.userImpulseScore != null)) {
-    return PAUSED_LABEL;
   }
   const decision = item.decision;
   if (!decision || decision.action === "unlock" || decision.savingsCents <= 0) {
     return OK_LABEL;
   }
-  return oneLineVerdict(item, nowMs);
+  const waited = oneLineVerdict(item, nowMs);
+  if (/\$\d/.test(waited)) {
+    return `${waited}. ${EXAMPLE_NOTE}`;
+  }
+  return waited;
 }
 
 /** Expanded detail without score jargon. The example note appears only beside example figures. */

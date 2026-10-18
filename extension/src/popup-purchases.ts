@@ -1,4 +1,5 @@
 import { isRecord } from "../../src/record.js";
+import { authorizedFetch } from "./popup-fetch.js";
 import { nextPurchaseFeedback, type PurchaseFeedback } from "./purchase-feedback.js";
 
 export type { PurchaseFeedback };
@@ -44,6 +45,7 @@ export function attachPurchaseHistory(
   status.hidden = true;
   section.append(heading, empty, list, status);
   parent.append(style, section);
+  let loadId = 0;
 
   return {
     show() {
@@ -59,15 +61,16 @@ export function attachPurchaseHistory(
   };
 
   async function load(): Promise<void> {
+    const id = ++loadId;
     status.hidden = true;
     try {
-      const token = await (authorization?.() ?? Promise.resolve(null));
-      const response = await fetch(`${origin}/purchases/history?limit=15`, {
-        credentials: "include",
-        headers: { accept: "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
-      });
-      if (response.status === 401) {
-        await onUnauthorized?.(token);
+      const response = await authorizedFetch(
+        `${origin}/purchases/history?limit=15`,
+        undefined,
+        authorization ?? (async () => null),
+        onUnauthorized ?? (async () => undefined),
+      );
+      if (id !== loadId || !response) {
         return;
       }
       if (!response.ok) {
@@ -76,6 +79,9 @@ export function attachPurchaseHistory(
         return;
       }
       const body = (await response.json()) as unknown;
+      if (id !== loadId) {
+        return;
+      }
       const purchases = readPurchases(body);
       empty.hidden = purchases.length > 0;
       list.replaceChildren();
@@ -83,6 +89,9 @@ export function attachPurchaseHistory(
         list.append(row(purchase));
       }
     } catch {
+      if (id !== loadId) {
+        return;
+      }
       status.hidden = false;
       status.textContent = "Could not load purchases.";
     }
@@ -114,20 +123,14 @@ export function attachPurchaseHistory(
   async function vote(purchase: PurchaseRow, choice: "kept" | "regretted"): Promise<void> {
     status.hidden = true;
     const feedback = nextPurchaseFeedback(purchase.feedback, choice);
-    const token = await (authorization?.() ?? Promise.resolve(null));
     try {
-      const response = await fetch(`${origin}/purchases/${purchase._id}/feedback`, {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          accept: "application/json",
-          "content-type": "application/json",
-          ...(token ? { authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ feedback }),
-      });
-      if (response.status === 401) {
-        await onUnauthorized?.(token);
+      const response = await authorizedFetch(
+        `${origin}/purchases/${purchase._id}/feedback`,
+        { method: "POST", body: { feedback } },
+        authorization ?? (async () => null),
+        onUnauthorized ?? (async () => undefined),
+      );
+      if (!response) {
         return;
       }
       if (!response.ok) {
@@ -163,8 +166,7 @@ function readPurchases(body: unknown): PurchaseRow[] {
     }
     const feedback = entry.feedback === "regretted" || entry.feedback === "kept" ? entry.feedback : null;
     const source = entry.source === "survey" ? "survey" : "checkout";
-    const isExample = entry.isExample === true;
-    if (isExample && source !== "survey") {
+    if (entry.isExample === true) {
       return [];
     }
     return [
@@ -174,7 +176,7 @@ function readPurchases(body: unknown): PurchaseRow[] {
         category: typeof entry.category === "string" ? entry.category : "other",
         price: typeof entry.price === "number" ? entry.price : 0,
         feedback,
-        isExample,
+        isExample: false,
         source,
       },
     ];

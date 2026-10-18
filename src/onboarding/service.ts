@@ -197,14 +197,32 @@ export async function updateSettings(
   deps: { directory: AccountDirectory; client: BackboardClient; remote: boolean },
 ): Promise<BudgetProfile> {
   const parsed = parseSettingsPatch(body);
-  if (parsed.hourlyRate !== undefined) {
-    await writeUserMemoryLine(userId, budgetMemoryLine("hourly rate", parsed.hourlyRate), "goal", deps, { field: "hourlyRate" });
+  const before = await getBudgetProfile(userId);
+  const updated = await User.updateOne({ _id: userId }, { $set: parsed });
+  if (updated.matchedCount !== 1) {
+    throw new SurveyError(404, "User not found.");
   }
-  if (parsed.weeklyBudget !== undefined) {
-    await writeUserMemoryLine(userId, budgetMemoryLine("weekly budget", parsed.weeklyBudget), "goal", deps, { field: "weeklyBudget" });
+  if (parsed.hourlyRate !== undefined && parsed.hourlyRate !== before.hourlyRate) {
+    await rememberSettingsLine(userId, budgetMemoryLine("hourly rate", parsed.hourlyRate), "goal", deps, { field: "hourlyRate" });
   }
-  await User.updateOne({ _id: userId }, { $set: parsed });
+  if (parsed.weeklyBudget !== undefined && parsed.weeklyBudget !== before.weeklyBudget) {
+    await rememberSettingsLine(userId, budgetMemoryLine("weekly budget", parsed.weeklyBudget), "goal", deps, { field: "weeklyBudget" });
+  }
   return getBudgetProfile(userId);
+}
+
+async function rememberSettingsLine(
+  userId: string,
+  line: string,
+  kind: "goal" | "regret",
+  deps: { directory: AccountDirectory; client: BackboardClient; remote: boolean },
+  meta: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await writeUserMemoryLine(userId, line, kind, deps, meta);
+  } catch (error: unknown) {
+    console.error(error instanceof Error ? error.message : "Settings memory was not saved.");
+  }
 }
 
 function parseSettingsPatch(body: unknown): { hourlyRate?: number; weeklyBudget?: number } {
@@ -224,9 +242,18 @@ function parseSettingsPatch(body: unknown): { hourlyRate?: number; weeklyBudget?
   return patch;
 }
 
-function readPositiveMoney(value: unknown, label: string): number {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0 && value <= MONEY_CAP) {
-    return value;
+/** Positive finite money up to the survey cap. NaN and Infinity are rejected here. */
+export function positiveSettingsAmount(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0 || value > MONEY_CAP) {
+    return null;
   }
-  throw new SurveyError(400, `${label} must be a positive number.`);
+  return value;
+}
+
+function readPositiveMoney(value: unknown, label: string): number {
+  const amount = positiveSettingsAmount(value);
+  if (amount === null) {
+    throw new SurveyError(400, `${label} must be a positive number.`);
+  }
+  return amount;
 }

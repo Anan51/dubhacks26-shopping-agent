@@ -1,5 +1,6 @@
 import { isRecord } from "../../src/record.js";
 import { authOriginFromStorage } from "./auth-flag.js";
+import { authorizedFetch } from "./popup-fetch.js";
 import { attachPurchaseHistory } from "./popup-purchases.js";
 import { attachSettings } from "./popup-settings.js";
 import { attachSurvey } from "./popup-survey.js";
@@ -111,7 +112,12 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
     hideError();
     const body = { email: email.input.value.trim(), password: password.input.value };
     try {
-      const response = await authFetch(origin, kind === "signup" ? "/auth/signup" : "/auth/login", body, null);
+      const response = await fetch(`${origin}${kind === "signup" ? "/auth/signup" : "/auth/login"}`, {
+        method: "POST",
+        credentials: "include",
+        headers: { accept: "application/json", "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
       if (!response.ok) {
         showError(kind === "login" ? LOGIN_ERROR : SIGNUP_ERROR);
         return;
@@ -130,16 +136,11 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
   async function refresh(): Promise<void> {
     const view = viewEpoch;
     try {
-      const token = await authorization();
-      const response = await authFetch(origin, "/auth/me", undefined, token);
-      if (view !== viewEpoch) {
+      const response = await authorizedFetch(`${origin}/auth/me`, undefined, authorization, unauthorized);
+      if (view !== viewEpoch || !response) {
         return;
       }
       if (!response.ok) {
-        if (response.status === 401) {
-          sessionToken = null;
-          await clearStoredToken();
-        }
         showSignedOut();
         return;
       }
@@ -159,7 +160,8 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
     viewEpoch += 1;
     hideError();
     try {
-      await authFetch(origin, "/auth/logout", {});
+      const token = sessionToken ?? (await readStoredToken());
+      await authorizedFetch(`${origin}/auth/logout`, { method: "POST", body: {} }, async () => token, unauthorized);
     } catch {
       showError(REACH_ERROR);
     }
@@ -274,20 +276,6 @@ function actionButton(text: string): HTMLButtonElement {
   button.type = "button";
   button.textContent = text;
   return button;
-}
-
-/** credentials: include so the httpOnly simmer_token cookie is stored and sent. */
-async function authFetch(origin: string, path: string, body?: unknown, token?: string | null): Promise<Response> {
-  return fetch(`${origin}${path}`, {
-    method: body === undefined ? "GET" : "POST",
-    credentials: "include",
-    headers: {
-      accept: "application/json",
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...(body === undefined ? {} : { "content-type": "application/json" }),
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
 }
 
 async function readUser(response: Response): Promise<{ email: string; token: string | null } | null> {

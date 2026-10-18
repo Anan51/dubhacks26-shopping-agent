@@ -66,7 +66,7 @@ export function createSettingsRouter(deps: OnboardingDeps): Router {
       refuseAnyUserId(req);
       res.json(await updateSettings(userId, req.body, deps));
     } catch (error: unknown) {
-      sendSurveyError(res, error);
+      sendSettingsError(res, error);
     }
   });
 
@@ -83,6 +83,15 @@ function refuseAnyUserId(req: Request): void {
       throw new ScopeError(400, "Refusing a client-supplied user id.");
     }
   }
+}
+
+function sendSettingsError(res: Response, error: unknown): void {
+  if (error instanceof SurveyError || error instanceof ScopeError) {
+    res.status(error.status).json({ error: error.message });
+    return;
+  }
+  console.error(error instanceof Error ? error.message : "Couldn't save settings.");
+  res.status(500).json({ error: "Couldn't save settings." });
 }
 
 function sendSurveyError(res: Response, error: unknown): void {

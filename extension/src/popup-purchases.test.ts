@@ -35,7 +35,7 @@ describe("purchase history popup", () => {
         price: 179,
         verdict: null,
         feedback,
-        isExample: true,
+        isExample: false,
         source: "survey",
         createdAt: "2026-10-18T00:00:00.000Z",
         ratedAt: feedback ? "2026-10-18T00:01:00.000Z" : null,
@@ -47,7 +47,7 @@ describe("purchase history popup", () => {
         price: 799,
         feedback: null,
         isExample: true,
-        source: "checkout",
+        source: "survey",
       };
       const payload = url.includes("/feedback") ? { purchase: survey } : { purchases: [seeded, survey] };
       return new Response(JSON.stringify(payload), {
@@ -96,6 +96,77 @@ describe("purchase history popup", () => {
     attachPurchaseHistory(parent, "http://127.0.0.1:4321").show();
     await waitFor(() => document.body.textContent?.includes("No purchases yet.") === true);
     assert.equal(document.body.textContent?.includes("Fake cable"), false);
+  });
+
+  it("clears the session when a rating is rejected", async () => {
+    globalThis.document = dom.window.document;
+    let votes = 0;
+    let cleared = false;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        votes += 1;
+        return new Response(JSON.stringify({ error: "Authentication required." }), { status: 401 });
+      }
+      return new Response(
+        JSON.stringify({
+          purchases: [
+            {
+              _id: "64b000000000000000000009",
+              item: "Phone",
+              category: "phone",
+              price: 10,
+              feedback: null,
+              isExample: false,
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    attachPurchaseHistory(parent, "http://127.0.0.1:4321", async () => "jwt", async () => {
+      cleared = true;
+    }).show();
+    await waitFor(() => document.body.textContent?.includes("Phone") === true);
+    const down = document.querySelector("button[aria-label='Thumbs down']");
+    assert.ok(down instanceof dom.window.HTMLButtonElement);
+    down.click();
+    await waitFor(() => cleared && votes === 1);
+    assert.equal(document.body.textContent?.includes("Could not save that rating."), false);
+  });
+
+  it("keeps a slow history response from replacing a newer list", async () => {
+    globalThis.document = dom.window.document;
+    let calls = 0;
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    globalThis.fetch = (async () => {
+      calls += 1;
+      const which = calls;
+      if (which === 1) {
+        await gate;
+      }
+      const item = which === 1 ? "Stale cable" : "Fresh phone";
+      return new Response(
+        JSON.stringify({
+          purchases: [{ _id: `64b00000000000000000000${which}`, item, category: "other", price: 1, feedback: null, isExample: false }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    const history = attachPurchaseHistory(parent, "http://127.0.0.1:4321");
+    history.show();
+    history.show();
+    await waitFor(() => document.body.textContent?.includes("Fresh phone") === true);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(document.body.textContent?.includes("Stale cable"), false);
+    assert.equal(document.body.textContent?.includes("Fresh phone"), true);
   });
 
   it("clears the session when the history request is rejected", async () => {

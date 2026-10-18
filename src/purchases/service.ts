@@ -166,14 +166,9 @@ export async function hasRegrettedPurchase(userId: string, category: string): Pr
   return found != null;
 }
 
-/** The shopper's own purchases, including survey entries. Seeded sample rows are not created or returned. */
+/** Real purchases only. Survey rows the shopper entered are already isExample false. Example rows stay hidden. */
 export async function listPurchases(userId: string, limit: number): Promise<PurchaseView[]> {
-  const docs = await PurchaseRecord.find({
-    userId,
-    $or: [{ isExample: { $ne: true } }, { source: "survey" }],
-  })
-    .sort({ createdAt: -1 })
-    .limit(limit);
+  const docs = await PurchaseRecord.find({ userId, isExample: false }).sort({ createdAt: -1 }).limit(limit);
   return docs.map(toView);
 }
 
@@ -226,7 +221,7 @@ export async function setPurchaseFeedback(
   if (!doc) {
     throw new PurchaseError(404, "Purchase not found.");
   }
-  if (doc.userId.toString() !== userId) {
+  if (doc.userId.toString() !== userId || doc.isExample === true) {
     throw new PurchaseError(404, "Purchase not found.");
   }
   if (doc.feedback === feedback) {
