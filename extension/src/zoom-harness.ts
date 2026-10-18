@@ -1,4 +1,6 @@
-import { mountOverlay, type OverlayActions, type OverlayModel } from "./overlay.js";
+import { mountSimmerCard } from "./overlay/mount.js";
+import type { OverlayActions, OverlayModel } from "./overlay.js";
+import type { StoreAdapter } from "./stores/adapter.js";
 
 const model: OverlayModel = {
   code: "AB23CD",
@@ -48,11 +50,11 @@ const actions: OverlayActions = {
 };
 
 const css = document.getElementById("simmer-css")?.textContent ?? "";
-const host = document.createElement("div");
-host.id = "simmer-root";
-const shadow = host.attachShadow({ mode: "open" });
-const style = document.createElement("style");
-style.textContent = css;
-shadow.append(style);
-mountOverlay(shadow, model, actions);
-document.documentElement.append(host);
+const adapter: StoreAdapter = {
+  id: "apple",
+  match: () => true,
+  readBag: () => null,
+  checkoutButtons: () => [],
+  isOrderConfirmation: () => false,
+};
+mountSimmerCard(adapter, document, css, model, actions);

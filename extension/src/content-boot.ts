@@ -3,6 +3,7 @@ import { bagContentKey, bagParseKey, bagReadAction, watchBagDom, type BagWatch, 
 import { bindCheckoutClicks } from "./checkout-record.js";
 import { deliverExtensionMessage, extensionContextAlive, type ExtensionRuntime } from "./extension-context.js";
 import { installGate } from "./gate.js";
+import { watchLocation } from "./history-hook.js";
 import { buttonsToBlock } from "./overlay/block.js";
 import { mountSimmerCard } from "./overlay/mount.js";
 import { watchPage, type PageWatch } from "./page-observer.js";
@@ -38,17 +39,35 @@ export function skipAppleBrowse(href: string): boolean {
   return applePage(href) === null;
 }
 
+type Running = {
+  reread: () => void;
+  stop: () => void;
+};
+
+function sessions(): WeakMap<Document, Running> {
+  const holder = globalThis as { __simmerBoot?: WeakMap<Document, Running> };
+  holder.__simmerBoot ??= new WeakMap();
+  return holder.__simmerBoot;
+}
+
 /** Real content-script entry. Idle on Apple browse pages; otherwise the matching store adapter. */
 export function boot(host: BootHost): void {
-  if (skipAppleBrowse(host.location.href)) {
-    return;
-  }
-  const site = adapterFor(host.location);
-  if (!site) {
-    return;
-  }
   active = host;
-  void start(site);
+  watchLocation(host.view, () => {
+    boot(host);
+  });
+  const site = skipAppleBrowse(host.location.href) ? null : adapterFor(host.location);
+  if (!site) {
+    sessions().get(host.document)?.stop();
+    sessions().delete(host.document);
+    return;
+  }
+  const running = sessions().get(host.document);
+  if (running) {
+    running.reread();
+    return;
+  }
+  sessions().set(host.document, start(site));
 }
 
 type Settings = {
@@ -65,16 +84,30 @@ type ApiResult = {
   error?: string;
 };
 
-async function start(site: StoreAdapter): Promise<void> {
+function start(site: StoreAdapter): Running {
   let stopped = false;
   onContextDead = () => {
     stopped = true;
   };
-  const settings = await loadSettings();
-  if (stopped || !extensionContextAlive(active.runtime()) || hostOptedOut(active.location.hostname, settings.optOut)) {
-    return;
+  const page = active;
+  if (!extensionContextAlive(page.runtime())) {
+    stopped = true;
+    return { reread: () => undefined, stop: () => undefined };
   }
-  const gate = installGate(active.document, () => buttonsToBlock(site, active.document));
+  let settings: Settings = {
+    origin: "http://127.0.0.1:4321",
+    optOut: [],
+    userId: "user-local",
+    cartCode: "",
+  };
+  const settingsReady = loadSettings(page).then((loaded) => {
+    settings = loaded;
+    if (!stopped && hostOptedOut(page.location.hostname, loaded.optOut)) {
+      shutdown();
+    }
+    return loaded;
+  });
+  const gate = installGate(page.document, () => buttonsToBlock(site, page.document));
   let card: { update: (next: OverlayModel) => void; unmount: () => void } | null = null;
 
   let code = "";
@@ -85,6 +118,7 @@ async function start(site: StoreAdapter): Promise<void> {
   let quantity: number | null = null;
   let pollTimer = 0;
   let fallbackTimer = 0;
+  let retryTimer = 0;
   let showBlock = false;
   let bagWatch: BagWatch | null = null;
   let pageWatch: PageWatch | null = null;
@@ -96,13 +130,16 @@ async function start(site: StoreAdapter): Promise<void> {
       return;
     }
     stopped = true;
-    active.view.clearInterval(pollTimer);
-    active.view.clearTimeout(fallbackTimer);
+    page.view.clearInterval(pollTimer);
+    page.view.clearTimeout(fallbackTimer);
+    page.view.clearTimeout(retryTimer);
     bagWatch?.disconnect();
     pageWatch?.disconnect();
     gate.stop();
     card?.unmount();
+    card = null;
     stopCheckout();
+    sessions().delete(page.document);
   };
   onContextDead = shutdown;
 
@@ -110,8 +147,9 @@ async function start(site: StoreAdapter): Promise<void> {
     if (stopped) {
       return;
     }
-    active.view.clearInterval(pollTimer);
-    active.view.clearTimeout(fallbackTimer);
+    page.view.clearInterval(pollTimer);
+    page.view.clearTimeout(fallbackTimer);
+    page.view.clearTimeout(retryTimer);
     bagWatch?.disconnect();
     bagWatch = null;
     pageWatch?.disconnect();
@@ -124,30 +162,30 @@ async function start(site: StoreAdapter): Promise<void> {
   };
 
   stopCheckout = bindCheckoutClicks(
-    active.document,
-    () => site.checkoutButtons(active.document),
+    page.document,
+    () => site.checkoutButtons(page.document),
     () => ({ code, unlocked: bagOpen }),
-    recordCheckout,
+    (cartCode) => recordCheckout(page, cartCode),
   );
 
   const actions = {
     unlock: () => {
-      void post(`/api/carts/${code}/unlock`).then(() => refresh());
+      void post(page, `/api/carts/${code}/unlock`).then(() => refresh());
     },
     sleep: () => {
-      void post(`/api/carts/${code}/sleep`).then(() => refresh());
+      void post(page, `/api/carts/${code}/sleep`).then(() => refresh());
     },
     ...(import.meta.env?.VITE_SIMMER_DEMO === "1"
       ? {
           skipVault: () => {
-            void post(`/api/carts/${code}/skip-vault`).then(() => refresh());
+            void post(page, `/api/carts/${code}/skip-vault`).then(() => refresh());
           },
           demoReply: (text: string) => {
             const trimmed = text.trim();
             if (!trimmed) {
               return;
             }
-            void post("/api/dev/reply", { code, text: trimmed }).then(() => refresh());
+            void post(page, "/api/dev/reply", { code, text: trimmed }).then(() => refresh());
           },
         }
       : {}),
@@ -155,7 +193,7 @@ async function start(site: StoreAdapter): Promise<void> {
 
   const show = (model: OverlayModel) => {
     if (!card) {
-      card = mountSimmerCard(site, active.document, active.css, model, actions);
+      card = mountSimmerCard(site, page.document, page.css, model, actions);
       return;
     }
     card.update(model);
@@ -166,7 +204,7 @@ async function start(site: StoreAdapter): Promise<void> {
       return;
     }
     const current = code;
-    const cart = await getJson(`/api/carts/${current}`);
+    const cart = await getJson(page, `/api/carts/${current}`);
     if (current !== code || stopped) {
       return;
     }
@@ -194,6 +232,8 @@ async function start(site: StoreAdapter): Promise<void> {
     show(modelFrom(cart, null, settings, null, quantity));
   };
 
+  let scheduleRetry = (): void => undefined;
+
   const publish = async (interpreted: PageBag) => {
     if (posting) {
       return;
@@ -207,41 +247,53 @@ async function start(site: StoreAdapter): Promise<void> {
       quantity = interpreted.quantity;
     }
     try {
-      if (site.isOrderConfirmation(active.document)) {
+      if (site.isOrderConfirmation(page.document)) {
         return;
       }
-      if (!interpreted.parsed && settings.cartCode && applePage(active.location.href) === "checkout") {
+      if (interpreted.parsed && interpreted.itemNames.length > 0) {
+        show(previewModel(interpreted, settings));
+        showBlock = true;
+        paintLock();
+      }
+      const loaded = await settingsReady;
+      if (stopped) {
+        return;
+      }
+      settings = loaded;
+      if (!interpreted.parsed && settings.cartCode && applePage(page.location.href) === "checkout") {
         code = settings.cartCode;
         await refresh();
         return;
       }
-      const bag = site.readBag(active.document);
+      const bag = site.readBag(page.document);
       if (!bag) {
         show(emptyModel(settings, code || "------", "Couldn't read bag"));
         if (!code) {
-          await post("/api/carts", {
+          await post(page, "/api/carts", {
             userId: settings.userId,
             itemNames: [],
             totalCents: 0,
             parsed: false,
-            pageHost: active.location.hostname,
+            pageHost: page.location.hostname,
           });
         }
         return;
       }
-      const created = await post("/api/carts", {
+      const created = await post(page, "/api/carts", {
         userId: settings.userId,
         itemNames: bag.items.map((item) => item.item).slice(0, 1),
         totalCents: bag.total,
         parsed: true,
-        pageHost: active.location.hostname,
+        pageHost: page.location.hostname,
       });
       if (stopped) {
         return;
       }
       if (!isRecord(created) || typeof created.code !== "string") {
+        lastParsed = null;
         if (!code) {
-          show(emptyModel(settings, "------", "Simmer can't reach the local server."));
+          show({ ...previewModel(interpreted, settings), error: "Simmer can't reach the local server." });
+          scheduleRetry();
         }
         return;
       }
@@ -249,7 +301,7 @@ async function start(site: StoreAdapter): Promise<void> {
       code = created.code;
       postedKey = bagContentKey(interpreted);
       if (previous !== code) {
-        await rememberCart(code);
+        await rememberCart(page, code);
       }
       if (stopped) {
         return;
@@ -273,8 +325,8 @@ async function start(site: StoreAdapter): Promise<void> {
       }
       if (!watching && card) {
         watching = true;
-        pollTimer = active.view.setInterval(() => {
-          if (stopped || !extensionContextAlive(active.runtime())) {
+        pollTimer = page.view.setInterval(() => {
+          if (stopped || !extensionContextAlive(page.runtime())) {
             shutdown();
             return;
           }
@@ -288,10 +340,10 @@ async function start(site: StoreAdapter): Promise<void> {
 
   // One initial read, then only when the bag area itself changes. The 1s timer polls lock state.
   const readBagNow = () => {
-    if (!active.document.body || stopped || posting || site.isOrderConfirmation(active.document)) {
+    if (!page.document.body || stopped || posting || site.isOrderConfirmation(page.document)) {
       return;
     }
-    const interpreted = readActiveBag(site, active.document);
+    const interpreted = readActiveBag(site, page.document);
     if (interpreted.quantity != null) {
       quantity = interpreted.quantity;
     }
@@ -321,6 +373,16 @@ async function start(site: StoreAdapter): Promise<void> {
     }
   };
 
+  scheduleRetry = () => {
+    if (retryTimer || stopped || code) {
+      return;
+    }
+    retryTimer = page.view.setTimeout(() => {
+      retryTimer = 0;
+      readBagNow();
+    }, 1000);
+  };
+
   const paintLock = () => {
     const write = () => gate.paint();
     if (pageWatch) {
@@ -331,8 +393,8 @@ async function start(site: StoreAdapter): Promise<void> {
   };
 
   whenReady(() => {
-    bagWatch = watchBagDom(active.document, readBagNow);
-    pageWatch = watchPage(active.document, () => {
+    bagWatch = watchBagDom(page.document, readBagNow);
+    pageWatch = watchPage(page.document, () => {
       if (stopped) {
         return;
       }
@@ -345,23 +407,46 @@ async function start(site: StoreAdapter): Promise<void> {
     });
     readBagNow();
   });
-  fallbackTimer = active.view.setTimeout(() => {
-    if (!code && !stopped && !site.isOrderConfirmation(active.document)) {
-      const interpreted = readActiveBag(site, active.document);
+  const running: Running = {
+    reread: () => {
+      if (!stopped) {
+        readBagNow();
+      }
+    },
+    stop: shutdown,
+  };
+
+  fallbackTimer = page.view.setTimeout(() => {
+    if (!code && !stopped && !site.isOrderConfirmation(page.document)) {
+      const interpreted = readActiveBag(site, page.document);
       if (interpreted.parsed && interpreted.itemNames.length > 0) {
         void publish(interpreted);
         return;
       }
       show(emptyModel(settings, "------", "Couldn't read bag"));
-      void post("/api/carts", {
+      void post(page, "/api/carts", {
         userId: settings.userId,
         itemNames: [],
         totalCents: 0,
         parsed: false,
-        pageHost: active.location.hostname,
+        pageHost: page.location.hostname,
       });
     }
   }, 4000);
+
+  return running;
+}
+
+function previewModel(bag: PageBag, settings: Settings): OverlayModel {
+  return {
+    ...emptyModel(settings, "------", ""),
+    error: null,
+    totalCents: bag.totalCents ?? 0,
+    parsedFromPage: true,
+    itemNames: bag.itemNames,
+    quantity: bag.quantity,
+    pingReason: null,
+  };
 }
 
 function modelFrom(
@@ -396,7 +481,7 @@ function modelFrom(
     reading: cart.reading === true,
     userId: settings.userId,
     linkMessage: typeof cart.linkMessage === "string" ? cart.linkMessage : `link ${settings.userId}`,
-    fallbackPage: isFallbackBag(active.location.href),
+    fallbackPage: isFallbackBag(pageHref()),
     pingDelivered: ping?.delivered === true,
     pingReason: ping?.reason === "send_failed" || ping?.reason === "unlinked" ? ping.reason : null,
     smsLink: typeof ping?.smsLink === "string" ? ping.smsLink : typeof cart.smsLink === "string" ? cart.smsLink : null,
@@ -508,7 +593,7 @@ function emptyModel(settings: Settings, code: string, error: string): OverlayMod
     reading: false,
     userId: settings.userId,
     linkMessage: `link ${settings.userId}`,
-    fallbackPage: isFallbackBag(active.location.href),
+    fallbackPage: isFallbackBag(pageHref()),
     pingDelivered: false,
     pingReason: "unlinked",
     smsLink: null,
@@ -528,8 +613,8 @@ function emptyModel(settings: Settings, code: string, error: string): OverlayMod
   };
 }
 
-function loadSettings(): Promise<Settings> {
-  return message({ type: "simmer", action: "settings" }).then((value) => {
+function loadSettings(host: BootHost): Promise<Settings> {
+  return message(host, { type: "simmer", action: "settings" }).then((value) => {
     const record = isRecord(value) ? value : {};
     return {
       origin: typeof record.origin === "string" ? record.origin : "http://127.0.0.1:4321",
@@ -540,24 +625,24 @@ function loadSettings(): Promise<Settings> {
   });
 }
 
-function rememberCart(code: string): Promise<void> {
-  return message({ type: "simmer", action: "remember-cart", code }).then(() => undefined);
+function rememberCart(host: BootHost, code: string): Promise<void> {
+  return message(host, { type: "simmer", action: "remember-cart", code }).then(() => undefined);
 }
 
-function post(path: string, body?: unknown): Promise<unknown> {
-  return message({ type: "simmer", action: "api", method: "POST", path, body }).then(unwrap);
+function post(host: BootHost, path: string, body?: unknown): Promise<unknown> {
+  return message(host, { type: "simmer", action: "api", method: "POST", path, body }).then(unwrap);
 }
 
-function recordCheckout(cartCode: string): Promise<void> {
-  return message({ type: "simmer", action: "api", method: "POST", path: "/purchases", body: { cartCode } }).then((result) => {
+function recordCheckout(host: BootHost, cartCode: string): Promise<void> {
+  return message(host, { type: "simmer", action: "api", method: "POST", path: "/purchases", body: { cartCode } }).then((result) => {
     if (!isRecord(result) || result.ok !== true) {
       throw new Error("Purchase was not recorded.");
     }
   });
 }
 
-function getJson(path: string): Promise<unknown> {
-  return message({ type: "simmer", action: "api", method: "GET", path }).then(unwrap);
+function getJson(host: BootHost, path: string): Promise<unknown> {
+  return message(host, { type: "simmer", action: "api", method: "GET", path }).then(unwrap);
 }
 
 function unwrap(value: unknown): unknown {
@@ -567,8 +652,36 @@ function unwrap(value: unknown): unknown {
   return value.body ?? null;
 }
 
-function message(payload: unknown): Promise<unknown> {
-  return deliverExtensionMessage(active.runtime(), payload, () => onContextDead());
+function message(host: BootHost, payload: unknown): Promise<unknown> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: unknown) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(value);
+    };
+    const timer = host.view.setTimeout(() => finish(null), 2500);
+    void deliverExtensionMessage(host.runtime(), payload, () => {
+      host.view.clearTimeout(timer);
+      sessions().get(host.document)?.stop();
+      finish(null);
+    }).then(
+      (value) => {
+        host.view.clearTimeout(timer);
+        finish(value);
+      },
+      () => {
+        host.view.clearTimeout(timer);
+        finish(null);
+      },
+    );
+  });
+}
+
+function pageHref(): string {
+  return active.location.href;
 }
 
 function whenReady(run: () => void): void {

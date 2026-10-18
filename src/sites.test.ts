@@ -10,9 +10,13 @@ describe("apple pages", () => {
   it("matches the bag and regional checkout hosts", () => {
     assert.equal(applePage("https://www.apple.com/shop/bag"), "bag");
     assert.equal(applePage("https://www.apple.com/shop/bag/"), "bag");
+    assert.equal(applePage("https://www.apple.com/shop/bag?pr=1"), "bag");
+    assert.equal(applePage("https://apple.com/shop/bag"), "bag");
     assert.equal(applePage("https://www.apple.com/uk/shop/bag"), "bag");
     assert.equal(applePage("https://www.apple.com/ca/shop/bag?ref=nav"), "bag");
     assert.equal(applePage("https://www.apple.com.cn/shop/bag"), "bag");
+    assert.equal(applePage("https://secure6.store.apple.com/shop/bag"), "bag");
+    assert.equal(applePage("https://secure.store.apple.com/us/shop/bag?pr=1"), "bag");
     assert.equal(applePage("https://secure6.store.apple.com/shop/checkout"), "checkout");
     assert.equal(applePage("https://secure.store.apple.com/us/shop/checkout/start"), "checkout");
     assert.equal(applePage("https://www.apple.com/shop/buy-iphone"), null);
@@ -59,7 +63,11 @@ describe("apple pages", () => {
     }
     for (const url of [
       "https://www.apple.com/shop/bag",
+      "https://www.apple.com/shop/bag?pr=1",
+      "https://apple.com/shop/bag",
       "https://www.apple.com/uk/shop/bag",
+      "https://secure6.store.apple.com/shop/bag",
+      "https://secure.store.apple.com/us/shop/bag",
       "https://secure6.store.apple.com/shop/checkout",
       "http://127.0.0.1:4321/fallback",
     ]) {

@@ -54,6 +54,16 @@ describe("Apple bag DOM", () => {
     assert.notEqual(String(reread.items[0]?.quantity), "10+");
   });
 
+  it("reads the price node when the label reuses data-autom bagtotalvalue", () => {
+    const document = page(
+      `<li class="rs-bag-item" data-autom="bag-item-1"><h2 class="rs-iteminfo-title"><a data-autom="bag-item-name">USB-C Charge Cable</a></h2><select data-autom="item-quantity-dropdown"><option value="1" selected>1</option></select><div data-autom="Monthly_price"><p>$19.00</p></div></li><div class="rs-summary-label" data-autom="bagtotalvalue">Total</div><div class="rs-summary-value" data-autom="bagtotalvalue">$19.00</div>`,
+    );
+    const bag = readPageBag(document);
+    assert.equal(bag.itemNames[0], "USB-C Charge Cable");
+    assert.equal(bag.totalCents, 1_900);
+    assert.equal(bag.parsed, true);
+  });
+
   it("does not invent a bag name when no line item is on the page", () => {
     const document = page("<p>10+</p><p>Subtotal</p><p>$19.00</p><p>Total</p><p>$21.00</p>");
     const bag = readPageBag(document);
@@ -207,5 +217,50 @@ describe("apple.com cable row fixture", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(scheduled, 2);
     assert.equal(watch.connected(), false);
+  });
+
+  it("reads a bag that is inserted after the empty shell", async () => {
+    const { document } = new JSDOM(
+      `<!doctype html><html><body><div id="bag-container"></div><footer><p id="fine">Footer</p></footer></body></html>`,
+    ).window;
+    const queued: Array<() => void> = [];
+    let reads = 0;
+    const watch = watchBagDom(
+      document,
+      () => {
+        reads += 1;
+      },
+      {
+        schedule(run) {
+          queued.push(run);
+          return queued.length;
+        },
+        cancel() {
+          return undefined;
+        },
+      },
+    );
+    assert.equal(watch.connected(), false);
+    const footer = document.querySelector("#fine");
+    assert.ok(footer);
+    footer.after(document.createElement("span"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(queued.length, 0);
+
+    const container = document.querySelector("#bag-container");
+    assert.ok(container);
+    container.innerHTML = `<ol data-autom="bag-items"><li class="rs-bag-item rs-iteminfo-wrap" data-autom="bag-item-1"><h2 class="rs-iteminfo-title"><a data-autom="bag-item-name">USB-C Charge Cable</a></h2><select data-autom="item-quantity-dropdown"><option value="1" selected>1</option></select></li></ol><div class="rs-summary-label" data-autom="bagtotalvalue">Total</div><div class="rs-summary-value" data-autom="bagtotalvalue">$19.00</div>`;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(queued.length, 1);
+    queued[0]?.();
+    assert.equal(reads, 1);
+    assert.equal(watch.connected(), true);
+    const bag = readPageBag(document);
+    assert.equal(bag.parsed, true);
+    assert.equal(bag.totalCents, 1_900);
+    watch.disconnect();
+    container.append(document.createElement("span"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(queued.length, 1);
   });
 });

@@ -1,4 +1,5 @@
 import { apiPathAllowed, apiRequestInit } from "./api-auth.mjs";
+import { shouldInjectContent } from "./page-match.mjs";
 
 const DEFAULT_ORIGIN = "http://127.0.0.1:4321";
 
@@ -48,6 +49,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   return undefined;
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  const url = typeof changeInfo.url === "string" ? changeInfo.url : "";
+  if (!shouldInjectContent(url) || !chrome.scripting) {
+    return;
+  }
+  chrome.scripting
+    .executeScript({
+      target: { tabId, allFrames: false },
+      files: ["content.js"],
+      injectImmediately: true,
+    })
+    .catch(() => undefined);
 });
 
 function allowedOrigin(value) {
