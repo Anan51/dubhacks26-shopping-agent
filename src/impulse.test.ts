@@ -1,0 +1,313 @@
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { describe, it } from "node:test";
+
+import { createApp } from "./app.js";
+import { itemsForBag, startLockedCart, withCartFacts } from "./carts.js";
+import { decide } from "./heuristic.js";
+import { IMPULSIVE, personaFor } from "./history.js";
+import {
+  applyPurchaseScore,
+  classifyNecessity,
+  clampGrade,
+  gradeJustification,
+  keywordGrade,
+  keywordNecessity,
+  locksCheckout,
+  parseGradeJson,
+  purchaseScore,
+  scoreBucket,
+} from "./impulse.js";
+import { createMemoryStore } from "./store.js";
+
+const NOW = new Date("2026-10-18T00:00:00.000Z");
+
+describe("purchase score", () => {
+  it("clamps both ends and lands on each bucket boundary", () => {
+    assert.equal(purchaseScore(1, -3), 1);
+    assert.equal(purchaseScore(2, -3), 1);
+    assert.equal(purchaseScore(5, 3), 5);
+    assert.equal(purchaseScore(4, 9), 5);
+    assert.equal(purchaseScore(1.2, -3.4), 1);
+    assert.equal(clampGrade(9), 3);
+    assert.equal(clampGrade(-8), -3);
+    assert.equal(clampGrade(1.6), 2);
+
+    assert.equal(scoreBucket(purchaseScore(2, -1)), "strict");
+    assert.equal(scoreBucket(1), "strict");
+    assert.equal(scoreBucket(2), "soft");
+    assert.equal(scoreBucket(3), "soft");
+    assert.equal(scoreBucket(purchaseScore(2, 1)), "soft");
+    assert.equal(scoreBucket(4), "free");
+    assert.equal(scoreBucket(5), "free");
+    assert.equal(scoreBucket(purchaseScore(2, 2)), "free");
+  });
+});
+
+describe("necessity gate", () => {
+  it("lets a necessary buy through and locks an unnecessary one", () => {
+    const cable = keywordNecessity("USB-C charge cable");
+    const phone = keywordNecessity("Example phone");
+    assert.equal(cable.necessary, true);
+    assert.equal(locksCheckout(cable), false);
+    assert.equal(phone.necessary, false);
+    assert.equal(locksCheckout(phone), true);
+    assert.equal(keywordNecessity("iPhone 16 Pro").necessary, false);
+  });
+
+  it("uses Grok when the JSON is valid and keywords when the call fails", async () => {
+    let calls = 0;
+    const grok = await classifyNecessity("Example phone", {
+      apiKey: "test-key",
+      fetchImpl: async () => {
+        calls += 1;
+        return Response.json({
+          choices: [{ message: { content: '{"necessary": false, "reason": "Upgrade."}' } }],
+        });
+      },
+    });
+    assert.equal(calls, 1);
+    assert.equal(grok.source, "grok");
+    assert.equal(grok.necessary, false);
+    assert.equal(locksCheckout(grok), true);
+
+    const broken = await classifyNecessity("USB-C charge cable", {
+      apiKey: "test-key",
+      fetchImpl: async () => Response.json({ choices: [{ message: { content: "nope" } }] }),
+    });
+    assert.equal(broken.source, "keywords");
+    assert.equal(broken.necessary, true);
+
+    let network = false;
+    const offline = await classifyNecessity("USB-C charge cable", {
+      fetchImpl: async () => {
+        network = true;
+        throw new Error("network");
+      },
+    });
+    assert.equal(network, false);
+    assert.equal(offline.source, "keywords");
+    assert.equal(offline.necessary, true);
+  });
+});
+
+describe("justification grade", () => {
+  it("parses an integer and clamps it to -3..3", () => {
+    assert.deepEqual(parseGradeJson('{"grade": 2, "reason": "ok"}'), { grade: 2, reason: "ok" });
+    assert.equal(parseGradeJson('{"grade": 9}')?.grade, 3);
+    assert.equal(parseGradeJson('{"grade": -9}')?.grade, -3);
+    assert.equal(parseGradeJson('Here:\n```json\n{"grade": "-2"}\n```')?.grade, -2);
+    assert.equal(parseGradeJson("nope"), null);
+    assert.equal(keywordGrade("the new color looks nice").grade, -2);
+    assert.equal(keywordGrade("bored, treat myself").grade, -3);
+    assert.equal(keywordGrade("I need it for work").grade, 1);
+    assert.equal(keywordGrade("my battery dies by 3pm").grade, 2);
+    assert.equal(
+      keywordGrade("cracked screen, battery dies by 3pm, I need it for work tomorrow").grade,
+      3,
+    );
+    assert.equal(keywordGrade("").grade, 0);
+  });
+
+  it("keeps the keyword grade when Grok is unset or unreadable", async () => {
+    const offline = await gradeJustification("the new color looks nice", {});
+    assert.equal(offline.source, "keywords");
+    assert.equal(offline.grade, -2);
+
+    const grok = await gradeJustification("the new color looks nice", {
+      apiKey: "test-key",
+      fetchImpl: async () =>
+        Response.json({
+          choices: [{ message: { content: '{"grade": 4, "reason": "High."}' } }],
+        }),
+    });
+    assert.equal(grok.source, "grok");
+    assert.equal(grok.grade, 3);
+
+    const fallback = await gradeJustification("the new color looks nice", {
+      apiKey: "test-key",
+      fetchImpl: async () => {
+        throw new Error("down");
+      },
+    });
+    assert.equal(fallback.source, "keywords");
+    assert.equal(fallback.grade, -2);
+  });
+});
+
+describe("score routing", () => {
+  it("vaults a score of 1, offers sleep at 2–3, and unlocks at 4 or more", () => {
+    const strict = cart();
+    strict.decision = decide(withCartFacts({}, strict.totalCents));
+    const held = applyPurchaseScore(strict, { grade: -2, source: "keywords", reason: "Look." }, 2, NOW, 60_000);
+    assert.equal(held.bucket, "strict");
+    assert.equal(strict.purchaseScore, 1);
+    assert.equal(strict.status, "vault");
+    assert.equal(strict.vaultMode, "enforced");
+    assert.equal(strict.isUnlocked, false);
+    assert.match(held.reply, /24 hours/);
+    assert.match(held.reply, /example trade-in bundle/);
+
+    const soft = cart();
+    soft.decision = decide(withCartFacts({}, soft.totalCents));
+    const optional = applyPurchaseScore(soft, { grade: 1, source: "keywords", reason: "Need." }, 2, NOW, 60_000);
+    assert.equal(optional.bucket, "soft");
+    assert.equal(soft.purchaseScore, 3);
+    assert.equal(soft.status, "locked");
+    assert.equal(soft.vaultUntil, null);
+    assert.match(optional.reply, /optional/);
+
+    const free = cart();
+    const opened = applyPurchaseScore(free, { grade: 3, source: "grok", reason: "Broken." }, 2, NOW, 60_000);
+    assert.equal(opened.bucket, "free");
+    assert.equal(free.purchaseScore, 5);
+    assert.equal(free.status, "unlocked");
+    assert.equal(free.isUnlocked, true);
+    assert.equal(free.vaultUntil, null);
+    assert.match(opened.reply, /will not click it/);
+  });
+});
+
+describe("impulse flow on the server", () => {
+  it("does not lock a necessary cable and routes the three phone buckets", async () => {
+    const running = createApp({
+      store: createMemoryStore(),
+      origin: "http://127.0.0.1",
+      lockMs: 600_000,
+      demoReminderMs: 60_000,
+      demoDefault: true,
+      agentHandle: null,
+      photon: null,
+      xaiModel: "grok-4.20-0309-non-reasoning",
+      xaiTimeoutMs: 8_000,
+      polish: async (template) => template,
+    });
+    const server = createServer(running.app);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${address.port}`;
+    try {
+      const cable = await post(base, "/api/carts", {
+        userId: "user-cable",
+        itemNames: ["USB-C charge cable"],
+        totalCents: 1_900,
+        parsed: true,
+        demo: true,
+      });
+      const open = cable.body as CartSnap;
+      assert.equal(cable.status, 201);
+      assert.equal(open.necessity, "necessary");
+      assert.equal(open.necessitySource, "keywords");
+      assert.equal(open.status, "unlocked");
+      assert.equal(open.isUnlocked, true);
+      assert.equal(open.lastPing, null);
+      const pay = await post(base, "/api/pay", { code: open.code });
+      assert.equal(pay.status, 200);
+
+      const phone = await post(base, "/api/carts", {
+        userId: "user-impulsive",
+        itemNames: ["Example phone"],
+        totalCents: 120_000,
+        parsed: true,
+        demo: true,
+      });
+      const locked = phone.body as CartSnap;
+      assert.equal(locked.necessity, "unnecessary");
+      assert.equal(locked.userImpulseScore, IMPULSIVE.impulseScore);
+      assert.equal(locked.status, "locked");
+      assert.equal(personaFor("user-someone-else").impulseScore, 2);
+
+      const conversationId = `desk:cart-${locked.code}`;
+      await post(base, "/api/dev/messages", {
+        conversationId,
+        text: "the new color looks nice",
+      });
+      const strict = (await get(base, `/api/carts/${locked.code}`)) as CartSnap;
+      assert.equal(strict.purchaseScore, 1);
+      assert.equal(strict.scoreBucket, "strict");
+      assert.equal(strict.gradeSource, "keywords");
+      assert.equal(strict.status, "vault");
+      const held = await post(base, "/api/pay", { code: locked.code });
+      assert.equal(held.status, 423);
+      const refused = await post(base, `/api/carts/${locked.code}/unlock`, {});
+      assert.equal(refused.status, 423);
+
+      await post(base, "/api/dev/persona", { userId: "user-impulsive", persona: "deliberate" });
+      const lifted = (await get(base, `/api/carts/${locked.code}`)) as CartSnap;
+      assert.equal(lifted.userImpulseScore, 4);
+      assert.equal(lifted.purchaseScore, 2);
+      assert.equal(lifted.scoreBucket, "soft");
+      assert.equal(lifted.status, "locked");
+
+      const paused = await post(base, `/api/carts/${locked.code}/sleep`, {});
+      const optional = paused.body as CartSnap & { vaultMode: string | null };
+      assert.equal(optional.status, "vault");
+      assert.equal(optional.vaultMode, "soft");
+      const released = await post(base, `/api/carts/${locked.code}/unlock`, {});
+      assert.equal(released.status, 200);
+
+      await post(base, "/api/dev/messages", {
+        conversationId,
+        text: "cracked screen, battery dies by 3pm, I need it for work tomorrow",
+      });
+      const freed = (await get(base, `/api/carts/${locked.code}`)) as CartSnap;
+      assert.equal(freed.purchaseScore, 5);
+      assert.equal(freed.scoreBucket, "free");
+      assert.equal(freed.status, "unlocked");
+      assert.match(freed.explanation ?? "", /will not click it/);
+    } finally {
+      running.scheduler.stop();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+});
+
+function cart() {
+  return startLockedCart({
+    items: itemsForBag(["Example phone"], 120_000, false),
+    totalCents: 120_000,
+    parsedFromPage: false,
+    pageHost: "127.0.0.1",
+    fingerprint: "user|120000|example phone",
+    now: NOW,
+    demo: true,
+    lockMs: 600_000,
+    userId: "user-impulsive",
+    code: "AB23CD",
+  });
+}
+
+type CartSnap = {
+  code: string;
+  status: string;
+  isUnlocked: boolean;
+  necessity: string | null;
+  necessitySource: string | null;
+  userImpulseScore: number | null;
+  purchaseScore: number | null;
+  scoreBucket: string | null;
+  gradeSource: string | null;
+  lastPing: unknown;
+  explanation: string | null;
+};
+
+async function get(base: string, path: string): Promise<unknown> {
+  const response = await fetch(`${base}${path}`);
+  assert.equal(response.ok, true);
+  return response.json() as Promise<unknown>;
+}
+
+async function post(base: string, path: string, body: unknown): Promise<{ status: number; body: unknown }> {
+  const response = await fetch(`${base}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const parsed = (await response.json()) as unknown;
+  return { status: response.status, body: parsed };
+}

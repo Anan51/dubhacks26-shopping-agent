@@ -23,7 +23,9 @@ import type { OutboundMessage } from "./channel.js";
 import type { PhotonChannel } from "./channels/photon.js";
 import { readConfig } from "./config.js";
 import { handleIncomingEvent } from "./handle-message.js";
+import { isPersonaId, PERSONAS, personaById, personaFor, type PersonaId } from "./history.js";
 import { decide, EXAMPLE_OWED_CENTS } from "./heuristic.js";
+import { applyPurchaseScore, classifyNecessity } from "./impulse.js";
 import { EXAMPLE_OFFERS } from "./offers.js";
 import { deskChatUrl, linkPhoneSms, linkPhoneText, prefilledText, textSimmerLink } from "./links.js";
 import { isUserId, notifyCheckout } from "./phone-link.js";
@@ -58,6 +60,12 @@ export type RunningApp = {
 
 export function createApp(deps: AppDeps): RunningApp {
   const now = deps.now ?? (() => new Date());
+  const assignedPersonas = new Map<string, PersonaId>();
+  const extractOptions = {
+    ...(deps.xaiApiKey ? { apiKey: deps.xaiApiKey } : {}),
+    model: deps.xaiModel,
+    timeoutMs: deps.xaiTimeoutMs,
+  };
 
   async function routeSend(message: OutboundMessage): Promise<void> {
     if (message.conversationId.startsWith("desk:")) {
@@ -85,11 +93,7 @@ export function createApp(deps: AppDeps): RunningApp {
     polish:
       deps.polish ??
       ((template, action) => polishPhrase(template, action, deps.xaiApiKey, fetch, deps.xaiModel, deps.xaiTimeoutMs)),
-    extract: {
-      ...(deps.xaiApiKey ? { apiKey: deps.xaiApiKey } : {}),
-      model: deps.xaiModel,
-      timeoutMs: deps.xaiTimeoutMs,
-    },
+    extract: extractOptions,
   });
 
   if (deps.photon) {
@@ -116,6 +120,10 @@ export function createApp(deps: AppDeps): RunningApp {
     res.type("html").send(readFileSync(path.join(process.cwd(), "web", "fallback.html"), "utf8"));
   });
 
+  app.get("/fallback/cable", (_req, res) => {
+    res.type("html").send(readFileSync(path.join(process.cwd(), "web", "fallback-cable.html"), "utf8"));
+  });
+
   app.get("/api/config", (_req, res) => {
     res.json({
       synthetic: true,
@@ -128,6 +136,7 @@ export function createApp(deps: AppDeps): RunningApp {
       exampleOwedCents: EXAMPLE_OWED_CENTS,
       fallbackTotalCents: FALLBACK_TOTAL_CENTS,
       exampleOffers: EXAMPLE_OFFERS,
+      personas: PERSONAS,
       deskChat: true,
     });
   });
@@ -172,7 +181,19 @@ export function createApp(deps: AppDeps): RunningApp {
       taken: (code) => deps.store.getCart(code) !== undefined,
     });
     seedDecision(cart);
-    await pingCart(cart, false);
+    const necessity = await classifyNecessity(bag.itemNames.join("\n"), extractOptions);
+    const persona = personaFor(userId, assignedPersonas);
+    cart.necessity = necessity.necessary ? "necessary" : "unnecessary";
+    cart.necessitySource = necessity.source;
+    cart.necessityReason = necessity.reason;
+    cart.personaId = persona.id;
+    cart.userImpulseScore = persona.impulseScore;
+    if (necessity.necessary) {
+      unlockCart(cart);
+      cart.scoreReason = necessity.reason;
+    } else {
+      await pingCart(cart, false);
+    }
     deps.store.saveCart(cart);
     res.status(201).json(publicCart(cart, deps.agentHandle));
   }));
@@ -204,7 +225,7 @@ export function createApp(deps: AppDeps): RunningApp {
       res.status(404).json({ error: "Cart not found." });
       return;
     }
-    if (isVaultActive(cart, now())) {
+    if (isVaultActive(cart, now()) && cart.vaultMode !== "soft") {
       res.status(423).json({
         error: "This bag is in the Impulse Vault.",
         vaultUntil: cart.vaultUntil,
@@ -224,7 +245,8 @@ export function createApp(deps: AppDeps): RunningApp {
       res.status(404).json({ error: "Cart not found." });
       return;
     }
-    sleepCart(cart, now(), VAULT_MS, deps.demoReminderMs);
+    const soft = cart.scoreBucket === "soft";
+    sleepCart(cart, now(), soft ? deps.lockMs : VAULT_MS, deps.demoReminderMs, soft ? "soft" : "enforced");
     deps.store.saveCart(cart);
     scheduler.arm(cart);
     res.json(publicCart(cart, deps.agentHandle));
@@ -262,6 +284,48 @@ export function createApp(deps: AppDeps): RunningApp {
     }
     const link = deps.store.getPhoneLink(userId);
     res.json({ linked: Boolean(link), conversationId: link?.conversationId ?? null });
+  });
+
+  app.post("/api/dev/persona", (req, res) => {
+    const body = isRecord(req.body) ? req.body : {};
+    const userId = typeof body.userId === "string" ? body.userId : "";
+    const personaId = typeof body.persona === "string" ? body.persona : "";
+    if (!isUserId(userId) || !isPersonaId(personaId)) {
+      res.status(400).json({ error: "userId and persona (impulsive or deliberate) are required." });
+      return;
+    }
+    assignedPersonas.set(userId, personaId);
+    const persona = personaById(personaId);
+    const carts = [];
+    for (const cart of deps.store.listCarts()) {
+      if (cart.userId !== userId || cart.necessity === "necessary") {
+        continue;
+      }
+      cart.personaId = persona.id;
+      cart.userImpulseScore = persona.impulseScore;
+      if (cart.justificationGrade !== null && cart.gradeSource) {
+        const scored = applyPurchaseScore(
+          cart,
+          { grade: cart.justificationGrade, source: cart.gradeSource, reason: cart.gradeReason ?? "" },
+          persona.impulseScore,
+          now(),
+          deps.demoReminderMs,
+        );
+        if (scored.bucket === "strict") {
+          scheduler.arm(cart);
+        } else {
+          scheduler.disarm(cart.code);
+        }
+      }
+      deps.store.saveCart(cart);
+      carts.push(cart.code);
+    }
+    res.json({
+      personaId: persona.id,
+      impulseScore: persona.impulseScore,
+      history: persona.history,
+      carts,
+    });
   });
 
   app.post("/api/dev/link", (req, res) => {

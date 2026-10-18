@@ -165,8 +165,8 @@ describe("apple bag lock", () => {
       text: `cart ${cart.code} my battery dies by 3pm and I owe $420`,
     });
     const after = (await get(`/api/carts/${cart.code}`)) as CartBody;
+    assert.match(after.explanation ?? "", /Purchase score 4/);
     assert.match(after.explanation ?? "", /keywords/);
-    assert.match(after.explanation ?? "", /^Waiting /);
 
     await post("/api/dev/messages", { conversationId, text: "sleep" });
     await delay(200);

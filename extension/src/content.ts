@@ -78,6 +78,11 @@ async function start(kind: ApplePage): Promise<void> {
       show(emptyModel(settings, code, "Simmer can't reach the local server."));
       return;
     }
+    if (cart.necessity === "necessary") {
+      gate.lift();
+      show(modelFrom(cart, thread, settings, null));
+      return;
+    }
     if (cart.isUnlocked === true && cart.status === "unlocked") {
       stopped = true;
       gate.lift();
@@ -113,6 +118,9 @@ async function start(kind: ApplePage): Promise<void> {
       }
       code = created.code;
       await rememberCart(code);
+      if (created.necessity === "necessary") {
+        gate.lift();
+      }
       show(modelFrom(created, { turns: [] }, settings, null));
       window.setInterval(() => {
         void refresh();
@@ -259,6 +267,16 @@ function modelFrom(cart: Record<string, unknown>, thread: unknown, settings: Set
     qrDataUrl: typeof ping?.qrDataUrl === "string" ? ping.qrDataUrl : null,
     turns,
     error,
+    necessity: cart.necessity === "necessary" || cart.necessity === "unnecessary" ? cart.necessity : null,
+    necessitySource: typeof cart.necessitySource === "string" ? cart.necessitySource : null,
+    necessityReason: typeof cart.necessityReason === "string" ? cart.necessityReason : null,
+    userImpulseScore: typeof cart.userImpulseScore === "number" ? cart.userImpulseScore : null,
+    justificationGrade: typeof cart.justificationGrade === "number" ? cart.justificationGrade : null,
+    gradeSource: typeof cart.gradeSource === "string" ? cart.gradeSource : null,
+    gradeReason: typeof cart.gradeReason === "string" ? cart.gradeReason : null,
+    purchaseScore: typeof cart.purchaseScore === "number" ? cart.purchaseScore : null,
+    scoreBucket: cart.scoreBucket === "free" || cart.scoreBucket === "soft" || cart.scoreBucket === "strict" ? cart.scoreBucket : null,
+    scoreReason: typeof cart.scoreReason === "string" ? cart.scoreReason : null,
   };
 }
 
@@ -357,6 +375,16 @@ function emptyModel(settings: Settings, code: string, error: string): OverlayMod
     qrDataUrl: null,
     turns: [],
     error,
+    necessity: null,
+    necessitySource: null,
+    necessityReason: null,
+    userImpulseScore: null,
+    justificationGrade: null,
+    gradeSource: null,
+    gradeReason: null,
+    purchaseScore: null,
+    scoreBucket: null,
+    scoreReason: null,
   };
 }
 

@@ -1,7 +1,9 @@
 import { isVaultActive, sleepCart, unlockCart, VAULT_MS, withCartFacts } from "./carts.js";
 import { extractCartCode, extractSignals, pickShopperSignals, type ExtractOptions } from "./extract-signals.js";
 import { formatLongDate } from "./format.js";
+import { personaFor } from "./history.js";
 import { decide } from "./heuristic.js";
+import { applyPurchaseScore, gradeJustification } from "./impulse.js";
 import { UPGRADE_PROMPT } from "./links.js";
 import { parseLinkCommand, threadUserId } from "./phone-link.js";
 import { phraseDecision } from "./phrase.js";
@@ -149,13 +151,33 @@ async function sleepTurn(session: Session, cart: Cart, input: ApplyInput): Promi
 async function justifyTurn(session: Session, cart: Cart, input: ApplyInput): Promise<ApplyResult> {
   await fillDecision(session, cart, input);
   session.step = "confirm";
-  const explanation = cart.explanation ?? UPGRADE_PROMPT;
-  if (isVaultActive(cart, input.now) && cart.vaultUntil) {
-    return say(session, `${explanation}\n\nThis bag stays covered in the Vault until ${formatLongDate(cart.vaultUntil)}.`, {
-      cart,
-    });
+  if (cart.necessity === "necessary") {
+    return say(session, "This bag is a necessary buy. Checkout can proceed. Simmer will not click the button.", { cart });
   }
-  return say(session, explanation, { cart });
+  const spoken = withoutCartLabel(input.text);
+  if (!spoken) {
+    return say(session, cart.explanation ?? UPGRADE_PROMPT, { cart });
+  }
+  const useGrok = Boolean(input.extract?.apiKey);
+  if (useGrok) {
+    cart.reading = true;
+    input.markReading?.(cart);
+  }
+  let graded;
+  try {
+    graded = await gradeJustification(spoken, input.extract ?? {});
+  } finally {
+    if (useGrok) {
+      cart.reading = false;
+    }
+  }
+  const impulse = cart.userImpulseScore ?? personaFor(cart.userId).impulseScore;
+  const scored = applyPurchaseScore(cart, graded, impulse, input.now, input.demoReminderMs);
+  return say(session, scored.reply, {
+    cart,
+    armReminder: scored.bucket === "strict",
+    disarmReminder: scored.bucket === "free",
+  });
 }
 
 async function fillDecision(session: Session, cart: Cart, input: ApplyInput): Promise<void> {

@@ -8,6 +8,7 @@ import {
   notifyCart,
   readPayGate,
   sendDeskMessage,
+  setPersona,
   type CartResponse,
   type Decision,
   type PayGate,
@@ -163,7 +164,26 @@ export function Desk() {
             </select>
           </label>
         ) : null}
-        {cart ? <MathPanel cart={cart} gate={gate} /> : null}
+        {cart ? (
+          <label>
+            Persona
+            <select
+              value={cart.personaId ?? "impulsive"}
+              onChange={(event) => {
+                const persona = event.target.value === "deliberate" ? "deliberate" : "impulsive";
+                const userId = cart.userId;
+                if (!userId) {
+                  return;
+                }
+                void run(() => setPersona(userId, persona));
+              }}
+            >
+              <option value="impulsive">Impulsive · score 2</option>
+              <option value="deliberate">Deliberate · score 4</option>
+            </select>
+          </label>
+        ) : null}
+        {cart ? <MathPanel cart={cart} gate={gate} personas={config?.personas ?? []} /> : null}
         {cart ? (
           <div className="script-row">
             <button
@@ -252,8 +272,21 @@ function effectSentence(effect: Decision["signalEffect"]): string {
   }
 }
 
-function MathPanel({ cart, gate }: { cart: CartResponse; gate: PayGate | null }) {
+function MathPanel({
+  cart,
+  gate,
+  personas,
+}: {
+  cart: CartResponse;
+  gate: PayGate | null;
+  personas: PublicConfig["personas"];
+}) {
   const decision = cart.decision;
+  const persona = personas.find((item) => item.id === (cart.personaId ?? "impulsive")) ?? null;
+  const gradeText =
+    cart.justificationGrade == null
+      ? "not graded"
+      : `${cart.justificationGrade > 0 ? "+" : ""}${cart.justificationGrade} (${cart.gradeSource ?? "keywords"})${cart.gradeReason ? `. ${cart.gradeReason}` : ""}`;
   return (
     <div className="math">
       <h2>
@@ -275,6 +308,49 @@ function MathPanel({ cart, gate }: { cart: CartResponse; gate: PayGate | null })
         /api/pay {gate ? `${gate.httpStatus} ${gate.reason ?? "open"}` : "…"}. Unlock stays on the extension. This
         endpoint only reports the lock.
       </p>
+      {persona ? (
+        <div>
+          <p>
+            Mock history · {persona.label} · impulse {persona.impulseScore}. Switch the persona above before the reply
+            if you want the other score.
+          </p>
+          <ul>
+            {persona.history.map((purchase) => (
+              <li key={purchase.item}>
+                {purchase.item} · {formatUsd(purchase.cents)} · {purchase.waited ? "waited" : "bought now"} ·{" "}
+                {purchase.note} Mock data.
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <table>
+        <tbody>
+          <tr>
+            <th>Necessity</th>
+            <td>
+              {cart.necessity ?? "unclassified"} ({cart.necessitySource ?? "keywords"})
+              {cart.necessityReason ? `. ${cart.necessityReason}` : ""}
+            </td>
+          </tr>
+          <tr>
+            <th>Impulse</th>
+            <td>{cart.userImpulseScore ?? "—"} (mock history)</td>
+          </tr>
+          <tr>
+            <th>Grade</th>
+            <td>{gradeText}</td>
+          </tr>
+          <tr>
+            <th>Purchase score</th>
+            <td>
+              {cart.purchaseScore ?? "—"}
+              {cart.scoreBucket ? ` · ${cart.scoreBucket}` : ""}
+              {cart.scoreReason ? `. ${cart.scoreReason}` : ""}
+            </td>
+          </tr>
+        </tbody>
+      </table>
       {decision ? (
         <>
           <table>

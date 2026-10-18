@@ -108,6 +108,18 @@ export function startLockedCart(input: {
     lockStartedAt: createdAt,
     lockEndsAt: new Date(input.now.getTime() + input.lockMs).toISOString(),
     vaultUntil: null,
+    vaultMode: null,
+    necessity: null,
+    necessitySource: null,
+    necessityReason: null,
+    personaId: null,
+    userImpulseScore: null,
+    justificationGrade: null,
+    gradeSource: null,
+    gradeReason: null,
+    purchaseScore: null,
+    scoreBucket: null,
+    scoreReason: null,
     signalSource: null,
     motiveSources: null,
     reading: false,
@@ -117,17 +129,26 @@ export function startLockedCart(input: {
 }
 
 export function unlockCart(cart: Cart): Cart {
-  if (isVaultActive(cart, new Date())) {
+  if (isVaultActive(cart, new Date()) && cart.vaultMode !== "soft") {
     return cart;
   }
+  cart.vaultUntil = null;
+  cart.vaultMode = null;
   cart.isUnlocked = true;
   cart.status = "unlocked";
   return cart;
 }
 
-export function sleepCart(cart: Cart, now: Date, vaultMs: number = VAULT_MS, demoReminderMs: number = 60_000): Cart {
+export function sleepCart(
+  cart: Cart,
+  now: Date,
+  vaultMs: number = VAULT_MS,
+  demoReminderMs: number = 60_000,
+  mode: "enforced" | "soft" = "enforced",
+): Cart {
   cart.isUnlocked = false;
   cart.status = "vault";
+  cart.vaultMode = mode;
   cart.vaultUntil = new Date(now.getTime() + vaultMs).toISOString();
   cart.reminderAt = cart.vaultUntil;
   cart.reminderFireAt = cart.demo ? new Date(now.getTime() + demoReminderMs).toISOString() : cart.vaultUntil;

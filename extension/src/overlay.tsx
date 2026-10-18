@@ -28,6 +28,16 @@ export type OverlayModel = {
   qrDataUrl: string | null;
   turns: { role: "shopper" | "agent"; text: string }[];
   error: string | null;
+  necessity: "necessary" | "unnecessary" | null;
+  necessitySource: string | null;
+  necessityReason: string | null;
+  userImpulseScore: number | null;
+  justificationGrade: number | null;
+  gradeSource: string | null;
+  gradeReason: string | null;
+  purchaseScore: number | null;
+  scoreBucket: "free" | "soft" | "strict" | null;
+  scoreReason: string | null;
 };
 
 export type OverlayActions = {
@@ -76,7 +86,22 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
   }, []);
   const remaining = Math.max(0, new Date(model.lockEndsAt).getTime() - now);
   const glance = toGlance(model);
-  const title = model.status === "unlocked" ? "Unlocked" : model.status === "vault" ? "In the Vault" : "Marinating";
+  const title =
+    model.necessity === "necessary" && model.purchaseScore == null
+      ? "Necessary buy"
+      : model.status === "unlocked"
+        ? "Unlocked"
+        : model.status === "vault"
+          ? "In the Vault"
+          : "Marinating";
+  const clock =
+    model.necessity === "necessary" && model.purchaseScore == null
+      ? "Checkout can proceed"
+      : model.purchaseScore != null || model.status === "vault"
+        ? oneLineVerdict(glance, now)
+        : remaining > 0
+          ? clockFrom(remaining)
+          : "0:00";
   return (
     <div className="panel">
       <section className="card" role="dialog" aria-labelledby="simmer-title">
@@ -86,7 +111,7 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
           {model.itemNames[0] ?? "Apple bag"} · {formatUsd(model.totalCents)}
         </p>
         <p className="clock" aria-live="polite">
-          {model.status === "vault" ? oneLineVerdict(glance, now) : remaining > 0 ? clockFrom(remaining) : "0:00"}
+          {clock}
         </p>
         <div className="row">
           <button type="button" onClick={actions.unlock}>
@@ -159,10 +184,23 @@ function toGlance(model: OverlayModel): GlanceItem {
           tradeInLaterCents: model.decision.tradeInLaterCents,
           financingNowCents: model.decision.financingNowCents,
           financingLaterCents: model.decision.financingLaterCents,
+          mathAction: model.decision.mathAction,
+          mathWaitMonths: model.decision.mathWaitMonths,
+          mathSavingsCents: model.decision.mathSavingsCents,
         }
       : null,
     signals: model.signals,
     motiveSources: model.motiveSources,
+    necessity: model.necessity,
+    necessitySource: model.necessitySource,
+    necessityReason: model.necessityReason,
+    userImpulseScore: model.userImpulseScore,
+    justificationGrade: model.justificationGrade,
+    gradeSource: model.gradeSource,
+    gradeReason: model.gradeReason,
+    purchaseScore: model.purchaseScore,
+    scoreBucket: model.scoreBucket,
+    scoreReason: model.scoreReason,
   };
 }
 
