@@ -4,6 +4,7 @@ import type { Cart } from "../types.js";
 import type { AccountDirectory, AccountUser } from "../auth/accounts.js";
 import { MemoryNote, User } from "../auth/user.js";
 import { assistantForUser } from "../memory/service.js";
+import { isRecord } from "../record.js";
 import { waitForMemoryWrite, type BackboardClient, type MemoryKind } from "../memory/backboard.js";
 import { PurchaseRecord } from "./model.js";
 
@@ -126,6 +127,40 @@ export async function weeklySpend(userId: string, now = new Date()): Promise<num
 export async function surveyWasCompleted(userId: string): Promise<boolean> {
   const user = await findUser(userId);
   return user?.surveyCompleted === true;
+}
+
+export async function countRegrets(userId: string, category?: string): Promise<number> {
+  const filter: { userId: string; feedback: "regretted"; isExample: false; category?: string } = {
+    userId,
+    feedback: "regretted",
+    isExample: false,
+  };
+  const narrowed = category?.trim().toLowerCase() ?? "";
+  if (narrowed.length > 0) {
+    filter.category = narrowed;
+  }
+  return PurchaseRecord.countDocuments(filter);
+}
+
+export type SavedGoal = {
+  text: string;
+  targetAmount: number | null;
+  createdAt: string;
+};
+
+export async function getSavedGoals(userId: string): Promise<SavedGoal[]> {
+  const user = await findUser(userId);
+  if (!user || !Array.isArray(user.goals)) {
+    return [];
+  }
+  return user.goals.flatMap((goal) => {
+    if (!isGoal(goal)) {
+      return [];
+    }
+    const createdAt = goal.createdAt instanceof Date ? goal.createdAt.toISOString() : "";
+    const targetAmount = typeof goal.targetAmount === "number" && Number.isFinite(goal.targetAmount) ? goal.targetAmount : null;
+    return [{ text: goal.text, targetAmount, createdAt }];
+  });
 }
 
 export async function hasRegrettedPurchase(userId: string, category: string): Promise<boolean> {
@@ -306,11 +341,20 @@ async function assistantIdForVote(
   return created.assistantId;
 }
 
-async function findUser(userId: string): Promise<{ hourlyRate?: unknown; weeklyBudget?: unknown; surveyCompleted?: unknown } | null> {
+async function findUser(userId: string): Promise<{
+  hourlyRate?: unknown;
+  weeklyBudget?: unknown;
+  surveyCompleted?: unknown;
+  goals?: unknown;
+} | null> {
   if (!/^[a-f0-9]{24}$/i.test(userId)) {
     return null;
   }
-  return User.findById(userId).select("hourlyRate weeklyBudget surveyCompleted");
+  return User.findById(userId).select("hourlyRate weeklyBudget surveyCompleted goals");
+}
+
+function isGoal(value: unknown): value is { text: string; targetAmount?: unknown; createdAt?: unknown } {
+  return isRecord(value) && typeof value.text === "string" && value.text.length > 0;
 }
 
 function numberOrNull(value: unknown): number | null {

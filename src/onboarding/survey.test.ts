@@ -16,7 +16,7 @@ import { InMemoryBackboardClient, type BackboardClient } from "../memory/backboa
 import { createMemoryRuntime } from "../memory/runtime.js";
 import { PurchaseRecord } from "../purchases/model.js";
 import { createPurchaseRouter } from "../purchases/routes.js";
-import { budgetMemoryLine, getBudgetProfile, getHourlyRate, getWeeklyBudget, purchaseVoteLine, weeklySpend, writeUserMemoryLine } from "../purchases/service.js";
+import { budgetMemoryLine, countRegrets, getBudgetProfile, getHourlyRate, getSavedGoals, getWeeklyBudget, purchaseVoteLine, weeklySpend, writeUserMemoryLine } from "../purchases/service.js";
 import { createOnboardingRouter } from "./routes.js";
 
 const SECRET = "survey-test-secret";
@@ -259,6 +259,23 @@ describe("onboarding survey", () => {
     const rows = await PurchaseRecord.find({ userId: ada.id, isExample: false });
     assert.equal(rows.length, 1);
     assert.equal(await surveyCompleted(ada.id), true);
+  });
+
+  it("counts regrets with and without a category, and returns no saved goals yet", async () => {
+    const ada = await signup("ada-count@example.com");
+    const blake = await signup("blake-count@example.com");
+    await PurchaseRecord.create([
+      { userId: ada.id, item: "Phone", category: "phone", price: 10, feedback: "regretted", isExample: false },
+      { userId: ada.id, item: "Case", category: "case", price: 5, feedback: "regretted", isExample: false },
+      { userId: ada.id, item: "Cable", category: "cable", price: 2, feedback: "kept", isExample: false },
+      { userId: ada.id, item: "Demo phone", category: "phone", price: 1, feedback: "regretted", isExample: true },
+      { userId: blake.id, item: "Watch", category: "watch", price: 3, feedback: "regretted", isExample: false },
+    ]);
+    assert.equal(await countRegrets(ada.id), 2);
+    assert.equal(await countRegrets(ada.id, "phone"), 1);
+    assert.equal(await countRegrets(ada.id, "watch"), 0);
+    assert.equal(await countRegrets(blake.id), 1);
+    assert.deepEqual(await getSavedGoals(ada.id), []);
   });
 
   it("rejects a Backboard write that never completes", async () => {
