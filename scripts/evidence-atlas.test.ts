@@ -8,11 +8,22 @@ import { connectMongo } from "../src/auth/db.js";
 import { User } from "../src/auth/user.js";
 import { mongoConnectOptions } from "../src/mongo-startup.js";
 import { PurchaseRecord } from "../src/purchases/model.js";
-import { buildAtlasEvidenceReport } from "./evidence-atlas.js";
+import { buildAtlasEvidenceReport, evidenceFileStamp } from "./evidence-atlas.js";
 
 const PASSWORD_HASH = "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaAnotrealevidencehash";
-const EMAIL = "atlas-evidence@example.com";
+const EMAIL_LOCAL = "atlas-evidence";
+const EMAIL_DOMAIN = "example.com";
+const EMAIL = `${EMAIL_LOCAL}@${EMAIL_DOMAIN}`;
+const MASKED_EMAIL = `a***@${EMAIL_DOMAIN}`;
 const HIDDEN_BUDGET = 424242;
+
+describe("evidence file stamp", () => {
+  it("replaces colons so the filename is valid on Windows", () => {
+    const stamp = evidenceFileStamp(new Date("2026-10-18T15:04:05.006Z"));
+    assert.equal(stamp, "2026-10-18T15-04-05.006Z");
+    assert.equal(stamp.includes(":"), false);
+  });
+});
 
 describe("atlas evidence report", { timeout: 180_000 }, () => {
   let mongod: MongoMemoryServer;
@@ -61,7 +72,7 @@ describe("atlas evidence report", { timeout: 180_000 }, () => {
       createdAt: new Date("2026-01-01T00:00:00.000Z"),
       updatedAt: new Date("2026-01-02T00:00:00.000Z"),
     });
-    const latestItem = `Latest headphones ${uri}`;
+    const latestItem = `Latest headphones ${uri} ${EMAIL}`;
     assert.ok(latestItem.length <= 200);
     const created = await PurchaseRecord.create({
       userId: user._id,
@@ -78,11 +89,13 @@ describe("atlas evidence report", { timeout: 180_000 }, () => {
     assert.ok(saved?.createdAt instanceof Date);
     assert.ok(saved.updatedAt instanceof Date);
 
-    const report = await buildAtlasEvidenceReport(mongoose.connection);
+    const report = await buildAtlasEvidenceReport(mongoose.connection, uri);
 
     const prefix = PASSWORD_HASH.slice(0, 12);
     assert.equal(prefix.length, 12);
-    assert.equal(report.includes(EMAIL), true);
+    assert.equal(report.includes(MASKED_EMAIL), true);
+    assert.equal(report.includes(EMAIL), false);
+    assert.equal(report.includes(EMAIL_LOCAL), false);
     assert.equal(report.includes(`${prefix}…`), true);
     assert.equal(report.includes(PASSWORD_HASH), false);
     assert.equal(report.includes(PASSWORD_HASH.slice(12)), false);

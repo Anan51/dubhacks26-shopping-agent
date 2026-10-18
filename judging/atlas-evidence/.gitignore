@@ -1,8 +1,9 @@
-# Redacted markdown reports may be committed. Everything else in this
-# directory is a local dump and must not be committed, including any
-# file that might contain a connection string.
+# Generated reports stay on the machine that ran the script.
+# They are masked, and they are still not committed.
+latest.md
+atlas-evidence-*.md
+
+# Ignore any other dump in this directory (JSON, logs, env files).
 *
 !README.md
-!latest.md
-!atlas-evidence-*.md
 !.gitignore

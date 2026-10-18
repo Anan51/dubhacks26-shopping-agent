@@ -11,7 +11,7 @@
     "dev:demo": "node scripts/dev-demo.mjs",
     "dev:agent": "tsx src/server.ts",
     "start": "NODE_ENV=production tsx src/server.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json && tsc --noEmit -p extension/tsconfig.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.evidence.json && tsc --noEmit -p web/tsconfig.json && tsc --noEmit -p extension/tsconfig.json",
     "build": "tsc && vite build --config web/vite.config.ts && vite build --config extension/vite.config.ts",
     "build:demo": "node scripts/build-demo.mjs",
     "test": "tsx --test src/*.test.ts src/auth/*.test.ts src/memory/*.test.ts src/purchases/*.test.ts src/onboarding/*.test.ts src/scoring/*.test.ts src/checkins/*.test.ts extension/src/*.test.ts scripts/evidence-atlas.test.ts",

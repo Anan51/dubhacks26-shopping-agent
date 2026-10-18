@@ -1,12 +1,12 @@
 # Atlas evidence
 
-This folder is for redacted proof that Simmer's users and purchase records persist in MongoDB Atlas, in the `simmer` database.
+This folder is for local proof that Simmer's users and purchase records persist in MongoDB Atlas, in the `simmer` database.
 
 ## Run it on a machine that can reach Atlas
 
 Port 27017 is blocked from the box and from cloud agents. Those environments cannot connect to Atlas. Run the script on a machine that can, such as Saahil's laptop.
 
-The script reads `MONGODB_URI` from the environment. It does not load a `.env` file. If the variable is missing or blank, it prints `Set MONGODB_URI in your environment` and exits 1.
+The script reads `MONGODB_URI` from the environment only. It does not load a `.env` file. If the variable is missing or blank, it prints `Set MONGODB_URI in your environment` and exits 1.
 
 ```bash
 export MONGODB_URI='<atlas-connection-string>'
@@ -16,24 +16,24 @@ export MONGODB_URI='<atlas-connection-string>'
 npm run evidence:atlas
 ```
 
-`npm run evidence:atlas` runs `tsx scripts/evidence-atlas.ts`.
+`npm run evidence:atlas` runs `tsx scripts/evidence-atlas.ts`. The connection is read-only: `autoIndex` and `autoCreate` are off, so the script does not create indexes or collections.
 
 ## What it writes
 
-Each run writes two redacted markdown files in this directory:
+Each run writes two markdown files in this directory, on that machine:
 
-- `atlas-evidence-<ISO-8601 timestamp>.md`
+- `atlas-evidence-<timestamp>.md` (colons in the timestamp are dashes, so the name is valid on Windows)
 - `latest.md` (replaced on every run)
 
-The header records the run time and the database and collections that were read (`users` and `purchaserecords`). User rows show only `_id`, `email`, and the first 12 characters of `passwordHash` followed by `…`. The purchase section shows the total count and the newest row by `createdAt`: `_id`, `userId`, `item`, `price`, the vote stored in `feedback`, and `createdAt` / `updatedAt`. Purchase records do not store a necessity field.
+The header records the run time and the database and collections that were read (`users` and `purchaserecords`). User rows show `_id`, a masked email (first character, `***`, and the domain, such as `f***@example.com`), and the first 12 characters of `passwordHash` followed by `…`. At most 500 users are listed. The purchase section shows the total count and the newest row by `createdAt`: `_id`, `userId`, `item`, `price`, the vote stored in `feedback`, and `createdAt` / `updatedAt`. Purchase records do not store a necessity field.
 
-The script removes `MONGODB_URI` and any `mongodb://` or `mongodb+srv://` connection string from the report before it prints or writes the file. It also refuses to write output that still contains the connection string or a full password hash.
+The script removes `MONGODB_URI`, any `mongodb://` or `mongodb+srv://` connection string, full password hashes, and full email addresses before it prints or writes the file. It refuses to return a report that still contains them.
 
-## Secrets stay out of git
+## Generated reports stay local
 
-Do not commit a real connection string, a `.env` file, or a full password hash. Redacted evidence markdown (`README.md`, `latest.md`, and `atlas-evidence-*.md`) is fine to commit after you confirm it contains no connection string.
+The reports are generated locally and git-ignored. They contain only masked emails and ids, and they are not committed. Do not `git add` `latest.md`, `atlas-evidence-*.md`, a connection string, a `.env` file, or a full password hash.
 
-This directory's `.gitignore` ignores every other filename, so an accidental dump (JSON, logs, env files, or a misnamed export) is not committed. If a generated markdown file still contains a connection string, delete it and do not `git add` it.
+`README.md` is the only documentation file in this directory that belongs in git. Anything else here is a local dump.
 
 ## EXAMPLE output (fake values, not a real run)
 
@@ -46,10 +46,10 @@ This directory's `.gitignore` ignores every other filename, so an accidental dum
 
 ## users
 
-Rows: 1
+Shown: 1 of 1 (limit 500)
 
 - **_id:** 000000000000000000000001
-- **email:** fake-shopper@example.com
+- **email:** f***@example.com
 - **passwordHash prefix:** $argon2id$v=…
 
 ## purchaserecords
