@@ -97,16 +97,16 @@ describe("carrier switch reasoning", () => {
     );
 
     const scored = scoreFromSignals(
-      { item: "Switch to Verizon", category: "other", price: 74, necessary: false },
+      { item: "Switch to Carrier X", category: "other", price: 74, necessary: false },
       { ...EMPTY_IMPULSE_SIGNALS, categoryRegrets: 1 },
     );
     assert.equal(scored.why, REGRET_WHY);
     const cart = startLockedCart({
-      items: itemsForBag(["Switch to Verizon"], CARRIER_WAIT.newMonthlyCents, true),
+      items: itemsForBag(["Switch to Carrier X"], CARRIER_WAIT.newMonthlyCents, true),
       totalCents: CARRIER_WAIT.newMonthlyCents,
       parsedFromPage: true,
       pageHost: "127.0.0.1",
-      fingerprint: "user-regret|7400|switch to verizon",
+      fingerprint: "user-regret|7400|switch to carrier x",
       now: NOW,
       demo: false,
       lockMs: 600_000,
@@ -123,7 +123,7 @@ describe("carrier switch reasoning", () => {
 
   it("keeps a vault on wait and lets a zero-cost cheaper plan through", () => {
     const waiting = startLockedCart({
-      items: itemsForBag(["Switch to Verizon"], CARRIER_WAIT.newMonthlyCents, true),
+      items: itemsForBag(["Switch to Carrier X"], CARRIER_WAIT.newMonthlyCents, true),
       totalCents: CARRIER_WAIT.newMonthlyCents,
       parsedFromPage: true,
       pageHost: "127.0.0.1",
@@ -144,7 +144,7 @@ describe("carrier switch reasoning", () => {
     assert.match(waiting.carrierLine ?? "", /regretted a similar purchase/);
 
     const passing = startLockedCart({
-      items: itemsForBag(["Switch to Verizon"], CARRIER_PASS.newMonthlyCents, true),
+      items: itemsForBag(["Switch to Carrier X"], CARRIER_PASS.newMonthlyCents, true),
       totalCents: CARRIER_PASS.newMonthlyCents,
       parsedFromPage: true,
       pageHost: "127.0.0.1",
@@ -198,7 +198,7 @@ describe("carrier switch on the cart route", () => {
     try {
       const created = await post(base, "/api/carts", {
         userId: "user-carrier",
-        itemNames: ["Switch to Verizon"],
+        itemNames: ["Switch to Carrier X"],
         totalCents: CARRIER_WAIT.newMonthlyCents,
         parsed: true,
         pageHost: "127.0.0.1",
@@ -254,7 +254,7 @@ describe("carrier switch on the cart route", () => {
     try {
       const created = await post(base, "/api/carts", {
         userId: "user-carrier",
-        itemNames: ["Switch to Verizon"],
+        itemNames: ["Switch to Carrier X"],
         totalCents: CARRIER_PASS.newMonthlyCents,
         parsed: true,
         pageHost: "127.0.0.1",

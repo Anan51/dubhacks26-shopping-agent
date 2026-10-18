@@ -238,7 +238,7 @@ describe("apple bag lock", () => {
     assert.equal(carrier.status, 200);
     const carrierHtml = await carrier.text();
     assert.match(carrierHtml, /Example data/);
-    assert.match(carrierHtml, /Switch to Verizon/);
+    assert.match(carrierHtml, /Switch to Carrier X/);
     assert.match(carrierHtml, /\$80\.00/);
     assert.match(carrierHtml, /\$74\.00/);
     assert.match(carrierHtml, /\$360\.00/);
@@ -249,7 +249,7 @@ describe("apple bag lock", () => {
     const passHtml = await carrierPass.text();
     assert.match(passHtml, /"balanceCents": 0/);
     assert.match(passHtml, /"feeCents": 0/);
-    assert.doesNotMatch(passHtml, /verizon\.com|t-mobile\.com|tmobile\.com/i);
+    assert.doesNotMatch(passHtml, /https?:\/\//);
   });
 
   it("caps item names only after cleanup so a real title survives the screen-reader suffix", async () => {

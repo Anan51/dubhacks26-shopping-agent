@@ -18,7 +18,7 @@ const SWITCH_LABEL = /^(switch|confirm)$/i;
 /** Same chrome the Apple and Amazon adapters refuse to dim. */
 const SITE_CHROME = "nav, header, footer, [role='banner'], [role='contentinfo']";
 
-export const CARRIER_ITEM_NAME = "Switch to Verizon";
+export const CARRIER_ITEM_NAME = "Switch to Carrier X";
 
 export const carrierAdapter: StoreAdapter = {
   id: "carrier",

@@ -4,7 +4,7 @@ import type { Cart } from "../types.js";
 
 /**
  * Numbers read from the local carrier-switch fixture.
- * They are example data, not a Verizon or T-Mobile quote.
+ * They are example data, not a Carrier X or Carrier Y quote.
  */
 export type CarrierFacts = {
   currentMonthlyCents: number;

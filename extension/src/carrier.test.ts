@@ -31,8 +31,8 @@ describe("carrier store adapter", () => {
     assert.equal(carrierAdapter.match(locationAt("http://127.0.0.1:4321/carrier-switch")), true);
     assert.equal(carrierAdapter.match(locationAt("http://127.0.0.1:4321/carrier-switch?case=wait")), true);
     assert.equal(carrierAdapter.match(locationAt("http://localhost:4321/carrier-switch/?case=pass")), true);
-    assert.equal(carrierAdapter.match(locationAt("https://www.verizon.com/switch")), false);
-    assert.equal(carrierAdapter.match(locationAt("https://www.t-mobile.com/")), false);
+    assert.equal(carrierAdapter.match(locationAt("https://www.carrier-x.example/switch")), false);
+    assert.equal(carrierAdapter.match(locationAt("https://www.carrier-y.example/")), false);
     assert.equal(carrierAdapter.match(locationAt("http://127.0.0.1:4321/amazon")), false);
     assert.equal(carrierAdapter.match(locationAt("http://127.0.0.1:4321/fallback")), false);
     assert.equal(carrierAdapter.match(locationAt("https://www.apple.com/shop/bag")), false);
@@ -42,7 +42,7 @@ describe("carrier store adapter", () => {
     assert.equal(adapterFor(locationAt("http://127.0.0.1:4321/amazon"))?.id, "amazon");
     assert.equal(adapterFor(locationAt("https://www.apple.com/shop/bag"))?.id, "apple");
     assert.equal(isLocalCarrierFixture("http://127.0.0.1:4321/carrier-switch?case=pass"), true);
-    assert.equal(isLocalCarrierFixture("https://www.verizon.com/switch"), false);
+    assert.equal(isLocalCarrierFixture("https://www.carrier-x.example/switch"), false);
     assert.equal(isLocalAmazonFixture("http://127.0.0.1:4321/carrier-switch"), false);
     assert.equal(isFallbackBag("http://127.0.0.1:4321/carrier-switch"), true);
     assert.equal(applePage("http://127.0.0.1:4321/carrier-switch"), null);
@@ -52,7 +52,7 @@ describe("carrier store adapter", () => {
   it("reads the wait fixture, including the default HTML before the page script", () => {
     const html = readFileSync(FIXTURE, "utf8");
     assert.match(html, /Example data/);
-    assert.doesNotMatch(html, /verizon\.com|t-mobile\.com|tmobile\.com/i);
+    assert.doesNotMatch(html, /https?:\/\//);
     const doc = new JSDOM(html, { url: "http://127.0.0.1:4321/carrier-switch?case=wait" }).window.document;
     assert.deepEqual(readCarrierFacts(doc), CARRIER_WAIT);
     assert.deepEqual(carrierAdapter.readBag(doc), {

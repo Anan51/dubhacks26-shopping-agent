@@ -51,7 +51,7 @@ describe("apple pages", () => {
     assert.equal(isFallbackBag("http://127.0.0.1:4321/carrier-switch"), true);
     assert.equal(isLocalCarrierFixture("http://127.0.0.1:4321/carrier-switch?case=wait"), true);
     assert.equal(isLocalCarrierFixture("http://localhost:4321/carrier-switch/"), true);
-    assert.equal(isLocalCarrierFixture("https://www.verizon.com/"), false);
+    assert.equal(isLocalCarrierFixture("https://www.carrier-x.example/"), false);
     assert.equal(applePage("http://127.0.0.1:4321/carrier-switch"), null);
   });
 
