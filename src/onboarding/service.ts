@@ -94,7 +94,7 @@ export async function submitSurvey(
   } finally {
     await session.endSession();
   }
-  await rememberSurvey(userId, parsed, deps);
+  await rememberSurvey(userId, parsed, purchases, deps);
   return {
     completed: true,
     hourlyRate: parsed.hourlyRate,
@@ -106,6 +106,7 @@ export async function submitSurvey(
 async function rememberSurvey(
   userId: string,
   parsed: { hourlyRate: number | null; weeklyBudget: number | null; recentPurchases: SurveyPurchaseInput[] },
+  saved: PurchaseView[],
   deps: { directory: AccountDirectory; client: BackboardClient; remote: boolean },
 ): Promise<void> {
   if (parsed.hourlyRate !== null) {
@@ -114,14 +115,17 @@ async function rememberSurvey(
   if (parsed.weeklyBudget !== null) {
     await rememberLine(userId, budgetMemoryLine("weekly budget", parsed.weeklyBudget), "goal", deps, { field: "weeklyBudget" });
   }
-  for (const purchase of parsed.recentPurchases) {
-    if (!purchase.regretted) {
+  for (let index = 0; index < parsed.recentPurchases.length; index += 1) {
+    const purchase = parsed.recentPurchases[index];
+    if (!purchase?.regretted) {
       continue;
     }
     const category = categoryForItem(purchase.item);
+    const purchaseId = saved[index]?._id;
     await rememberLine(userId, purchaseVoteLine("regretted", purchase.item, category, purchase.price), "regret", deps, {
       category,
       feedback: "regretted",
+      ...(purchaseId ? { purchaseId } : {}),
     });
   }
 }

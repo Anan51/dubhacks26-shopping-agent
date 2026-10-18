@@ -441,7 +441,113 @@ describe("purchase feedback", () => {
     assert.equal(await PurchaseRecord.countDocuments({ _id: real._id }), 1);
     assert.equal(await weeklySpend(ada.id), 10);
   });
+
+  it("keeps the other identical purchase's vote note", async () => {
+    const ada = await signup("ada-dup-note@example.com");
+    const first = await PurchaseRecord.create(identicalPurchase(ada.id));
+    const second = await PurchaseRecord.create(identicalPurchase(ada.id));
+    const line = purchaseVoteLine("regretted", "AirPods", "audio", 179);
+    const ratedFirst = await post(`/purchases/${first._id.toString()}/feedback`, { feedback: "regretted" }, ada.cookie);
+    const ratedSecond = await post(`/purchases/${second._id.toString()}/feedback`, { feedback: "regretted" }, ada.cookie);
+    assert.equal(ratedFirst.status, 200);
+    assert.equal(ratedSecond.status, 200);
+    const before = await MemoryNote.find({ userId: ada.id, text: line });
+    assert.equal(before.length, 2);
+    assert.deepEqual(
+      before.map((note) => notePurchaseId(note.meta)).sort(),
+      [first._id.toString(), second._id.toString()].sort(),
+    );
+
+    const removed = await del(`/purchases/${first._id.toString()}`, ada.cookie);
+    assert.equal(removed.status, 204);
+    const after = await MemoryNote.find({ userId: ada.id, text: line });
+    assert.equal(after.length, 1);
+    assert.equal(notePurchaseId(after[0]?.meta), second._id.toString());
+  });
+
+  it("keeps a legacy vote note while another identical purchase remains", async () => {
+    const ada = await signup("ada-legacy-note@example.com");
+    const first = await PurchaseRecord.create(identicalPurchase(ada.id));
+    const second = await PurchaseRecord.create(identicalPurchase(ada.id));
+    const line = purchaseVoteLine("regretted", "AirPods", "audio", 179);
+    await MemoryNote.create({
+      userId: ada.id,
+      type: "regret",
+      text: line,
+      meta: { category: "audio", feedback: "regretted" },
+    });
+
+    const removed = await del(`/purchases/${first._id.toString()}`, ada.cookie);
+    assert.equal(removed.status, 204);
+    assert.equal(await MemoryNote.countDocuments({ userId: ada.id, text: line }), 1);
+    assert.equal(await PurchaseRecord.countDocuments({ _id: second._id }), 1);
+
+    const last = await del(`/purchases/${second._id.toString()}`, ada.cookie);
+    assert.equal(last.status, 204);
+    assert.equal(await MemoryNote.countDocuments({ userId: ada.id, text: line }), 0);
+  });
+
+  it("returns 204 when vote note cleanup fails after the purchase is gone", async () => {
+    const ada = await signup("ada-note-fail@example.com");
+    const row = await PurchaseRecord.create({
+      userId: ada.id,
+      item: "Case",
+      category: "case",
+      price: 25,
+      feedback: "regretted",
+      isExample: false,
+    });
+    const logged: string[] = [];
+    const originalDelete = MemoryNote.deleteMany;
+    const originalError = console.error;
+    MemoryNote.deleteMany = (() => {
+      throw new Error("note cleanup failed");
+    }) as typeof MemoryNote.deleteMany;
+    console.error = (message?: unknown) => {
+      logged.push(String(message));
+    };
+    try {
+      const removed = await del(`/purchases/${row._id.toString()}`, ada.cookie);
+      assert.equal(removed.status, 204);
+      assert.equal(removed.body, null);
+      assert.equal(await PurchaseRecord.countDocuments({ _id: row._id }), 0);
+      assert.equal(logged.includes("note cleanup failed"), true);
+    } finally {
+      MemoryNote.deleteMany = originalDelete;
+      console.error = originalError;
+    }
+  });
 });
+
+function identicalPurchase(userId: string): {
+  userId: string;
+  item: string;
+  category: string;
+  price: number;
+  verdict: null;
+  feedback: null;
+  isExample: false;
+  source: "checkout";
+} {
+  return {
+    userId,
+    item: "AirPods",
+    category: "audio",
+    price: 179,
+    verdict: null,
+    feedback: null,
+    isExample: false,
+    source: "checkout",
+  };
+}
+
+function notePurchaseId(meta: unknown): string | null {
+  if (!meta || typeof meta !== "object" || !("purchaseId" in meta)) {
+    return null;
+  }
+  const id = (meta as { purchaseId?: unknown }).purchaseId;
+  return typeof id === "string" ? id : null;
+}
 
 function demoDeps() {
   return {

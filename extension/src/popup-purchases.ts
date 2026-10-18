@@ -101,6 +101,7 @@ export function attachPurchaseHistory(
 
   function row(purchase: PurchaseRow): HTMLLIElement {
     const item = document.createElement("li");
+    item.setAttribute("data-purchase-id", purchase._id);
     const title = document.createElement("span");
     title.className = "title";
     title.textContent = `${purchase.item} · ${purchase.category} · ${formatPrice(purchase.price)}`;
@@ -117,6 +118,9 @@ export function attachPurchaseHistory(
     button.className = "remove";
     button.textContent = "Remove";
     button.addEventListener("click", () => {
+      if (button.disabled) {
+        return;
+      }
       askRemove(purchase, item);
     });
     return button;
@@ -142,10 +146,15 @@ export function attachPurchaseHistory(
     no.type = "button";
     no.textContent = "No";
     yes.addEventListener("click", () => {
-      confirm.remove();
+      if (yes.disabled) {
+        return;
+      }
       void removePurchase(purchase, item);
     });
     no.addEventListener("click", () => {
+      if (no.disabled) {
+        return;
+      }
       confirm.remove();
     });
     confirm.append(question, yes, no);
@@ -153,7 +162,7 @@ export function attachPurchaseHistory(
   }
 
   async function removePurchase(purchase: PurchaseRow, item: HTMLLIElement): Promise<void> {
-    const id = ++loadId;
+    setRemoveBusy(item, true);
     try {
       const response = await authorizedFetch(
         `${origin}/purchases/${purchase._id}`,
@@ -161,20 +170,50 @@ export function attachPurchaseHistory(
         authorization ?? (async () => null),
         onUnauthorized ?? (async () => undefined),
       );
-      if (id !== loadId || !response) {
+      const current = findRow(purchase._id);
+      if (!response) {
+        if (current) {
+          setRemoveBusy(current, false);
+        }
         return;
       }
       if (!response.ok) {
-        showRowError(item, "Could not remove that purchase.");
+        if (current) {
+          showRowError(current, "Could not remove that purchase.");
+          setRemoveBusy(current, false);
+        }
         return;
       }
-      item.remove();
+      current?.remove();
       empty.hidden = list.childElementCount > 0;
     } catch {
-      if (id !== loadId) {
+      const current = findRow(purchase._id);
+      if (!current) {
         return;
       }
-      showRowError(item, "Could not remove that purchase.");
+      showRowError(current, "Could not remove that purchase.");
+      setRemoveBusy(current, false);
+    }
+  }
+
+  function findRow(purchaseId: string): HTMLLIElement | null {
+    for (const child of list.children) {
+      if (child.tagName === "LI" && child.getAttribute("data-purchase-id") === purchaseId) {
+        return child as HTMLLIElement;
+      }
+    }
+    return null;
+  }
+
+  function setRemoveBusy(item: HTMLElement, busy: boolean): void {
+    const remove = item.querySelector("button.remove");
+    if (remove && remove.tagName === "BUTTON") {
+      (remove as HTMLButtonElement).disabled = busy;
+    }
+    for (const button of item.querySelectorAll(".confirm button")) {
+      if (button.tagName === "BUTTON") {
+        (button as HTMLButtonElement).disabled = busy;
+      }
     }
   }
 
