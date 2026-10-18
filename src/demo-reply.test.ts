@@ -17,6 +17,7 @@ type ReplyCart = {
   isUnlocked: boolean;
   replied: boolean;
   advice: string | null;
+  explanation: string | null;
   purchaseScore: number | null;
   scoreBucket: string | null;
   justificationGrade: number | null;
@@ -24,6 +25,8 @@ type ReplyCart = {
   vaultUntil: string | null;
   necessity: string | null;
   totalCents: number;
+  userImpulseScore: number | null;
+  impulse: { score1to8: number; band: string; why: string | null } | null;
   decision: { action: string } | null;
 };
 
@@ -32,6 +35,7 @@ type ExpectedReply = {
   purchaseScore: number | null;
   scoreBucket: string | null;
   advice: string;
+  impulsivenessLine: boolean;
 };
 
 const EXPECTED: Record<DemoReplyPreset, ExpectedReply> = {
@@ -40,18 +44,21 @@ const EXPECTED: Record<DemoReplyPreset, ExpectedReply> = {
     purchaseScore: 1,
     scoreBucket: "strict",
     advice: "Skip. This looks like a want, not a need.",
+    impulsivenessLine: true,
   },
   "cracked screen": {
     justificationGrade: null,
     purchaseScore: null,
     scoreBucket: null,
     advice: "Wait. Your current phone is broken.",
+    impulsivenessLine: false,
   },
   "I need it for work tomorrow": {
     justificationGrade: 2,
     purchaseScore: 4,
     scoreBucket: "free",
     advice: "Buy. This looks like a need.",
+    impulsivenessLine: true,
   },
 };
 
@@ -175,6 +182,11 @@ describe("simulated reply", () => {
         assert.equal(body.scoreBucket, want.scoreBucket, preset);
         assert.equal(body.gradeSource, want.justificationGrade === null ? null : "keywords", preset);
         assert.equal(body.advice, want.advice, preset);
+        assert.equal(body.advice?.includes("Impulsiveness"), false, preset);
+        assert.equal(body.userImpulseScore, 2, preset);
+        assert.equal(body.impulse?.score1to8, 4.5, preset);
+        assert.equal(body.impulse?.band, "soft", preset);
+        assert.equal((body.explanation ?? "").includes("Impulsiveness 4.5 of 8"), want.impulsivenessLine, preset);
         assert.equal(Number.isInteger(body.totalCents), true);
         const pay = await post(demo.base, "/api/pay", { code: body.code });
         assert.equal(pay.status, 423, preset);
