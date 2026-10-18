@@ -25,8 +25,17 @@ export type GuardSettings = {
   coolingMs: number;
 };
 
+export type Alternative = {
+  id: string;
+  name: string;
+  label: string;
+  priceCents: number;
+  solves: string[];
+  reason: string;
+};
+
 export type Decision = {
-  action: "buy" | "wait";
+  action: "buy" | "wait" | "better";
   alternativeId: string | null;
   horizonMonths: number;
   netNowCents: number;
@@ -48,6 +57,8 @@ export type CartResponse = {
   lockThresholdCents: number;
   guardEnabled: boolean;
   buyAnywayAt: string | null;
+  signalSource: "grok" | "keywords" | null;
+  selectedAlternativeId: string | null;
   demo: boolean;
   decision: Decision | null;
   explanation: string | null;
@@ -75,6 +86,18 @@ export type TranscriptTurn = {
   role: "shopper" | "agent";
   text: string;
 };
+
+export async function getAlternatives(): Promise<Alternative[]> {
+  const body = await request<{ alternatives: Alternative[] }>("/api/alternatives");
+  return body.alternatives;
+}
+
+export async function switchCart(code: string, alternativeId: string): Promise<CartResponse> {
+  return request<CartResponse>(`/api/carts/${code}/switch`, {
+    method: "POST",
+    body: JSON.stringify({ alternativeId }),
+  });
+}
 
 export async function getCatalog(): Promise<Product[]> {
   const body = await request<{ products: Product[] }>("/api/catalog");

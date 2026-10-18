@@ -1,3 +1,4 @@
+import { ALTERNATIVES, type Alternative } from "./alternatives.js";
 import type { Condition, Decision, ReasonCode, Signals } from "./types.js";
 
 /** Months we look ahead when comparing "buy today" with "keep paying the old phone". */
@@ -32,9 +33,15 @@ const TRADE_IN_ANCHORS: readonly { months: number; cents: number }[] = [
  */
 export function decide(signals: Signals): Decision {
   const math = project(signals);
+  if (signals.condition !== "unusable") {
+    const alternative = coveringAlternative(signals);
+    if (alternative) {
+      return { action: "better", alternativeId: alternative.id, reasons: ["better-option"], ...math };
+    }
+  }
   const affordable = math.netNowCents <= signals.budgetCents;
   const reasons: ReasonCode[] = [];
-  let action: Decision["action"] = "wait";
+  let action: "buy" | "wait" = "wait";
 
   if (signals.condition === "unusable" && affordable) {
     action = "buy";
@@ -61,6 +68,20 @@ export function decide(signals: Signals): Decision {
   }
 
   return { action, alternativeId: null, reasons, ...math };
+}
+
+function coveringAlternative(signals: Signals): Alternative | null {
+  if (signals.problems.length === 0) {
+    return null;
+  }
+  const fits = ALTERNATIVES.filter((alternative) => {
+    if (alternative.priceCents >= signals.dueTodayCents) {
+      return false;
+    }
+    return signals.problems.every((tag) => alternative.solves.includes(tag));
+  });
+  fits.sort((left, right) => left.priceCents - right.priceCents || left.id.localeCompare(right.id));
+  return fits[0] ?? null;
 }
 
 /** Synthetic trade-in for a phone of this age and condition, in cents. */

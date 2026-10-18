@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import express, { type NextFunction, type Request, type Response } from "express";
 
 import { handleWebhook } from "../api/webhook.js";
-import { completeOrder, createCart, dueTodayCents } from "./carts.js";
+import { completeOrder, createCart, dueTodayCents, switchToAlternative } from "./carts.js";
+import { alternativeById, ALTERNATIVES } from "./alternatives.js";
 import { CATALOG, itemsForIds } from "./catalog.js";
 import type { OutboundMessage } from "./channel.js";
 import type { PhotonChannel } from "./channels/photon.js";
@@ -30,6 +31,7 @@ export type AppDeps = {
   agentHandle: string | null;
   photon: PhotonChannel | null;
   xaiApiKey?: string;
+  xaiModel: string;
   now?: () => Date;
   polish?: (template: string, action: Decision["action"]) => Promise<string>;
 };
@@ -70,7 +72,11 @@ export function createApp(deps: AppDeps): RunningApp {
     send: (message) => routeSend(message),
     armReminder: (cart) => scheduler.arm(cart),
     disarmReminder: (code) => scheduler.disarm(code),
-    polish: deps.polish ?? ((template, action) => polishPhrase(template, action, deps.xaiApiKey)),
+    polish: deps.polish ?? ((template, action) => polishPhrase(template, action, deps.xaiApiKey, fetch, deps.xaiModel)),
+    extract: {
+      ...(deps.xaiApiKey ? { apiKey: deps.xaiApiKey } : {}),
+      model: deps.xaiModel,
+    },
   });
 
   if (deps.photon) {
@@ -110,6 +116,10 @@ export function createApp(deps: AppDeps): RunningApp {
 
   app.get("/api/catalog", (_req, res) => {
     res.json({ synthetic: true, products: CATALOG });
+  });
+
+  app.get("/api/alternatives", (_req, res) => {
+    res.json({ synthetic: true, alternatives: ALTERNATIVES });
   });
 
   app.post("/api/carts", (req, res) => {
@@ -188,6 +198,35 @@ export function createApp(deps: AppDeps): RunningApp {
     }
     deps.store.saveGuard(sessionId, parsed);
     res.json({ synthetic: true, sessionId, settings: parsed, cooldownChoicesMs: COOLDOWN_CHOICES_MS });
+  });
+
+  app.post("/api/carts/:code/switch", (req, res) => {
+    const code = req.params.code?.toUpperCase();
+    const body = isRecord(req.body) ? req.body : {};
+    const alternativeId = typeof body.alternativeId === "string" ? body.alternativeId : "";
+    if (!code) {
+      res.status(404).json({ error: "Cart not found." });
+      return;
+    }
+    const cart = deps.store.getCart(code);
+    if (!cart) {
+      res.status(404).json({ error: "Cart not found." });
+      return;
+    }
+    if (cart.status === "completed") {
+      res.status(400).json({ error: "That order is already complete." });
+      return;
+    }
+    if (!alternativeById(alternativeId)) {
+      res.status(400).json({ error: "Unknown alternative." });
+      return;
+    }
+    const updated = switchToAlternative(cart, alternativeId, now());
+    deps.store.saveCart(updated);
+    if (updated.status === "completed") {
+      scheduler.disarm(updated.code);
+    }
+    res.json(publicCart(updated, deps.agentHandle));
   });
 
   app.post("/api/carts/:code/buy-anyway", (req, res) => {

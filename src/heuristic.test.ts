@@ -15,6 +15,7 @@ function signals(overrides: Partial<Signals> = {}): Signals {
     deviceAgeMonths: 14,
     condition: "fine",
     problemText: "it works fine",
+    problems: [],
     owedCents: 42_000,
     budgetCents: 150_000,
     ...cart,
@@ -140,6 +141,41 @@ describe("decide", () => {
     );
     assert.equal(decision.action, "wait");
     assert.deepEqual(decision.reasons, ["default-wait"]);
+  });
+
+  it("picks a cheaper battery swap when the shopper has a battery problem", () => {
+    const decision = decide(
+      signals({
+        deviceAgeMonths: 38,
+        condition: "broken",
+        problemText: "my battery dies by 3pm",
+        problems: ["battery"],
+        owedCents: 0,
+        budgetCents: 200_000,
+      }),
+    );
+    assert.equal(decision.action, "better");
+    if (decision.action !== "better") {
+      return;
+    }
+    assert.equal(decision.alternativeId, "battery-swap");
+    assert.equal(decision.reasons[0], "better-option");
+  });
+
+  it("keeps a buy call when the battery swap is not cheaper than the cart", () => {
+    const decision = decide(
+      signals({
+        deviceAgeMonths: 38,
+        condition: "broken",
+        problemText: "my battery dies by 3pm",
+        problems: ["battery"],
+        owedCents: 0,
+        budgetCents: 200_000,
+        dueTodayCents: 5_000,
+        phonePriceCents: 5_000,
+      }),
+    );
+    assert.equal(decision.action, "buy");
   });
 
   it("returns the same call twice", () => {

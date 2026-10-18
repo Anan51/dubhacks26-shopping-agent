@@ -1,3 +1,5 @@
+import { alternativeById, alternativeItem } from "./alternatives.js";
+import { shouldLock } from "./guard.js";
 import type { Cart, CartItem, Signals } from "./types.js";
 
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -41,6 +43,7 @@ export function withCartFacts(partial: Partial<Signals>, items: readonly CartIte
     problemText: partial.problemText ?? "",
     owedCents: partial.owedCents,
     budgetCents: partial.budgetCents,
+    problems: partial.problems ?? [],
     dueTodayCents: dueTodayCents(items),
     phonePriceCents: phonePriceCents(items),
     monthlyPlanCents: monthlyPlanCents(items),
@@ -86,6 +89,8 @@ export function createCart(input: {
     orderId: null,
     completedAt: null,
     buyAnywayAt: null,
+    signalSource: null,
+    selectedAlternativeId: null,
   };
   if (!input.lock) {
     cart.status = "completed";
@@ -107,6 +112,25 @@ export function completeOrder(cart: Cart, now: Date, source: "chat" | "buy-anywa
   cart.reminderFireAt = null;
   if (source === "buy-anyway") {
     cart.buyAnywayAt = now.toISOString();
+  }
+  return cart;
+}
+
+export function switchToAlternative(cart: Cart, alternativeId: string, now: Date): Cart {
+  const alternative = alternativeById(alternativeId);
+  if (!alternative) {
+    throw new Error("Unknown alternative.");
+  }
+  cart.items = [alternativeItem(alternative)];
+  cart.selectedAlternativeId = alternative.id;
+  if (
+    !shouldLock({
+      enabled: cart.guardEnabled,
+      dueTodayCents: alternative.priceCents,
+      thresholdCents: cart.lockThresholdCents,
+    })
+  ) {
+    completeOrder(cart, now, "chat");
   }
   return cart;
 }

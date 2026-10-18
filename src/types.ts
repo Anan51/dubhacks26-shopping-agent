@@ -1,11 +1,17 @@
 /** Shopper fields are filled only by `extractSignals`. Cart prices are filled from the catalog. */
 export type Condition = "fine" | "minor" | "broken" | "unusable";
 
+export type ProblemTag = "battery" | "screen" | "performance" | "cost";
+
+export type SignalSource = "grok" | "keywords";
+
 export type Signals = {
   deviceAgeMonths: number;
   condition: Condition;
   /** Shopper's own words about the current phone. */
   problemText: string;
+  /** Problems named in the shopper's words. Empty when they did not name one. */
+  problems: ProblemTag[];
   owedCents: number;
   budgetCents: number;
   /** Phone plus accessories due today. Not a monthly plan. */
@@ -38,6 +44,7 @@ export type Session = {
   signals: Partial<Signals>;
   turns: TranscriptTurn[];
   lastInboundId: string | null;
+  signalSource: SignalSource | null;
   updatedAt: string;
 };
 
@@ -80,6 +87,10 @@ export type Cart = {
   guardEnabled: boolean;
   /** Set when the shopper uses Buy anyway. Chat unlock leaves this empty. */
   buyAnywayAt: string | null;
+  /** Which parser produced the shopper signals used for the verdict. */
+  signalSource: SignalSource | null;
+  /** Set when the shopper switches the cart to a synthetic alternative. */
+  selectedAlternativeId: string | null;
 };
 
 export type ReasonCode =
@@ -89,7 +100,8 @@ export type ReasonCode =
   | "upside-down"
   | "waiting-saves-money"
   | "old-and-failing"
-  | "default-wait";
+  | "default-wait"
+  | "better-option";
 
 /**
  * Buy or wait for now. Add `{ action: "better"; alternativeId: string }`
@@ -98,7 +110,8 @@ export type ReasonCode =
  */
 export type Verdict =
   | { action: "buy"; alternativeId: null }
-  | { action: "wait"; alternativeId: null };
+  | { action: "wait"; alternativeId: null }
+  | { action: "better"; alternativeId: string };
 
 export type Decision = Verdict & {
   reasons: ReasonCode[];

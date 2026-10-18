@@ -45,10 +45,13 @@ export function DevChat() {
         </p>
         <div className="scripts">
           <h2>Demo scripts</h2>
-          <p>Use the cart code from checkout. Wait saves the cart and texts a reminder. Buy asks you to confirm.</p>
+          <p>Use the cart code from checkout. Wait saves the cart. Better recommends a battery swap. Buy asks you to confirm a dead phone.</p>
           <div className="script-row">
             <button type="button" className="button quiet" disabled={!cart || busy} onClick={() => void run(waitScript(cart ?? ""))}>
               Run wait script
+            </button>
+            <button type="button" className="button quiet" disabled={!cart || busy} onClick={() => void run(betterScript(cart ?? ""))}>
+              Run better script
             </button>
             <button type="button" className="button quiet" disabled={!cart || busy} onClick={() => void run(buyScript(cart ?? ""))}>
               Run buy script
@@ -114,15 +117,12 @@ function waitScript(code: string): string[] {
   return [`Hey WaitMate, cart ${code}`, "14 months", "it works fine", "420", "1500"];
 }
 
+function betterScript(code: string): string[] {
+  return [`Hey WaitMate, cart ${code}`, "38 months", "my battery dies by 3pm", "0", "2000"];
+}
+
 function buyScript(code: string): string[] {
-  return [
-    `Hey WaitMate, cart ${code}`,
-    "38 months",
-    "screen is cracked and the battery dies by 3pm",
-    "0",
-    "2000",
-    "YES",
-  ];
+  return [`Hey WaitMate, cart ${code}`, "38 months", "it won't turn on", "0", "2000", "YES"];
 }
 
 function cartFromLocation(): string | null {

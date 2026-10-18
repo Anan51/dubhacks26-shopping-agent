@@ -291,6 +291,36 @@ h2 {
   margin: 0.45rem 0;
 }
 
+.alt-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.alt-list li,
+.alt-card {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: var(--card);
+}
+
+.alt-list small,
+.alt-card p {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.alt-card h3 {
+  margin: 0;
+  font-family: Georgia, serif;
+  font-weight: 500;
+}
+
 .guard input[type="number"],
 .guard select {
   width: 7.5rem;

@@ -1,5 +1,5 @@
 import { completeOrder, withCartFacts } from "./carts.js";
-import { extractCartCode, extractSignals, pickShopperSignals } from "./extract-signals.js";
+import { extractCartCode, extractSignals, pickShopperSignals, type ExtractOptions } from "./extract-signals.js";
 import { addMonths, formatLongDate } from "./format.js";
 import { decide } from "./heuristic.js";
 import { phraseDecision } from "./phrase.js";
@@ -21,6 +21,7 @@ export type ApplyInput = {
   now: Date;
   demoReminderMs: number;
   loadCart: (code: string) => Cart | undefined;
+  extract?: ExtractOptions;
 };
 
 export type ApplyResult = {
@@ -32,7 +33,7 @@ export type ApplyResult = {
   disarmReminder: boolean;
 };
 
-export function applyTurn(input: ApplyInput): ApplyResult {
+export async function applyTurn(input: ApplyInput): Promise<ApplyResult> {
   if (input.session?.lastInboundId === input.messageId) {
     return {
       session: input.session,
@@ -57,6 +58,7 @@ export function applyTurn(input: ApplyInput): ApplyResult {
         signals: {},
         turns: [],
         lastInboundId: null,
+        signalSource: null,
         updatedAt: nowIso,
       };
 
@@ -104,7 +106,9 @@ export function applyTurn(input: ApplyInput): ApplyResult {
     signals: session.signals,
     turns: session.turns.slice(0, -1),
   };
-  const patch = pickShopperSignals(extractSignals(input.text, context));
+  const extraction = await extractSignals(input.text, context, input.extract ?? {});
+  session.signalSource = extraction.source;
+  const patch = pickShopperSignals(extraction.signals);
   const changed = signalsChanged(session.signals, patch);
   session.signals = mergeSignals(session.signals, patch);
 
@@ -148,6 +152,18 @@ function confirmTurn(session: Session, cart: Cart, input: ApplyInput): ApplyResu
         `Still holding cart ${cart.code}. I'll text you on ${cart.reminderAt ? formatLongDate(cart.reminderAt) : "the date I saved"}. Reply BUY if you want checkout unlocked.`,
         { cart },
       );
+    case "better":
+      if (intent === "yes" || intent === "buy") {
+        return completeCart(session, cart, input.now);
+      }
+      if (intent === "wait") {
+        return saveWait(session, cart, input);
+      }
+      return say(
+        session,
+        "Reply BUY to unlock the original cart, or WAIT to save it. The checkout can switch to the cheaper option.",
+        { cart },
+      );
     default:
       return assertNever(action);
   }
@@ -156,7 +172,8 @@ function confirmTurn(session: Session, cart: Cart, input: ApplyInput): ApplyResu
 function decideTurn(session: Session, cart: Cart, input: ApplyInput): ApplyResult {
   const signals = withCartFacts(session.signals, cart.items);
   const decision = decide(signals);
-  const explanation = phraseDecision(decision, signals);
+  const explanation = phraseDecision(decision, signals, session.signalSource ?? "keywords");
+  cart.signalSource = session.signalSource;
   cart.signals = signals;
   cart.decision = decision;
   cart.explanation = explanation;
@@ -176,6 +193,16 @@ function decideTurn(session: Session, cart: Cart, input: ApplyInput): ApplyResul
         cart,
         disarmReminder: true,
       });
+    case "better":
+      cart.status = "cooling";
+      cart.reminderAt = null;
+      cart.reminderFireAt = null;
+      cart.reminderSentAt = null;
+      return say(
+        session,
+        `${explanation}\n\nThe checkout can switch to that option. Reply BUY to unlock the original cart, or WAIT to save it.`,
+        { cart, disarmReminder: true },
+      );
     default:
       return assertNever(action);
   }
@@ -304,9 +331,15 @@ function mergeSignals(base: Partial<Signals>, patch: Partial<Signals>): Partial<
 }
 
 function signalsChanged(before: Partial<Signals>, patch: Partial<Signals>): boolean {
-  const keys = ["deviceAgeMonths", "condition", "problemText", "owedCents", "budgetCents"] as const;
+  const keys = ["deviceAgeMonths", "condition", "problemText", "problems", "owedCents", "budgetCents"] as const;
   return keys.some((key) => {
     const value = patch[key];
-    return value !== undefined && value !== before[key];
+    if (value === undefined) {
+      return false;
+    }
+    if (key === "problems") {
+      return JSON.stringify(value) !== JSON.stringify(before.problems ?? []);
+    }
+    return value !== before[key];
   });
 }

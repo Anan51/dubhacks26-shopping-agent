@@ -9,6 +9,7 @@ const signals: Signals = {
   deviceAgeMonths: 14,
   condition: "fine",
   problemText: "it works fine",
+  problems: [],
   owedCents: 42_000,
   budgetCents: 150_000,
   dueTodayCents: 82_800,

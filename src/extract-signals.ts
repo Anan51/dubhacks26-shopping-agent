@@ -1,11 +1,38 @@
-import type { Condition, ConversationContext, Signals } from "./types.js";
+import { grokChat, DEFAULT_XAI_MODEL } from "./grok.js";
+import type { Condition, ConversationContext, ProblemTag, SignalSource, Signals } from "./types.js";
+
+const PROBLEM_TAGS: readonly ProblemTag[] = ["battery", "screen", "performance", "cost"];
+
+export type Extraction = {
+  signals: Partial<Signals>;
+  source: SignalSource;
+};
+
+export type ExtractOptions = {
+  apiKey?: string;
+  model?: string;
+  fetchImpl?: typeof fetch;
+};
 
 /**
- * Turn one shopper message into partial heuristic inputs.
- * Keyword and regex only. `decide` never sees raw text, and phrasing never parses it.
- * A later model can replace this body; keep the signature stable.
+ * Keyword parse, then an optional Grok JSON parse. Valid model fields override
+ * keywords; problem tags are the sorted union. No key, a bad response, or
+ * invalid JSON keeps the keyword result.
  */
-export function extractSignals(text: string, conversation: ConversationContext): Partial<Signals> {
+export async function extractSignals(
+  text: string,
+  conversation: ConversationContext,
+  options: ExtractOptions = {},
+): Promise<Extraction> {
+  const keyword = keywordExtract(text, conversation);
+  const llm = await grokExtract(text, conversation, options);
+  if (!llm) {
+    return { signals: keyword, source: "keywords" };
+  }
+  return { signals: mergeSignalPatches(keyword, llm), source: "grok" };
+}
+
+function keywordExtract(text: string, conversation: ConversationContext): Partial<Signals> {
   const trimmed = text.trim();
   const normalized = trimmed.toLowerCase();
   const patch: Partial<Signals> = {};
@@ -21,6 +48,11 @@ export function extractSignals(text: string, conversation: ConversationContext):
     patch.problemText = trimmed.slice(0, 280);
   }
 
+  const problems = extractProblems(normalized);
+  if (problems.length > 0) {
+    patch.problems = problems;
+  }
+
   const money = extractMoney(trimmed, conversation);
   if (money.owedCents !== undefined) {
     patch.owedCents = money.owedCents;
@@ -32,7 +64,7 @@ export function extractSignals(text: string, conversation: ConversationContext):
   return patch;
 }
 
-const SHOPPER_KEYS = ["deviceAgeMonths", "condition", "problemText", "owedCents", "budgetCents"] as const;
+const SHOPPER_KEYS = ["deviceAgeMonths", "condition", "problemText", "problems", "owedCents", "budgetCents"] as const;
 
 /** Cart totals stay on the cart. Chat text cannot overwrite them. */
 export function pickShopperSignals(patch: Partial<Signals>): Partial<Signals> {
@@ -65,6 +97,11 @@ function assignShopperField(
     case "problemText":
       if (typeof value === "string") {
         target.problemText = value;
+      }
+      return;
+    case "problems":
+      if (Array.isArray(value)) {
+        target.problems = value.filter((tag): tag is ProblemTag => PROBLEM_TAGS.includes(tag as ProblemTag));
       }
       return;
     case "owedCents":
@@ -127,6 +164,23 @@ function extractAge(text: string, conversation: ConversationContext): number | u
     return clampAge(asMonths);
   }
   return undefined;
+}
+
+function extractProblems(normalized: string): ProblemTag[] {
+  const found = new Set<ProblemTag>();
+  if (/\b(battery|dies|dying)\b/.test(normalized)) {
+    found.add("battery");
+  }
+  if (/\b(cracked|cracks|crack|shattered|shatter|smashed|screen)\b/.test(normalized)) {
+    found.add("screen");
+  }
+  if (/\b(slow|storage|camera|lag)\b/.test(normalized)) {
+    found.add("performance");
+  }
+  if (/\b(too expensive|cheaper plan|can't afford|cannot afford|bill is high)\b/.test(normalized)) {
+    found.add("cost");
+  }
+  return PROBLEM_TAGS.filter((tag) => found.has(tag));
 }
 
 function extractCondition(normalized: string, conversation: ConversationContext): Condition | undefined {
@@ -248,4 +302,106 @@ function clampAge(months: number): number | undefined {
     return undefined;
   }
   return months;
+}
+
+export function mergeSignalPatches(keyword: Partial<Signals>, llm: Partial<Signals>): Partial<Signals> {
+  const merged: Partial<Signals> = { ...keyword, ...stripEmpty(llm) };
+  const problems = uniqueProblems([...(keyword.problems ?? []), ...(llm.problems ?? [])]);
+  if (problems.length > 0) {
+    merged.problems = problems;
+  }
+  return merged;
+}
+
+/** Parse a Grok message body into shopper signals. Invalid JSON or no usable fields returns null. */
+export function parseGrokSignalJson(raw: string): Partial<Signals> | null {
+  const trimmed = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed) as unknown;
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed)) {
+    return null;
+  }
+  const patch: Partial<Signals> = {};
+  if (typeof parsed.deviceAgeMonths === "number" && Number.isInteger(parsed.deviceAgeMonths)) {
+    const age = clampAge(parsed.deviceAgeMonths);
+    if (age !== undefined) {
+      patch.deviceAgeMonths = age;
+    }
+  }
+  if (parsed.condition === "fine" || parsed.condition === "minor" || parsed.condition === "broken" || parsed.condition === "unusable") {
+    patch.condition = parsed.condition;
+  }
+  if (typeof parsed.problemText === "string" && parsed.problemText.trim().length > 0) {
+    patch.problemText = parsed.problemText.trim().slice(0, 280);
+  }
+  if (Array.isArray(parsed.problems)) {
+    const problems = uniqueProblems(parsed.problems.filter((tag): tag is ProblemTag => PROBLEM_TAGS.includes(tag as ProblemTag)));
+    if (problems.length > 0) {
+      patch.problems = problems;
+    }
+  }
+  if (typeof parsed.owedCents === "number" && Number.isInteger(parsed.owedCents) && parsed.owedCents >= 0 && parsed.owedCents <= MAX_MONEY_CENTS) {
+    patch.owedCents = parsed.owedCents;
+  }
+  if (typeof parsed.budgetCents === "number" && Number.isInteger(parsed.budgetCents) && parsed.budgetCents >= 0 && parsed.budgetCents <= MAX_MONEY_CENTS) {
+    patch.budgetCents = parsed.budgetCents;
+  }
+  return Object.keys(patch).length > 0 ? patch : null;
+}
+
+async function grokExtract(text: string, conversation: ConversationContext, options: ExtractOptions): Promise<Partial<Signals> | null> {
+  if (!options.apiKey) {
+    return null;
+  }
+  const prompt = [
+    "Extract shopper signals from this phone-upgrade chat message.",
+    "Reply with JSON only, no markdown.",
+    'Keys: deviceAgeMonths (integer months or null), condition ("fine"|"minor"|"broken"|"unusable" or null), problems (array of "battery"|"screen"|"performance"|"cost"), problemText (string or null), owedCents (integer cents or null), budgetCents (integer cents or null).',
+    "Map a battery that dies during the day to problems [\"battery\"] and condition \"broken\".",
+    `The question we asked was: ${conversation.step}.`,
+    "",
+    text,
+  ].join("\n");
+  const raw = await grokChat({
+    apiKey: options.apiKey,
+    model: options.model ?? DEFAULT_XAI_MODEL,
+    prompt,
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+  });
+  if (!raw) {
+    return null;
+  }
+  return parseGrokSignalJson(raw);
+}
+
+function stripEmpty(patch: Partial<Signals>): Partial<Signals> {
+  const next: Partial<Signals> = {};
+  if (patch.deviceAgeMonths !== undefined) {
+    next.deviceAgeMonths = patch.deviceAgeMonths;
+  }
+  if (patch.condition !== undefined) {
+    next.condition = patch.condition;
+  }
+  if (patch.problemText !== undefined && patch.problemText.length > 0) {
+    next.problemText = patch.problemText;
+  }
+  if (patch.owedCents !== undefined) {
+    next.owedCents = patch.owedCents;
+  }
+  if (patch.budgetCents !== undefined) {
+    next.budgetCents = patch.budgetCents;
+  }
+  return next;
+}
+
+function uniqueProblems(tags: readonly ProblemTag[]): ProblemTag[] {
+  return PROBLEM_TAGS.filter((tag) => tags.includes(tag));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

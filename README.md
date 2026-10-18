@@ -23,6 +23,7 @@ Open http://localhost:4321.
 4. Send that text, then answer the questions (or press **Run wait script** / **Run buy script**).
 5. **Wait** saves the cart and, in demo mode, texts a checkout link into the same desk chat about a minute later.
 6. **Buy** asks you to reply `YES`. The checkout page polls and shows a mock receipt. Nothing is charged.
+7. **Run better script**, or answer the problem question with `my battery dies by 3pm`. WaitMate should say Better and name the $89 battery swap. The checkout shows that synthetic alternative and **Switch to this**. Without `XAI_API_KEY` the same phrase is parsed with keywords. `npm run smoke:grok` calls Grok once where the key exists and prints the signals, not the key.
 
 The banner says **SYNTHETIC DATA**. Product names (Northstar, Harbor, Lumen, Signal) are fictional.
 
@@ -93,7 +94,8 @@ npm start
 
 | File | Role |
 | --- | --- |
-| `src/extract-signals.ts` | Free text → partial signals (keyword/regex) |
+| `src/extract-signals.ts` | Free text → signals (Grok JSON, then keywords) |
+| `src/alternatives.ts` | Synthetic cheaper fixes |
 | `src/heuristic.ts` | `decide(signals)` buy-or-wait call |
 | `src/phrase.ts` | Template, plus optional Grok wording |
 | `src/conversation.ts` | Questions, confirm, save, unlock |

@@ -5,10 +5,13 @@ import {
   buyAnyway,
   createCart,
   getCart,
+  getAlternatives,
   getCatalog,
   getConfig,
   getGuard,
   saveGuard,
+  switchCart,
+  type Alternative,
   type CartResponse,
   type Decision,
   type GuardSettings,
@@ -23,6 +26,7 @@ const DEFAULT_IDS = ["phone-n1-128", "plan-unlimited", "acc-case"];
 
 export function Checkout({ code }: { code: string | null }) {
   const [catalog, setCatalog] = useState<Product[] | null>(null);
+  const [alternatives, setAlternatives] = useState<Alternative[]>([]);
   const [config, setConfig] = useState<PublicConfig | null>(null);
   const [selected, setSelected] = useState<string[]>(DEFAULT_IDS);
   const [demo, setDemo] = useState(true);
@@ -36,13 +40,14 @@ export function Checkout({ code }: { code: string | null }) {
 
   useEffect(() => {
     let cancel = false;
-    Promise.all([getCatalog(), getConfig()])
-      .then(([products, nextConfig]) => {
+    Promise.all([getCatalog(), getConfig(), getAlternatives()])
+      .then(([products, nextConfig, nextAlternatives]) => {
         if (cancel) {
           return;
         }
         setCatalog(products);
         setConfig(nextConfig);
+        setAlternatives(nextAlternatives);
         setDemo(true);
       })
       .catch((cause: unknown) => {
@@ -124,6 +129,8 @@ export function Checkout({ code }: { code: string | null }) {
         bypassing={bypassing}
         error={error}
         onBuyAnyway={() => void skipLock(cart.code)}
+        alternatives={alternatives}
+        onSwitch={(alternativeId) => void swap(cart.code, alternativeId)}
       />
     );
   }
@@ -150,6 +157,7 @@ export function Checkout({ code }: { code: string | null }) {
       <section>
         <h1>Take a minute before this upgrade.</h1>
         <p className="lede">{guardSummary(guard, dueToday)}</p>
+        <AlternativeList alternatives={alternatives} />
         {(["phone", "plan", "accessory"] as const).map((kind) => (
           <div key={kind} className="group">
             <h2>{kindLabel(kind)}</h2>
@@ -257,6 +265,18 @@ export function Checkout({ code }: { code: string | null }) {
     }
   }
 
+  async function swap(cartCode: string, alternativeId: string): Promise<void> {
+    setBypassing(true);
+    setError(null);
+    try {
+      setCart(await switchCart(cartCode, alternativeId));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not switch the cart.");
+    } finally {
+      setBypassing(false);
+    }
+  }
+
   async function skipLock(cartCode: string): Promise<void> {
     setBypassing(true);
     setError(null);
@@ -276,12 +296,16 @@ function LockedCheckout({
   bypassing,
   error,
   onBuyAnyway,
+  alternatives,
+  onSwitch,
 }: {
   cart: CartResponse;
   channel: PublicConfig["channel"];
   bypassing: boolean;
   error: string | null;
   onBuyAnyway: () => void;
+  alternatives: Alternative[];
+  onSwitch: (alternativeId: string) => void;
 }) {
   const remaining = useRemaining(cart.coolingOffEndsAt);
   const duration = new Date(cart.coolingOffEndsAt).getTime() - new Date(cart.createdAt).getTime();
@@ -316,7 +340,8 @@ function LockedCheckout({
       </section>
       <aside className="summary lock">
         <Clock remaining={remaining} progress={progress} />
-        {cart.decision ? <Why cart={cart} /> : <p>Text WaitMate the cart code. It will ask a few questions before it picks buy or wait.</p>}
+        {cart.decision ? <Why cart={cart} /> : <p>Text WaitMate the cart code. It will ask a few questions before it picks buy, wait, or a better option.</p>}
+        <AlternativeOffer cart={cart} alternatives={alternatives} busy={bypassing} onSwitch={onSwitch} />
         {error ? <p className="form-error">{error}</p> : null}
         <TextActions cart={cart} channel={channel} bypassing={bypassing} onBuyAnyway={onBuyAnyway} />
       </aside>
@@ -503,6 +528,64 @@ function GuardControl({
   );
 }
 
+function AlternativeList({ alternatives }: { alternatives: Alternative[] }) {
+  if (alternatives.length === 0) {
+    return null;
+  }
+  return (
+    <div className="group">
+      <h2>Synthetic alternatives</h2>
+      <ul className="alt-list">
+        {alternatives.map((alternative) => (
+          <li key={alternative.id}>
+            <strong>{alternative.name}</strong>
+            <span>{formatUsd(alternative.priceCents)}</span>
+            <small>
+              Solves {alternative.solves.join(", ")}. {alternative.reason}
+            </small>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function AlternativeOffer({
+  cart,
+  alternatives,
+  busy,
+  onSwitch,
+}: {
+  cart: CartResponse;
+  alternatives: Alternative[];
+  busy: boolean;
+  onSwitch: (alternativeId: string) => void;
+}) {
+  if (cart.decision?.action !== "better" || !cart.decision.alternativeId) {
+    return null;
+  }
+  const alternative = alternatives.find((item) => item.id === cart.decision?.alternativeId);
+  if (!alternative) {
+    return null;
+  }
+  const dueToday = cart.items.filter((item) => item.cadence === "once").reduce((sum, item) => sum + item.priceCents, 0);
+  const savings = dueToday - alternative.priceCents;
+  return (
+    <article className="alt-card">
+      <p className="why-kicker">Synthetic alternative</p>
+      <h3>{alternative.name}</h3>
+      <p>{alternative.reason}</p>
+      <p>
+        {formatUsd(alternative.priceCents)} versus {formatUsd(dueToday)} due today
+        {savings > 0 ? ` (${formatUsd(savings)} less)` : ""}.
+      </p>
+      <button type="button" className="button" disabled={busy} onClick={() => onSwitch(alternative.id)}>
+        Switch to this
+      </button>
+    </article>
+  );
+}
+
 function willLock(guard: GuardSettings | null, dueTodayCents: number): boolean {
   return Boolean(guard?.enabled) && dueTodayCents >= (guard?.thresholdCents ?? 0);
 }
@@ -558,6 +641,8 @@ function verdictClass(action: Decision["action"]): string {
       return "why buy";
     case "wait":
       return "why";
+    case "better":
+      return "why";
     default:
       return assertNever(action);
   }
@@ -569,6 +654,8 @@ function verdictKicker(action: Decision["action"]): string {
       return "WaitMate says buy";
     case "wait":
       return "WaitMate says wait";
+    case "better":
+      return "WaitMate says there's a better option";
     default:
       return assertNever(action);
   }
@@ -590,6 +677,10 @@ function verdictNote(cart: CartResponse): ReactNode {
     case "buy":
       return cart.status !== "completed" ? (
         <p className="reminder-note">Reply YES in the chat to unlock this checkout.</p>
+      ) : null;
+    case "better":
+      return cart.signalSource ? (
+        <p className="reminder-note">Parsed with {cart.signalSource === "grok" ? "Grok" : "keywords"}.</p>
       ) : null;
     default:
       return assertNever(decision.action);

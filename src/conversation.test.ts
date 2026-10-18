@@ -25,12 +25,12 @@ function sampleCart(code: string, demo = true): Cart {
   });
 }
 
-function run(cart: Cart, lines: string[]): { cart: Cart; results: ApplyResult[] } {
+async function run(cart: Cart, lines: string[]): Promise<{ cart: Cart; results: ApplyResult[] }> {
   let current = cart;
   let session: Session | null = null;
   const results: ApplyResult[] = [];
   for (const [index, text] of lines.entries()) {
-    const result = applyTurn({
+    const result = await applyTurn({
       session,
       conversationId: "desk:test",
       messageId: `m-${index}`,
@@ -48,10 +48,10 @@ function run(cart: Cart, lines: string[]): { cart: Cart; results: ApplyResult[] 
   return { cart: current, results };
 }
 
-describe("applyTurn", () => {
-  it("asks for the missing facts, then waits and schedules a reminder", () => {
+describe("applyTurn", async () => {
+  it("asks for the missing facts, then waits and schedules a reminder", async () => {
     const code = "K7MQ2P";
-    const { cart, results } = run(sampleCart(code), [
+    const { cart, results } = await run(sampleCart(code), [
       `Hey WaitMate, cart ${code}`,
       "14 months",
       "it works fine",
@@ -73,12 +73,12 @@ describe("applyTurn", () => {
     assert.ok(cart.reminderAt && cart.reminderAt > cart.reminderFireAt);
   });
 
-  it("asks for a yes before unlocking a buy", () => {
+  it("asks for a yes before unlocking a buy", async () => {
     const code = "M4N8Q2";
-    const { cart, results } = run(sampleCart(code), [
+    const { cart, results } = await run(sampleCart(code), [
       `Hey WaitMate, cart ${code}`,
       "38 months",
-      "screen is cracked and the battery dies by 3pm",
+      "it won't turn on",
       "0",
       "1200",
       "YES",
@@ -90,8 +90,8 @@ describe("applyTurn", () => {
     assert.equal(results[5]?.disarmReminder, true);
   });
 
-  it("lets the shopper buy after a wait, or save after a buy recommendation", () => {
-    const waited = run(sampleCart("W8TM22"), [
+  it("lets the shopper buy after a wait, or save after a buy recommendation", async () => {
+    const waited = await run(sampleCart("W8TM22"), [
       "Hey WaitMate, cart W8TM22",
       "14 months",
       "it works fine",
@@ -101,7 +101,7 @@ describe("applyTurn", () => {
     ]);
     assert.equal(waited.cart.status, "completed");
 
-    const saved = run(sampleCart("B8YM22"), [
+    const saved = await run(sampleCart("B8YM22"), [
       "Hey WaitMate, cart B8YM22",
       "38 months",
       "screen is cracked",
@@ -113,28 +113,30 @@ describe("applyTurn", () => {
     assert.equal(saved.results.at(-1)?.armReminder, true);
   });
 
-  it("fills every shopper signal from one message, then still asks before a buy", () => {
-    const { cart, results } = run(sampleCart("PNE234"), [
+  it("fills every shopper signal from one message, then still asks before a buy", async () => {
+    const { cart, results } = await run(sampleCart("PNE234"), [
       "Hey WaitMate, cart PNE234. My phone is 3 years old, the screen is cracked, I owe $0, and my budget is $1200.",
     ]);
     assert.equal(results.length, 1);
-    assert.equal(cart.decision?.action, "buy");
+    assert.equal(cart.decision?.action, "better");
+    assert.equal(cart.decision?.alternativeId, "certified-refurb");
     assert.equal(cart.status, "cooling");
-    assert.match(results[0]?.reply ?? "", /Reply YES/);
+    assert.match(results[0]?.reply ?? "", /Parsed with keywords/);
+    assert.match(results[0]?.reply ?? "", /certified refurb/);
   });
 
-  it("asks again when the age is not a number, and rejects an unknown cart", () => {
-    const again = run(sampleCart("AGE234"), ["Hey WaitMate, cart AGE234", "purple"]);
+  it("asks again when the age is not a number, and rejects an unknown cart", async () => {
+    const again = await run(sampleCart("AGE234"), ["Hey WaitMate, cart AGE234", "purple"]);
     assert.match(again.results[1]?.reply ?? "", /I need an age/);
     assert.equal(again.cart.decision, null);
 
-    const missing = run(sampleCart("REAL22"), ["Hey WaitMate, cart ZZZZZZ"]);
+    const missing = await run(sampleCart("REAL22"), ["Hey WaitMate, cart ZZZZZZ"]);
     assert.match(missing.results[0]?.reply ?? "", /can't find cart ZZZZZZ/);
     assert.equal(missing.cart.code, "REAL22");
     assert.equal(missing.cart.status, "cooling");
   });
 
-  it("starts the questions over when the shopper names a different cart", () => {
+  it("starts the questions over when the shopper names a different cart", async () => {
     const first = sampleCart("FRST22");
     const second = sampleCart("SCND22");
     const carts = new Map<string, Cart>([
@@ -143,7 +145,7 @@ describe("applyTurn", () => {
     ]);
     let session: Session | null = null;
     for (const [index, text] of ["Hey WaitMate, cart FRST22", "14 months", "it works fine", "0", "2000"].entries()) {
-      const result = applyTurn({
+      const result = await applyTurn({
         session,
         conversationId: "desk:test",
         messageId: `a-${index}`,
@@ -159,7 +161,7 @@ describe("applyTurn", () => {
     }
     assert.equal(carts.get("FRST22")?.status, "saved");
 
-    const switched = applyTurn({
+    const switched = await applyTurn({
       session,
       conversationId: "desk:test",
       messageId: "b-0",
@@ -175,9 +177,9 @@ describe("applyTurn", () => {
     assert.equal(carts.get("FRST22")?.status, "saved");
   });
 
-  it("ignores a replay of the same inbound id", () => {
+  it("ignores a replay of the same inbound id", async () => {
     const cart = sampleCart("DUP222");
-    const first = applyTurn({
+    const first = await applyTurn({
       session: null,
       conversationId: "desk:test",
       messageId: "same",
@@ -186,7 +188,7 @@ describe("applyTurn", () => {
       demoReminderMs: 60_000,
       loadCart: () => cart,
     });
-    const second = applyTurn({
+    const second = await applyTurn({
       session: first.session,
       conversationId: "desk:test",
       messageId: "same",

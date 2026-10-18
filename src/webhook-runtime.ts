@@ -29,7 +29,11 @@ export function getWebhookRuntime(): Runtime {
     send: (message) => sendPhotonMessage(photonConfig, message),
     armReminder: (cart) => scheduler.arm(cart),
     disarmReminder: (code) => scheduler.disarm(code),
-    polish: (template, action) => polishPhrase(template, action, appConfig.xaiApiKey),
+    polish: (template, action) => polishPhrase(template, action, appConfig.xaiApiKey, fetch, appConfig.xaiModel),
+    extract: {
+      ...(appConfig.xaiApiKey ? { apiKey: appConfig.xaiApiKey } : {}),
+      model: appConfig.xaiModel,
+    },
   });
   scheduler.armPending();
   return cached;
