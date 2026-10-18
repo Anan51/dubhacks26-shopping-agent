@@ -661,6 +661,34 @@ describe("purchase feedback", () => {
       console.error = originalError;
     }
   });
+
+  it("deletes the check-in when vote note cleanup throws", async () => {
+    const ada = await signup("ada-note-fail-checkin@example.com");
+    const row = await PurchaseRecord.create({
+      userId: ada.id,
+      item: "Cable",
+      category: "cable",
+      price: 19,
+      feedback: null,
+      isExample: false,
+    });
+    await CheckIn.create({ userId: ada.id, purchaseId: row._id, dueAt: new Date() });
+    const originalDelete = MemoryNote.deleteMany;
+    const originalError = console.error;
+    MemoryNote.deleteMany = (() => {
+      throw new Error("note cleanup failed");
+    }) as typeof MemoryNote.deleteMany;
+    console.error = () => undefined;
+    try {
+      const removed = await del(`/purchases/${row._id.toString()}`, ada.cookie);
+      assert.equal(removed.status, 204);
+      assert.equal(await PurchaseRecord.countDocuments({ _id: row._id }), 0);
+      assert.equal(await CheckIn.countDocuments({ purchaseId: row._id }), 0);
+    } finally {
+      MemoryNote.deleteMany = originalDelete;
+      console.error = originalError;
+    }
+  });
 });
 
 function identicalPurchase(userId: string): {

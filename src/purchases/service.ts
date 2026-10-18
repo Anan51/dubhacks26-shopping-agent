@@ -261,9 +261,13 @@ export async function deletePurchase(userId: string, purchaseId: string): Promis
   }
   try {
     await forgetPurchaseVoteNotes(userId, purchaseId, doc.item, doc.category, doc.price);
-    await CheckIn.deleteMany({ userId, purchaseId });
   } catch (error: unknown) {
     console.error(error instanceof Error ? error.message : "Purchase vote notes were not removed.");
+  }
+  try {
+    await CheckIn.deleteMany({ userId, purchaseId });
+  } catch (error: unknown) {
+    console.error(error instanceof Error ? error.message : "Purchase check-in was not removed.");
   }
 }
 
