@@ -14,34 +14,32 @@ export function attachSurvey(
   onComplete: () => void,
   onUnauthorized: (token: string | null) => Promise<void>,
 ): { refresh(): Promise<boolean | "unauthorized">; hide(): void } {
-  const style = document.createElement("style");
-  style.textContent = [
-    "#simmer-survey { display: flex; flex-direction: column; gap: 0.35rem; padding-bottom: 0.4rem; }",
-    "#simmer-survey input { font: inherit; border: 1px solid #eadccb; border-radius: 0.55rem; padding: 0.35rem 0.45rem; background: #fffaf3; color: inherit; }",
-    "#simmer-survey .purchase { display: flex; gap: 0.25rem; align-items: center; }",
-    "#simmer-survey button { font: inherit; background: #8a4b24; color: white; border: 0; border-radius: 999px; padding: 0.35rem 0.7rem; cursor: pointer; }",
-    "#simmer-survey .error { color: #8a4b24; font-size: 0.75rem; margin: 0; }",
-  ].join("");
   const section = document.createElement("section");
   section.id = "simmer-survey";
+  section.className = "panel";
   section.hidden = true;
+  const title = document.createElement("p");
+  title.className = "card-header";
+  title.textContent = "Survey";
   const heading = document.createElement("p");
-  heading.className = "kicker";
+  heading.className = "lede";
   heading.textContent = "A few questions before you shop";
   const hourly = moneyField("hourlyRate", "Rough hourly rate");
   const weekly = moneyField("weeklyBudget", "Rough weekly budget");
   const purchases = document.createElement("div");
   const add = document.createElement("button");
   add.type = "button";
+  add.className = "btn-secondary";
   add.textContent = "Add a recent purchase";
   const save = document.createElement("button");
   save.type = "button";
+  save.className = "btn-primary";
   save.textContent = "Save survey";
   const error = document.createElement("p");
   error.className = "error";
   error.hidden = true;
-  section.append(heading, hourly.label, weekly.label, purchases, add, save, error);
-  parent.append(style, section);
+  section.append(title, heading, hourly.label, weekly.label, purchases, add, save, error);
+  parent.append(section);
 
   const rows: PurchaseDraft[] = [];
   add.addEventListener("click", () => {

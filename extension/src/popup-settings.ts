@@ -9,11 +9,16 @@ export function attachSettings(
 ): { show(): void; hide(): void } {
   const section = document.createElement("section");
   section.id = "simmer-settings";
+  section.className = "panel";
   section.hidden = true;
+  const title = document.createElement("p");
+  title.className = "card-header";
+  title.textContent = "Settings";
   const hourly = moneyField("income", "Hourly income");
   const weekly = moneyField("budget", "Weekly budget");
   const save = document.createElement("button");
   save.type = "button";
+  save.className = "btn-primary";
   save.textContent = "Save";
   const error = document.createElement("p");
   error.className = "error";
@@ -22,7 +27,7 @@ export function attachSettings(
   saved.className = "fine";
   saved.textContent = "Saved.";
   saved.hidden = true;
-  section.append(hourly.label, weekly.label, save, error, saved);
+  section.append(title, hourly.label, weekly.label, save, error, saved);
   parent.append(section);
 
   let loadId = 0;

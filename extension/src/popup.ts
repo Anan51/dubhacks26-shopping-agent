@@ -88,9 +88,11 @@ function clearVault(): void {
 
 function render(current: CartPayload | null): void {
   const items = current ? [toGlance(current)] : [];
+  const glance = lockGlance(items);
   if (state) {
-    state.textContent = lockGlance(items);
+    state.textContent = glance;
   }
+  paintStatus(glance);
   if (!list || !empty) {
     return;
   }
@@ -135,14 +137,18 @@ function card(item: GlanceItem, lastPing: ReplyPing): HTMLLIElement {
   button.type = "button";
   button.className = "card";
   button.setAttribute("aria-expanded", "false");
+  const head = document.createElement("span");
+  head.className = "item-head";
   const title = document.createElement("strong");
   title.textContent = item.name;
   const price = document.createElement("span");
-  price.textContent = ` · ${dollars(item.priceCents)}`;
+  price.className = "price";
+  price.textContent = dollars(item.priceCents);
+  head.append(title, price);
   const line = document.createElement("div");
   line.className = "line";
   line.textContent = plainCartLabel({ ...item, lastPing }, Date.now());
-  button.append(title, price, line);
+  button.append(head, line);
   const detail = document.createElement("div");
   detail.hidden = true;
   button.addEventListener("click", () => {
@@ -207,6 +213,21 @@ function toGlance(cart: CartPayload): GlanceItem {
     replied: cart.replied === true,
     advice: cart.advice ?? null,
   };
+}
+
+const HELD_STATUS_NOTE = "Reply to Simmer's iMessage to unlock. Simmer will not click Apple's button.";
+const UNLOCKED_STATUS_NOTE = "Unlocked. You can check out. Simmer will not click Apple's button.";
+
+function paintStatus(glance: "Marinating" | "Unlocked" | "Paused"): void {
+  const note = document.getElementById("status-note");
+  const unlocked = glance === "Unlocked";
+  if (note) {
+    note.textContent = unlocked ? UNLOCKED_STATUS_NOTE : HELD_STATUS_NOTE;
+  }
+  const hero = document.querySelector("header");
+  if (hero) {
+    hero.dataset.tone = unlocked ? "unlocked" : "held";
+  }
 }
 
 function dollars(cents: number): string {
