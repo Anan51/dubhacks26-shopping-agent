@@ -108,7 +108,7 @@ export function createApp(deps: AppDeps): RunningApp {
         }
         const wasUnlocked = current.isUnlocked;
         applyNecessity(current, necessity);
-        await attachImpulse(current, authUserId);
+        await attachImpulse(current, authUserId, "refresh");
         deps.store.saveCart(current);
         if (authUserId && !wasUnlocked && current.isUnlocked) {
           void notePurchase(authUserId, current);
@@ -254,16 +254,13 @@ export function createApp(deps: AppDeps): RunningApp {
       if (existing.necessity == null) {
         const keyword = keywordNecessity(bagText);
         applyNecessity(existing, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason });
-        if (!keyword.necessary) {
+        if (!keyword.necessary && !existing.lastPing) {
           await pingCart(existing, false);
         }
         deps.store.saveCart(existing);
         refineNecessity(existing.code, bagText);
-      } else if (!existing.lastPing?.delivered) {
-        await pingCart(existing, false);
-        deps.store.saveCart(existing);
       }
-      await attachImpulse(existing, req.user?.id);
+      await attachImpulse(existing, req.user?.id, "refresh");
       deps.store.saveCart(existing);
       res.json(publicCart(existing, deps.agentHandle));
       return;
@@ -290,10 +287,10 @@ export function createApp(deps: AppDeps): RunningApp {
     cart.personaId = persona.id;
     const keyword = keywordNecessity(bagText);
     applyNecessity(cart, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason });
-    await attachImpulse(cart, req.user?.id);
-    if (!cart.isUnlocked) {
+    if (!keyword.necessary) {
       await pingCart(cart, false);
     }
+    await attachImpulse(cart, req.user?.id, "create");
     deps.store.saveCart(cart);
     if (req.user?.id && cart.isUnlocked) {
       await notePurchase(req.user.id, cart);
@@ -662,10 +659,10 @@ export function createApp(deps: AppDeps): RunningApp {
     await routeSend(message);
   }
 
-  async function attachImpulse(cart: Cart, authUserId?: string): Promise<void> {
+  async function attachImpulse(cart: Cart, authUserId: string | undefined, mode: "create" | "refresh"): Promise<void> {
     const wasVault = cart.status === "vault";
     const reading = await readingForCart(authUserId ?? cart.userId, cart);
-    applyImpulseReading(cart, reading, now(), deps.demoReminderMs);
+    applyImpulseReading(cart, reading, now(), deps.demoReminderMs, mode);
     if (!wasVault && cart.status === "vault") {
       scheduler.arm(cart);
     }

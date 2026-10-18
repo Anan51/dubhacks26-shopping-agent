@@ -14,6 +14,7 @@ import { requireUser, SESSION_COOKIE } from "../auth/session.js";
 import { InMemoryBackboardClient, type BackboardClient } from "../memory/backboard.js";
 import { createMemoryRuntime } from "../memory/runtime.js";
 import { createMemoryStore } from "../store.js";
+import { CheckIn } from "../checkins/model.js";
 import { PurchaseRecord } from "./model.js";
 import { createPurchaseRouter } from "./routes.js";
 import { hasRegrettedPurchase, purchaseVoteLine, recordUnlockedPurchase } from "./service.js";
@@ -25,6 +26,7 @@ describe("purchase feedback", () => {
   let mongod: MongoMemoryServer;
   let close: () => Promise<void>;
   const writes: string[] = [];
+  let failMemory = 0;
 
   before(async () => {
     mongod = await MongoMemoryServer.create({ binary: { version: "7.0.14" } });
@@ -34,6 +36,10 @@ describe("purchase feedback", () => {
     const client: BackboardClient = {
       createAssistant: (input) => inner.createAssistant(input),
       addMemory: async (assistantId, input) => {
+        if (failMemory > 0) {
+          failMemory -= 1;
+          throw new Error("backboard down");
+        }
         writes.push(input.content);
         return inner.addMemory(assistantId, input);
       },
@@ -173,6 +179,36 @@ describe("purchase feedback", () => {
     assert.equal(await hasRegrettedPurchase(ada.id, row.category), false);
   });
 
+  it("writes the memory line on retry when the first save stored the rating and the write failed", async () => {
+    const ada = await signup("ada-retry@example.com");
+    await PurchaseRecord.create({
+      userId: ada.id,
+      item: "Retry buds",
+      category: "audio",
+      price: 50,
+      verdict: null,
+      feedback: null,
+      isExample: false,
+      source: "checkout",
+    });
+    const history = await get("/purchases/history", ada.cookie);
+    const row = (history.body.purchases as { _id: string; item: string; category: string; price: number }[])[0];
+    assert.ok(row);
+    const before = writes.length;
+    failMemory = 1;
+    const failed = await post(`/purchases/${row._id}/feedback`, { feedback: "regretted" }, ada.cookie);
+    assert.equal(failed.status, 500);
+    assert.equal(writes.length, before);
+    const retried = await post(`/purchases/${row._id}/feedback`, { feedback: "regretted" }, ada.cookie);
+    assert.equal(retried.status, 200);
+    assert.equal((retried.body.purchase as { feedback: string }).feedback, "regretted");
+    assert.equal(writes.at(-1), purchaseVoteLine("regretted", row.item, row.category, row.price));
+    assert.equal(writes.length, before + 1);
+    const same = await post(`/purchases/${row._id}/feedback`, { feedback: "regretted" }, ada.cookie);
+    assert.equal(same.status, 200);
+    assert.equal(writes.length, before + 1);
+  });
+
   it("keeps ratings isolated and the regret helper per user", async () => {
     const ada = await signup("ada-iso@example.com");
     const blake = await signup("blake-iso@example.com");
@@ -296,6 +332,10 @@ describe("purchase feedback", () => {
     assert.equal(rows[0]?.category, "phone");
     assert.equal(rows[0]?.price, 1199);
     assert.equal(rows[0]?.feedback, null);
+    const checkIns = await CheckIn.find({ purchaseId: rows[0]?._id });
+    assert.equal(checkIns.length, 1);
+    assert.equal(checkIns[0]?.sentAt, null);
+    assert.equal(checkIns[0]?.answer, null);
   });
 });
 

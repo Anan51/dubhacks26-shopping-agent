@@ -3,8 +3,11 @@ import type { AccountDirectory } from "../auth/accounts.js";
 import type { BackboardClient } from "../memory/backboard.js";
 import { PurchaseRecord } from "../purchases/model.js";
 import { setPurchaseFeedback } from "../purchases/service.js";
-import { CHECK_IN_DELAY_MS, CheckIn } from "./model.js";
+import { ensureCheckIn, rememberCheckIn } from "./ensure.js";
+import { CheckIn } from "./model.js";
 import { checkInText, parseWorthReply } from "./reply.js";
+
+export { ensureCheckIn, rememberCheckIn };
 
 export type CheckInLink = {
   conversationId: string;
@@ -18,25 +21,6 @@ export type CheckInSender = {
 };
 
 const BATCH = 20;
-
-/** One row per purchase. A second call leaves the original due time in place. */
-export async function ensureCheckIn(userId: string, purchaseId: string, now = new Date()): Promise<void> {
-  const dueAt = new Date(now.getTime() + CHECK_IN_DELAY_MS);
-  await CheckIn.updateOne(
-    { purchaseId },
-    {
-      $setOnInsert: {
-        userId,
-        purchaseId,
-        dueAt,
-        sentAt: null,
-        answeredAt: null,
-        answer: null,
-      },
-    },
-    { upsert: true },
-  );
-}
 
 /**
  * The check-in row already exists. Stamp sentAt, then send.
@@ -54,6 +38,14 @@ export async function sendDueCheckIns(deps: CheckInSender): Promise<number> {
   let sent = 0;
   for (const row of due) {
     const userId = row.userId.toString();
+    const purchase = await PurchaseRecord.findById(row.purchaseId).select("item feedback");
+    if (purchase?.feedback === "kept" || purchase?.feedback === "regretted") {
+      await CheckIn.updateOne(
+        { _id: row._id, answeredAt: null },
+        { $set: { answeredAt: deps.now, answer: purchase.feedback === "kept" ? "yes" : "no" } },
+      );
+      continue;
+    }
     const link = deps.linkFor(userId);
     if (!link) {
       continue;
@@ -66,7 +58,6 @@ export async function sendDueCheckIns(deps: CheckInSender): Promise<number> {
     if (!claimed) {
       continue;
     }
-    const purchase = await PurchaseRecord.findById(claimed.purchaseId).select("item");
     const text = checkInText(typeof purchase?.item === "string" ? purchase.item : "");
     try {
       await deps.send({

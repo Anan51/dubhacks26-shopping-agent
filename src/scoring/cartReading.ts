@@ -1,8 +1,8 @@
 import mongoose from "mongoose";
 
-import { liftCart, sleepCart, VAULT_MS } from "../carts.js";
-import { categoryForItem, getBudgetProfile } from "../purchases/service.js";
-import { assertNever, type Cart, type Decision, type ScoreBucket } from "../types.js";
+import { sleepCart, VAULT_MS } from "../carts.js";
+import { categoryForItem, getBudgetProfile, type BudgetProfile } from "../purchases/service.js";
+import { type Cart, type Decision, type ScoreBucket } from "../types.js";
 import { computeImpulseScore } from "./backboardScore.js";
 import { hoursOfWork, hoursOfWorkText, type HoursOfWork } from "./hoursOfWork.js";
 import { impulseBand, legacyImpulseBase } from "./lockBand.js";
@@ -44,16 +44,21 @@ export async function readImpulse(
   userId: string | null,
   input: { item: string; category: string; price: number; necessary: boolean },
 ): Promise<CartReading> {
-  const hourlyRate = await hourlyRateFor(userId);
+  const profile = await budgetFor(userId);
+  const hourlyRate = profile?.hourlyRate ?? null;
   const rawHours = hourlyRate != null && hourlyRate > 0 ? input.price / hourlyRate : null;
   const worked = hourlyRate != null ? hoursOfWork(input.price, hourlyRate) : null;
-  const scored = await computeImpulseScore(userId ?? "", {
-    item: input.item,
-    category: input.category,
-    price: input.price,
-    necessary: input.necessary,
-    hours: rawHours,
-  });
+  const scored = await computeImpulseScore(
+    userId ?? "",
+    {
+      item: input.item,
+      category: input.category,
+      price: input.price,
+      necessary: input.necessary,
+      hours: rawHours,
+    },
+    profile ?? undefined,
+  );
   const band = impulseBand(scored.score);
   return {
     impulse: { score1to8: scored.score, band, why: scored.why },
@@ -73,48 +78,45 @@ export function readingForCart(userId: string | null, cart: Cart): Promise<CartR
   });
 }
 
+export type ImpulseApply = "create" | "refresh";
+
 /**
- * Stores the 1–8 reading on the cart and, before a justification grade exists,
- * sets the legacy 1–5 base the lock math already understands.
- * Necessary buys are left unlocked. Soft stays on the marinating lock.
+ * Stores the 1–8 reading on the cart.
+ * An unnecessary bag is never unlocked from the score. Only a necessary buy opens without a reply.
+ * `create` may vault a strict bag once. `refresh` updates the copy, and tightens to a vault only when the band newly becomes strict.
  */
-export function applyImpulseReading(cart: Cart, reading: CartReading, now: Date, demoReminderMs: number): void {
-  if (cart.decision) {
-    const annotated = annotateDecision(cart.decision, reading);
-    cart.decision = annotated.decision;
-    cart.impulse = annotated.impulse;
-    cart.hoursOfWork = annotated.hoursOfWork;
-    cart.hoursOfWorkText = annotated.hoursOfWorkText;
-  } else {
-    cart.impulse = reading.impulse;
-    cart.hoursOfWork = reading.hoursOfWork;
-    cart.hoursOfWorkText = reading.hoursOfWorkText;
+export function applyImpulseReading(
+  cart: Cart,
+  reading: CartReading,
+  now: Date,
+  demoReminderMs: number,
+  mode: ImpulseApply = "create",
+): void {
+  const previousBand = cart.impulse?.band ?? null;
+  cart.impulse = reading.impulse;
+  cart.hoursOfWork = reading.hoursOfWork;
+  cart.hoursOfWorkText = reading.hoursOfWorkText;
+  if (cart.purchaseScore != null || cart.necessity === "necessary") {
+    return;
   }
-  if (cart.purchaseScore != null) {
+  const band = reading.impulse.band;
+  if (mode === "refresh" && (previousBand == null || previousBand === band)) {
     return;
   }
   cart.userImpulseScore = reading.legacyImpulse;
-  if (cart.necessity === "necessary") {
+  if (band !== "strict" || cartIsEnforcedVault(cart)) {
     return;
   }
-  switch (reading.impulse.band) {
-    case "free":
-      liftCart(cart);
-      return;
-    case "soft":
-      return;
-    case "strict":
-      sleepCart(cart, now, VAULT_MS, demoReminderMs, "enforced");
-      return;
-    default:
-      assertNever(reading.impulse.band);
-  }
+  sleepCart(cart, now, VAULT_MS, demoReminderMs, "enforced");
 }
 
-async function hourlyRateFor(userId: string | null): Promise<number | null> {
+function cartIsEnforcedVault(cart: Cart): boolean {
+  return cart.status === "vault" && cart.vaultMode === "enforced" && cart.vaultUntil != null;
+}
+
+async function budgetFor(userId: string | null): Promise<BudgetProfile | null> {
   if (!userId || !/^[a-f0-9]{24}$/i.test(userId) || mongoose.connection.readyState !== 1) {
     return null;
   }
-  const profile = await getBudgetProfile(userId);
-  return profile.hourlyRate;
+  return getBudgetProfile(userId);
 }

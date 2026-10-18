@@ -20,6 +20,7 @@ import { demoCheckInsAllowed } from "./demo.js";
 import { CheckIn } from "./model.js";
 import { parseWorthReply } from "./reply.js";
 import { startCheckInLoop } from "./scheduler.js";
+import { rememberCheckIn } from "./ensure.js";
 import { answerCheckIn, ensureCheckIn, sendDueCheckIns, takeCheckInReply } from "./service.js";
 
 const SECRET = "checkin-test-secret";
@@ -98,6 +99,55 @@ describe("check-ins", { concurrency: false }, () => {
     await close();
     await mongoose.disconnect();
     await mongod.stop();
+  });
+
+  it("skips a purchase the shopper already rated and still saves the purchase when the check-in write fails", async () => {
+    const ada = await signup("ada-rated@example.com");
+    const rated = await PurchaseRecord.create({
+      userId: ada.id,
+      item: "Rated case",
+      category: "case",
+      price: 12,
+      feedback: "kept",
+      isExample: false,
+      source: "checkout",
+    });
+    await rememberCheckIn(ada.id, rated.id);
+    assert.equal(await CheckIn.countDocuments({ purchaseId: rated.id }), 0);
+
+    const created = await post("/purchases", { item: "Open phone", category: "phone", price: 40, verdict: null }, ada.cookie);
+    assert.equal(created.status, 201);
+    await rememberCheckIn(ada.id, "not-a-purchase-id");
+    const purchaseId = (created.body.purchase as { _id: string })._id;
+    assert.equal(await CheckIn.countDocuments({ purchaseId }), 1);
+  });
+
+  it("does not text a check-in after the popup already rated it", async () => {
+    const ada = await signup("ada-skip@example.com");
+    const purchase = await PurchaseRecord.create({
+      userId: ada.id,
+      item: "Skipped watch",
+      category: "watch",
+      price: 80,
+      feedback: null,
+      isExample: false,
+      source: "checkout",
+    });
+    await ensureCheckIn(ada.id, purchase.id, new Date(Date.now() - 8 * 24 * 60 * 60 * 1000));
+    purchase.feedback = "kept";
+    await purchase.save();
+    const sent = await sendDueCheckIns({
+      now: new Date(),
+      linkFor: () => ({ conversationId: "desk:skip" }),
+      send: async () => {
+        throw new Error("should not send");
+      },
+    });
+    assert.equal(sent, 0);
+    const row = await CheckIn.findOne({ purchaseId: purchase.id });
+    assert.equal(row?.answer, "yes");
+    assert.ok(row?.answeredAt);
+    assert.equal(row?.sentAt, null);
   });
 
   it("creates one check-in due in 7 days and does not duplicate it", async () => {

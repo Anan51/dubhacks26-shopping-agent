@@ -5,7 +5,7 @@ import {
   getBudgetProfile,
   getPurchaseHistory,
   getSavedGoals,
-  hasRegrettedPurchase,
+  type BudgetProfile,
   type SavedGoal,
 } from "../purchases/service.js";
 import { clampImpulseScale } from "./lockBand.js";
@@ -129,34 +129,37 @@ export function scoreFromSignals(input: ImpulseItem, signals: ImpulseSignals): I
   };
 }
 
-/** Reads budget, regrets, history, and goals. Does not write. Necessary items skip the reads. */
-export async function computeImpulseScore(userId: string, input: ImpulseItem): Promise<ImpulseScore> {
+const HISTORY_WINDOW = 50;
+
+/**
+ * Reads budget, regrets, history, and goals. Does not write. Necessary items skip the reads.
+ * Category regrets use `countRegrets`. Kept purchases and the regret ratio use the same newest-50 window.
+ * Pass `budget` when the caller already loaded the profile so it is not read twice.
+ */
+export async function computeImpulseScore(
+  userId: string,
+  input: ImpulseItem,
+  budget?: Pick<BudgetProfile, "weeklyBudget">,
+): Promise<ImpulseScore> {
   if (input.necessary || !shopperReadable(userId)) {
     return scoreFromSignals(input, EMPTY_IMPULSE_SIGNALS);
   }
   const category = input.category.trim().toLowerCase();
-  const [budget, history, categoryRegretCount, overallRegretCount, goals, regrettedFlag] = await Promise.all([
-    getBudgetProfile(userId),
-    getPurchaseHistory(userId, 50),
+  const [profile, history, categoryRegrets, goals] = await Promise.all([
+    budget ? Promise.resolve(budget) : getBudgetProfile(userId),
+    getPurchaseHistory(userId, HISTORY_WINDOW),
     countRegrets(userId, category),
-    countRegrets(userId),
     getSavedGoals(userId),
-    hasRegrettedPurchase(userId, category),
   ]);
-  const counted = history.filter((row) => row.isExample !== true);
-  const historyRegrets = counted.filter((row) => row.category === category && row.feedback === "regretted").length;
-  const categoryRegrets = regrettedFlag ? Math.max(historyRegrets, categoryRegretCount) : 0;
-  const categoryKept = counted.filter((row) => row.category === category && row.feedback === "kept").length;
-  const rated = counted.filter((row) => row.feedback === "regretted" || row.feedback === "kept");
-  const historyRegretTotal = rated.filter((row) => row.feedback === "regretted").length;
+  const rated = history.filter((row) => row.feedback === "regretted" || row.feedback === "kept");
   return scoreFromSignals(
     { ...input, category },
     {
-      weeklyBudget: budget.weeklyBudget,
+      weeklyBudget: profile.weeklyBudget,
       categoryRegrets,
-      categoryKept,
-      regretCount: Math.max(historyRegretTotal, overallRegretCount),
-      ratedCount: Math.max(rated.length, overallRegretCount),
+      categoryKept: history.filter((row) => row.category === category && row.feedback === "kept").length,
+      regretCount: rated.filter((row) => row.feedback === "regretted").length,
+      ratedCount: rated.length,
       goals,
     },
   );

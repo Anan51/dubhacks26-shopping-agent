@@ -316,6 +316,92 @@ describe("impulse flow on the server", () => {
   });
 });
 
+describe("checkout ping and a low score", () => {
+  it("pings an unnecessary bag once, keeps a score of 3 locked, and ignores a repeat post", async () => {
+    const store = createMemoryStore();
+    store.savePhoneLink({
+      userId: "user-low",
+      conversationId: "desk:low-bag-ping",
+      linkedAt: "2026-10-18T00:00:00.000Z",
+    });
+    const running = createApp({
+      store,
+      origin: "http://127.0.0.1",
+      lockMs: 600_000,
+      demoReminderMs: 60_000,
+      demoDefault: true,
+      agentHandle: null,
+      photon: null,
+      xaiModel: "grok-4.20-0309-non-reasoning",
+      xaiTimeoutMs: 8_000,
+      polish: async (template) => template,
+    });
+    const server = createServer(running.app);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${address.port}`;
+    const phone = {
+      userId: "user-low",
+      itemNames: ["Example phone"],
+      totalCents: 120_000,
+      parsed: true,
+      demo: true,
+    };
+    try {
+      const created = await post(base, "/api/carts", phone);
+      const locked = created.body as CartSnap;
+      assert.equal(created.status, 201);
+      assert.equal(locked.necessity, "unnecessary");
+      assert.equal(locked.isUnlocked, false);
+      assert.equal(locked.status, "locked");
+      assert.equal(locked.lastPing && typeof locked.lastPing === "object" ? (locked.lastPing as { delivered: boolean }).delivered : null, true);
+
+      const stored = store.getCart(locked.code);
+      assert.ok(stored);
+      stored.impulse = { score1to8: 3, band: "free", why: null };
+      stored.userImpulseScore = 4;
+      store.saveCart(stored);
+      const low = (await get(base, `/api/carts/${locked.code}`)) as CartSnap;
+      assert.equal(low.impulse?.score1to8, 3);
+      assert.equal(low.isUnlocked, false);
+      assert.equal(low.status, "locked");
+
+      const again = await post(base, "/api/carts", phone);
+      const replay = again.body as CartSnap;
+      assert.equal(again.status, 200);
+      assert.equal(replay.code, locked.code);
+      assert.equal(replay.isUnlocked, false);
+      assert.equal(replay.status, "locked");
+
+      const thread = (await get(base, "/api/dev/messages?conversationId=desk:low-bag-ping")) as {
+        turns: { role: string; text: string }[];
+      };
+      const pings = thread.turns.filter((turn) => turn.role === "agent" && turn.text.includes("paused your"));
+      assert.equal(pings.length, 1);
+
+      const cable = await post(base, "/api/carts", {
+        userId: "user-cable-ping",
+        itemNames: ["USB-C charge cable"],
+        totalCents: 1_900,
+        parsed: true,
+        demo: true,
+      });
+      const open = cable.body as CartSnap;
+      assert.equal(open.necessity, "necessary");
+      assert.equal(open.isUnlocked, true);
+      assert.equal(open.status, "unlocked");
+      assert.equal(open.lastPing, null);
+    } finally {
+      running.scheduler.stop();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+});
+
 describe("keyword necessity on the request path", () => {
   it("answers with keywords before a slow Grok call and repairs a deduped cart", async () => {
     const store = createMemoryStore();
