@@ -168,4 +168,21 @@ describe("locked bag observer", () => {
 
     watch.disconnect();
   });
+
+  it("does not re-gate when mute() inserts a Check Out button", async () => {
+    const document = new JSDOM("<!doctype html><html><body></body></html>").window.document;
+    let paints = 0;
+    const watch = watchPage(document, () => {
+      paints += 1;
+    });
+    watch.mute(() => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Check Out";
+      document.body.append(button);
+    });
+    await flush();
+    assert.equal(paints, 0);
+    watch.disconnect();
+  });
 });

@@ -101,5 +101,10 @@ describe("checkout controls", () => {
       isBlockedControl({ tag: "a", text: "Learn more about Apple Card Monthly Installments", ariaLabel: "" }, "bag"),
       false,
     );
+    assert.equal(isBlockedControl({ tag: "a", text: "Check out", ariaLabel: "" }, "bag"), true);
+    assert.equal(isBlockedControl({ tag: "a", text: "  Check\n Out ", ariaLabel: "" }, "bag"), true);
+    assert.equal(isBlockedControl({ tag: "a", text: "CHECK OUT", ariaLabel: "" }, "bag"), true);
+    assert.equal(isBlockedControl({ tag: "a", text: "Check Out Now", ariaLabel: "" }, "bag"), true);
+    assert.equal(isBlockedControl({ tag: "a", text: "Check out our new iPhone deals", ariaLabel: "" }, "bag"), false);
   });
 });

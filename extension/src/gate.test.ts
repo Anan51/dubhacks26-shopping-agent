@@ -125,17 +125,22 @@ describe("checkout gate", () => {
       <apple-pay-button id="pay"></apple-pay-button>
       <button type="button" id="card">Pay with Apple Card</button>
       <a id="plain-checkout" href="/shop/bagx/checkout_now">Check Out</a>
+      <a id="check-lower" href="/shop/bagx/checkout_now">Check out</a>
+      <a id="check-break" href="/shop/bagx/checkout_now">  Check\n Out </a>
+      <a id="check-upper" href="/shop/bagx/checkout_now">CHECK OUT</a>
+      <a id="check-spans" href="/shop/bagx/checkout_now"><span>Check</span> <span>Out</span></a>
+      <a id="promo" href="/shop/buy-iphone">Check out our new iPhone deals</a>
       <a id="learn" href="/apple-card/">Learn more about Apple Card Monthly Installments</a>
     </body></html>`).window.document;
     const gate = installGate(document, "bag");
     gate.paint();
-    for (const id of ["footer-link", "nav-link", "header-link", "footer-checkout", "learn"]) {
+    for (const id of ["footer-link", "nav-link", "header-link", "footer-checkout", "learn", "promo"]) {
       const node = document.querySelector(`#${id}`);
       assert.ok(node);
       assert.equal(node.hasAttribute("data-simmer-blocked"), false, id);
       assert.equal(click(node).defaultPrevented, false, id);
     }
-    for (const id of ["checkout", "apple", "pay", "card", "plain-checkout"]) {
+    for (const id of ["checkout", "apple", "pay", "card", "plain-checkout", "check-lower", "check-break", "check-upper", "check-spans"]) {
       const node = document.querySelector(`#${id}`);
       assert.ok(node);
       assert.equal(node.getAttribute("data-simmer-blocked"), "1", id);
