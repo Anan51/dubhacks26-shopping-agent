@@ -1,10 +1,10 @@
+import { isRecord } from "../../src/record.js";
 import { authOriginFromStorage } from "./auth-flag.js";
 
 const LOGIN_ERROR = "Invalid email or password.";
 const SIGNUP_ERROR = "Could not sign up.";
 const REACH_ERROR = "Could not reach the server.";
 
-/** Mounts email login only when `origin` is a configured local auth server. Returns false and touches nothing otherwise. */
 export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boolean {
   const parsed = authOriginFromStorage(originValue);
   if (!parsed) {
@@ -180,6 +180,3 @@ async function readUser(response: Response): Promise<{ email: string } | null> {
   return { email: body.user.email };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}

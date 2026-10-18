@@ -15,6 +15,7 @@ import { SESSION_COOKIE } from "./auth/session.js";
 import { MemoryNote, User } from "./auth/user.js";
 import { HttpBackboardClient } from "./memory/backboard.js";
 import { createMemoryRuntime, type MemoryRuntime } from "./memory/runtime.js";
+import { isRecord } from "./record.js";
 
 const SERVER_SELECTION_TIMEOUT_MS = 10_000;
 
@@ -29,7 +30,7 @@ type Failure = {
  * Laptop check for Atlas, email login, and memory.
  * Reads MONGODB_URI from the environment or .env. Does not print the URI or the Backboard key.
  */
-export async function runMongoCheck(): Promise<number> {
+async function runMongoCheck(): Promise<number> {
   loadLocalEnv();
   const uri = process.env.MONGODB_URI?.trim() ?? "";
   if (!uri) {
@@ -53,10 +54,9 @@ export async function runMongoCheck(): Promise<number> {
       connected = true;
       console.log("connect: ok");
     } catch (error) {
-      fail(failure, "connect", error);
+      throw new StepFailure("connect", presentable(error));
     }
 
-    if (!failure.current) {
     const secret = process.env.JWT_SECRET?.trim() ?? "";
     memory = createMemoryRuntime();
     const app = express();
@@ -69,54 +69,45 @@ export async function runMongoCheck(): Promise<number> {
     });
     server = createServer(app);
     const base = await listen(server);
-
     const email = `checkmongo+${Date.now()}@example.com`;
     const password = randomBytes(18).toString("base64url");
 
     const created = await post(base, "/auth/signup", { email, password });
-    const createdUser = userFrom(created.body);
-    if (createdUser) {
-      userId = createdUser.id;
+    userId = userFrom(created.body)?.id ?? null;
+    if (created.status !== 201 || !created.cookie || !userId) {
+      throw new StepFailure("signup", `status ${created.status}${errorSuffix(created.body)}`);
     }
-    if (created.status !== 201 || !created.cookie || !createdUser) {
-      fail(failure, "signup", `status ${created.status}${errorSuffix(created.body)}`);
-    } else {
-      console.log("signup: ok");
-      const loggedIn = await post(base, "/auth/login", { email, password });
-      const loggedInUser = userFrom(loggedIn.body);
-      if (loggedIn.status !== 200 || !loggedIn.cookie || loggedInUser?.id !== userId) {
-        fail(failure, "login", `status ${loggedIn.status}${errorSuffix(loggedIn.body)}`);
-      } else {
-        console.log("login: ok");
-        const wrong = await post(base, "/auth/login", { email, password: `${password}no` });
-        if (wrong.status !== 401 || wrong.cookie) {
-          fail(failure, "wrong-password", `status ${wrong.status}${errorSuffix(wrong.body)}`);
-        } else {
-          console.log("wrong-password: ok");
-          const text = `check-mongo ${Date.now()}`;
-          const written = await post(base, "/memories", { type: "goal", text }, loggedIn.cookie);
-          const readback =
-            written.status === 201
-              ? memory.remote
-                ? await post(base, "/memories/search", { query: text }, loggedIn.cookie)
-                : await get(base, "/memories", loggedIn.cookie)
-              : null;
-          if (written.status !== 201 || !readback || readback.status !== 200 || !bodyHasText(readback.body, text)) {
-            const status = written.status !== 201 ? written.status : (readback?.status ?? 0);
-            const body = written.status !== 201 ? written.body : readback?.body;
-            fail(failure, "memory", `${written.status === 201 ? "read" : "write"} status ${status}${errorSuffix(body)}`);
-          } else {
-            console.log(`memory: ok (${memory.remote ? "backboard" : "in-memory fallback"})`);
-            passed = true;
-          }
-        }
-      }
+    console.log("signup: ok");
+
+    const loggedIn = await post(base, "/auth/login", { email, password });
+    if (loggedIn.status !== 200 || !loggedIn.cookie || userFrom(loggedIn.body)?.id !== userId) {
+      throw new StepFailure("login", `status ${loggedIn.status}${errorSuffix(loggedIn.body)}`);
     }
+    console.log("login: ok");
+
+    const wrong = await post(base, "/auth/login", { email, password: `${password}no` });
+    if (wrong.status !== 401 || wrong.cookie) {
+      throw new StepFailure("wrong-password", `status ${wrong.status}${errorSuffix(wrong.body)}`);
     }
+    console.log("wrong-password: ok");
+
+    const text = `check-mongo ${Date.now()}`;
+    const written = await post(base, "/memories", { type: "goal", text }, loggedIn.cookie);
+    const readback =
+      written.status === 201
+        ? memory.remote
+          ? await post(base, "/memories/search", { query: text }, loggedIn.cookie)
+          : await get(base, "/memories", loggedIn.cookie)
+        : null;
+    if (written.status !== 201 || !readback || readback.status !== 200 || !bodyHasText(readback.body, text)) {
+      const status = written.status !== 201 ? written.status : (readback?.status ?? 0);
+      const body = written.status !== 201 ? written.body : readback?.body;
+      throw new StepFailure("memory", `${written.status === 201 ? "read" : "write"} status ${status}${errorSuffix(body)}`);
+    }
+    console.log(`memory: ok (${memory.remote ? "backboard" : "in-memory fallback"})`);
+    passed = true;
   } catch (error) {
-    if (!failure.current) {
-      fail(failure, "signup", error);
-    }
+    failure.current = error instanceof StepFailure ? { step: error.step, reason: error.message } : { step: "signup", reason: presentable(error) };
   } finally {
     if (connected) {
       try {
@@ -125,7 +116,7 @@ export async function runMongoCheck(): Promise<number> {
       } catch (error) {
         console.log("cleanup: failed");
         if (!failure.current) {
-          fail(failure, "cleanup", error);
+          failure.current = { step: "cleanup", reason: presentable(error) };
           passed = false;
         }
       }
@@ -141,8 +132,14 @@ export async function runMongoCheck(): Promise<number> {
   return passed ? 0 : 1;
 }
 
-function fail(box: { current: Failure | null }, step: Step, error: unknown): void {
-  box.current = { step, reason: presentable(error) };
+class StepFailure extends Error {
+  readonly step: Step;
+
+  constructor(step: Step, reason: string) {
+    super(reason);
+    this.name = "StepFailure";
+    this.step = step;
+  }
 }
 
 async function removeFixture(userId: string | null, memory: MemoryRuntime | null): Promise<void> {
@@ -214,10 +211,6 @@ function bodyHasText(body: unknown, text: string): boolean {
     return false;
   }
   return body.memories.some((memory) => isRecord(memory) && memory.text === text);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function listen(server: Server): Promise<string> {

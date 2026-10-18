@@ -3,24 +3,25 @@ import express, { type Request, type RequestHandler, type Response, type Router 
 import type { BackboardClient } from "../memory/backboard.js";
 import { type MemoryRuntime, type RememberInput } from "../memory/runtime.js";
 import { assistantForUser, authenticatedUserId, refuseClientScope, ScopeError } from "../memory/service.js";
+import { isRecord } from "../record.js";
 import { AccountError, logIn, publicUser, signUp, type AccountDirectory, type AccountUser } from "./accounts.js";
 import { mongoState, mongoUnavailableMessage } from "./db.js";
 import { clearSessionCookie, readSession, requireUser, setSessionCookie, signSession, tokenFromRequest } from "./session.js";
 
-export type AuthRouteDeps = {
+type AuthRouteDeps = {
   jwtSecret: string | null;
   ready: () => boolean;
   unavailableMessage: () => string;
   directory: AccountDirectory;
-  /** Runs after the account exists. Failures are logged and do not roll back signup. */
+  /** Assistant provisioning must not roll back a saved account. */
   afterCreate?: (user: AccountUser) => Promise<void>;
 };
 
-export type MemoryRouteDeps = {
+type MemoryRouteDeps = {
   authenticate: RequestHandler;
   list: MemoryRuntime["list"];
   search: MemoryRuntime["search"];
-  add: (req: Request) => Promise<unknown>;
+  add: (req: Request) => ReturnType<MemoryRuntime["add"]>;
 };
 
 export function attachAccounts(
@@ -59,20 +60,16 @@ export function attachAccounts(
   );
 }
 
-export function createAuthRouter(deps: AuthRouteDeps): Router {
+function createAuthRouter(deps: AuthRouteDeps): Router {
   const router = express.Router();
 
   router.post("/signup", async (req, res) => {
-    if (!deps.jwtSecret || !deps.ready()) {
-      res.status(503).json({ error: deps.unavailableMessage() });
+    const secret = openAuth(deps, res);
+    if (!secret) {
       return;
     }
     try {
-      const body = isRecord(req.body) ? req.body : {};
-      const user = await signUp(deps.directory, {
-        email: typeof body.email === "string" ? body.email : "",
-        password: typeof body.password === "string" ? body.password : "",
-      });
+      const user = await signUp(deps.directory, credentials(req));
       if (deps.afterCreate) {
         try {
           await deps.afterCreate(user);
@@ -80,28 +77,20 @@ export function createAuthRouter(deps: AuthRouteDeps): Router {
           console.error(error instanceof Error ? error.message : "Backboard assistant was not created.");
         }
       }
-      const token = await signSession({ id: user.id, email: user.email }, deps.jwtSecret);
-      setSessionCookie(res, token);
-      res.status(201).json({ user: publicUser(user) });
+      await sendSession(res, user, secret, 201);
     } catch (error: unknown) {
       sendAccountError(res, error);
     }
   });
 
   router.post("/login", async (req, res) => {
-    if (!deps.jwtSecret || !deps.ready()) {
-      res.status(503).json({ error: deps.unavailableMessage() });
+    const secret = openAuth(deps, res);
+    if (!secret) {
       return;
     }
     try {
-      const body = isRecord(req.body) ? req.body : {};
-      const user = await logIn(deps.directory, {
-        email: typeof body.email === "string" ? body.email : "",
-        password: typeof body.password === "string" ? body.password : "",
-      });
-      const token = await signSession({ id: user.id, email: user.email }, deps.jwtSecret);
-      setSessionCookie(res, token);
-      res.json({ user: publicUser(user) });
+      const user = await logIn(deps.directory, credentials(req));
+      await sendSession(res, user, secret, 200);
     } catch (error: unknown) {
       sendAccountError(res, error);
     }
@@ -147,25 +136,19 @@ export function createMemoryRouter(deps: MemoryRouteDeps): Router {
   const router = express.Router();
   router.use(deps.authenticate);
 
-  router.get("/", async (req, res) => {
+  const list = async (req: Request, res: Response) => {
     try {
       res.json({ memories: await deps.list(req) });
     } catch (error: unknown) {
       sendScopeError(res, error);
     }
-  });
+  };
+  router.get("/", list);
+  router.get("/:userId", list);
 
   router.post("/search", async (req, res) => {
     try {
       res.json({ memories: await deps.search(req) });
-    } catch (error: unknown) {
-      sendScopeError(res, error);
-    }
-  });
-
-  router.get("/:userId", async (req, res) => {
-    try {
-      res.json({ memories: await deps.list(req) });
     } catch (error: unknown) {
       sendScopeError(res, error);
     }
@@ -188,12 +171,34 @@ export function provisionAssistant(client: BackboardClient, directory: AccountDi
   };
 }
 
-async function addFromRequest(req: Request, memory: MemoryRuntime): Promise<unknown> {
+async function addFromRequest(req: Request, memory: MemoryRuntime): ReturnType<MemoryRuntime["add"]> {
   const parsed = parseRemember(req.body);
   if (!parsed) {
-    throw new ScopeError("type must be regret, goal, or returned, and text is required.");
+    throw new ScopeError(400, "type must be regret, goal, or returned, and text is required.");
   }
   return memory.add(req, parsed);
+}
+
+function openAuth(deps: AuthRouteDeps, res: Response): string | null {
+  if (!deps.jwtSecret || !deps.ready()) {
+    res.status(503).json({ error: deps.unavailableMessage() });
+    return null;
+  }
+  return deps.jwtSecret;
+}
+
+function credentials(req: Request): { email: string; password: string } {
+  const body = isRecord(req.body) ? req.body : {};
+  return {
+    email: typeof body.email === "string" ? body.email : "",
+    password: typeof body.password === "string" ? body.password : "",
+  };
+}
+
+async function sendSession(res: Response, user: AccountUser, secret: string, status: 200 | 201): Promise<void> {
+  const token = await signSession({ id: user.id, email: user.email }, secret);
+  setSessionCookie(res, token);
+  res.status(status).json({ user: publicUser(user) });
 }
 
 function parseRemember(body: unknown): RememberInput | null {
@@ -222,14 +227,10 @@ function sendAccountError(res: Response, error: unknown): void {
 
 function sendScopeError(res: Response, error: unknown): void {
   if (error instanceof ScopeError) {
-    const status = error.message === "Authentication required." ? 401 : 400;
-    res.status(status).json({ error: error.message });
+    res.status(error.status).json({ error: error.message });
     return;
   }
   console.error(error instanceof Error ? error.message : "Memory request failed.");
   res.status(500).json({ error: "Memory request failed." });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}

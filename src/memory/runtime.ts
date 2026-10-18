@@ -43,6 +43,7 @@ export function createMemoryRuntime(
     client,
     directory,
     personalize(text, authenticatedUserId) {
+      // A failed memory read must leave the verdict text unchanged.
       return personalizeNudge(text, authenticatedUserId, index, remote).catch(() => text);
     },
     list(req) {

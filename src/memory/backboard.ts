@@ -1,38 +1,13 @@
 import { setTimeout as delay } from "node:timers/promises";
 
+import { isRecord } from "../record.js";
+
 /**
- * Backboard client.
- *
- * Live check at 10:00 PM PT on Oct 17, 2026 confirmed these shapes:
- * - `X-API-Key` is the raw `BACKBOARD_API_KEY`. No prefix. Not `Authorization: Bearer`.
- * - POST /assistants { name, system_prompt } → 200 { assistant_id, name, created_at, ... }
- * - POST /assistants/{assistant_id}/memories { content, metadata? } → 201
- *   { success, message, memory_id, content }. No `status` and no `memory_operation_id`.
- *   A `memory_id` with no status is COMPLETED, and that memory was searchable immediately.
- * - POST /assistants/{assistant_id}/memories/search { query, limit } → 200
- *   { memories: [{ id, content, score, created_at, updated_at }], total_count }
- *   The SDK's `k` is `limit` on the wire. `updated_at` is not stored here.
- * - GET /assistants/{assistant_id}/memories → 200
- *   { memories: [{ id, content, metadata, ... }], total_count, page, ... }
- *   Listing in Simmer reads the Mongo index instead of this route.
- * - DELETE /assistants/{assistant_id} → 200 { message, assistant_id, deleted_at }
- *   Two assistants were isolated: the second assistant's search returned 0 hits
- *   for the first assistant's memory.
- *
- * Still unverified: GET /assistants/memories/operations/{operation_id}.
- * Add-memory did not return an operation id, so this route was never called.
- * Polling stays for a future write that includes `memory_operation_id` and a
- * status other than COMPLETED.
- *
- * From the docs, not that live check:
- * - POST /threads/messages always sends the stored assistant id, memory "Auto",
- *   stream false, and model_name gpt-4o. Omitting assistant_id would create an
- *   empty assistant. Assistant create does not take a model.
- * - resetMemories calls DELETE /assistants/{assistant_id}/memories. The live
- *   check confirmed deleting the assistant, not this clear-memories path.
- *
- * Memory is scoped to an assistant, not a user. Callers pass the assistant id
- * stored on the authenticated user's Mongo document.
+ * Live check (17 Oct 2026): send the raw key in `X-API-Key` with no prefix.
+ * Add-memory returned `{ memory_id, content }` and no status, so a memory id
+ * with no status is COMPLETED. GET /assistants/memories/operations/{id} never
+ * ran; polling stays for a later write that includes memory_operation_id.
+ * Callers must pass the assistant id stored on the Mongo user. Backboard has no user id.
  */
 
 export const DEFAULT_BACKBOARD_API_URL = "https://app.backboard.io/api";
@@ -117,13 +92,15 @@ export class HttpBackboardClient implements BackboardClient {
 
   async getMemoryOperation(operationId: string): Promise<{ status: MemoryOperationStatus; memoryIds: string[] }> {
     const body = await this.request("GET", `/assistants/memories/operations/${encodeURIComponent(operationId)}`);
+    if (!isRecord(body)) {
+      throw new Error("Backboard operation response missing status.");
+    }
     const status = readStatus(body);
     if (!status) {
       throw new Error("Backboard operation response missing status.");
     }
-    const memoryIds = Array.isArray(isRecord(body) ? body.memory_ids : null)
-      ? (body as { memory_ids: unknown[] }).memory_ids.filter((id): id is string => typeof id === "string")
-      : [];
+    const rawIds = body.memory_ids;
+    const memoryIds = Array.isArray(rawIds) ? rawIds.filter((id): id is string => typeof id === "string") : [];
     return { status, memoryIds };
   }
 
@@ -147,9 +124,13 @@ export class HttpBackboardClient implements BackboardClient {
       llm_provider: "openai",
       model_name: BACKBOARD_MODEL,
     });
-    const content = isRecord(body) && typeof body.content === "string" ? body.content : "";
-    const memoryOperationId = isRecord(body) && typeof body.memory_operation_id === "string" ? body.memory_operation_id : null;
-    return { content, memoryOperationId };
+    if (!isRecord(body)) {
+      return { content: "", memoryOperationId: null };
+    }
+    return {
+      content: typeof body.content === "string" ? body.content : "",
+      memoryOperationId: typeof body.memory_operation_id === "string" ? body.memory_operation_id : null,
+    };
   }
 
   async resetMemories(assistantId: string): Promise<void> {
@@ -350,6 +331,3 @@ function requiredString(body: unknown, key: string): string {
   return value;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}

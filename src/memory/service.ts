@@ -2,6 +2,7 @@ import type { Request } from "express";
 
 import type { AccountDirectory, AccountUser } from "../auth/accounts.js";
 import { MemoryNote } from "../auth/user.js";
+import { isRecord } from "../record.js";
 import {
   waitForMemoryWrite,
   type BackboardClient,
@@ -10,9 +11,12 @@ import {
 } from "./backboard.js";
 
 export class ScopeError extends Error {
-  constructor(message: string) {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
     super(message);
     this.name = "ScopeError";
+    this.status = status;
   }
 }
 
@@ -23,22 +27,13 @@ export type MemoryIndex = {
 
 const ASSISTANT_PROMPT = "You remember one shopper's regrets, goals, and items they returned. Do not invent purchases.";
 
-/**
- * Retrieval is scoped to the authenticated user's Mongo _id on req.user.
- * Query, body, route params, and metadata ids are ignored as a source of identity.
- * A different user id, or any assistant id, is refused before the index is touched.
- */
+/** Client ids in the query, body, params, or meta are refused. The only id used is req.user.id. */
 export async function getMemoriesForCurrentUser(req: Request, index: MemoryIndex): Promise<MemoryRecord[]> {
   const userId = authenticatedUserId(req);
   refuseClientScope(req, userId);
-  const memories = await index.list(userId);
-  return memories.filter((memory) => memory.userId === userId);
+  return ownedMemories(index, userId);
 }
 
-/**
- * Search is scoped the same way as list: req.user.id, then that user's assistant.
- * Client-supplied ids are refused before either store is touched.
- */
 export async function searchMemoriesForCurrentUser(
   req: Request,
   deps: {
@@ -52,13 +47,14 @@ export async function searchMemoriesForCurrentUser(
   refuseClientScope(req, userId);
   const query = readSearchQuery(req);
   if (!query) {
-    throw new ScopeError("query is required.");
+    throw new ScopeError(400, "query is required.");
   }
   const user = await deps.directory.findById(userId);
   if (!user) {
-    throw new ScopeError("Authentication required.");
+    throw new ScopeError(401, "Authentication required.");
   }
-  const owned = (await deps.index.list(userId)).filter((memory) => memory.userId === userId);
+  const owned = await ownedMemories(deps.index, userId);
+  // Backboard hits have no Simmer user id. The response stays the Mongo rows for req.user.id.
   if (deps.remote && user.backboardAssistantId) {
     await deps.client.searchMemories(user.backboardAssistantId, query, 10);
   }
@@ -69,18 +65,18 @@ export async function searchMemoriesForCurrentUser(
 export function authenticatedUserId(req: Request): string {
   const id = req.user?.id?.trim() ?? "";
   if (!id) {
-    throw new ScopeError("Authentication required.");
+    throw new ScopeError(401, "Authentication required.");
   }
   return id;
 }
 
 export function refuseClientScope(req: Request, userId: string): void {
   if (supplied(req, ["assistantId", "assistant_id"])) {
-    throw new ScopeError("Refusing a client-supplied assistant id.");
+    throw new ScopeError(400, "Refusing a client-supplied assistant id.");
   }
   const requestedUser = supplied(req, ["userId", "user_id"]);
   if (requestedUser && requestedUser !== userId) {
-    throw new ScopeError("Refusing a client-supplied user id.");
+    throw new ScopeError(400, "Refusing a client-supplied user id.");
   }
 }
 
@@ -100,7 +96,7 @@ export async function rememberForCurrentUser(
   refuseMetaScope(input.meta);
   const user = await deps.directory.findById(userId);
   if (!user) {
-    throw new ScopeError("Authentication required.");
+    throw new ScopeError(401, "Authentication required.");
   }
 
   let backboardMemoryId: string | null = null;
@@ -130,10 +126,7 @@ export async function rememberForCurrentUser(
   });
 }
 
-/**
- * Creates the user's own assistant when they do not have one yet.
- * The id is stored on that Mongo user. There is no argument for a client-supplied assistant id.
- */
+/** No parameter for a client assistant id. The stored id is the only one used. */
 export async function assistantForUser(
   user: AccountUser,
   directory: AccountDirectory,
@@ -151,7 +144,7 @@ export async function assistantForUser(
   return created.assistantId;
 }
 
-export function memoryContent(type: MemoryKind, text: string): string {
+function memoryContent(type: MemoryKind, text: string): string {
   switch (type) {
     case "regret":
       return `Regret: ${text}`;
@@ -192,7 +185,7 @@ export function createMongoMemoryIndex(): MemoryIndex {
         type: record.type,
         text: doc.text,
         createdAt: doc.createdAt?.toISOString() ?? record.createdAt,
-        meta: isMeta(doc.meta) ? doc.meta : {},
+        meta: isRecord(doc.meta) ? doc.meta : {},
         backboardMemoryId: doc.backboardMemoryId ?? null,
       };
     },
@@ -203,14 +196,14 @@ export function createMongoMemoryIndex(): MemoryIndex {
         type: asKind(doc.type),
         text: doc.text,
         createdAt: doc.createdAt?.toISOString() ?? new Date(0).toISOString(),
-        meta: isMeta(doc.meta) ? doc.meta : {},
+        meta: isRecord(doc.meta) ? doc.meta : {},
         backboardMemoryId: doc.backboardMemoryId ?? null,
       }));
     },
   };
 }
 
-export function personalizeNudgeText(base: string, memories: MemoryRecord[]): string {
+function personalizeNudgeText(base: string, memories: MemoryRecord[]): string {
   const goal = latest(memories, "goal");
   const regret = latest(memories, "regret");
   const returned = latest(memories, "returned");
@@ -230,10 +223,7 @@ export function personalizeNudgeText(base: string, memories: MemoryRecord[]): st
   return `${base}\n\n${lines.join(" ")}`;
 }
 
-/**
- * No-op unless Backboard is configured. Reads the local index for this Mongo user.
- * It does not call POST /threads/messages, so a nudge does not spend the gpt-4o credit.
- */
+/** Reads the Mongo index only. A nudge must not call POST /threads/messages. */
 export async function personalizeNudge(
   text: string,
   authenticatedUserId: string,
@@ -284,8 +274,13 @@ function refuseMetaScope(meta: Record<string, unknown> | undefined): void {
     return;
   }
   if ("userId" in meta || "user_id" in meta || "assistantId" in meta || "assistant_id" in meta) {
-    throw new ScopeError("Refusing a client-supplied user id.");
+    throw new ScopeError(400, "Refusing a client-supplied user id.");
   }
+}
+
+async function ownedMemories(index: MemoryIndex, userId: string): Promise<MemoryRecord[]> {
+  const memories = await index.list(userId);
+  return memories.filter((memory) => memory.userId === userId);
 }
 
 function asKind(value: string): MemoryKind {
@@ -297,14 +292,6 @@ function asKind(value: string): MemoryKind {
     default:
       return "regret";
   }
-}
-
-function isMeta(value: unknown): value is Record<string, unknown> {
-  return isRecord(value);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function assertNever(value: never): never {

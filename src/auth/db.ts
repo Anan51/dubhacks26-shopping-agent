@@ -8,20 +8,16 @@ export function mongoState(): MongoState {
   return state;
 }
 
-/** True only when MONGODB_URI is non-empty. The URI itself is never logged or hardcoded. */
 export function mongoConfigured(uri: string | null | undefined): boolean {
   return Boolean(uri?.trim());
 }
 
-export type ConnectMongoOptions = {
+type ConnectMongoOptions = {
   serverSelectionTimeoutMS?: number;
   dbName?: string;
 };
 
-/**
- * Connects when a URI is present. A missing URI is the normal demo path:
- * the process keeps booting and auth routes report that MongoDB is not configured.
- */
+/** A missing URI is not a startup error. Auth routes report that MongoDB is not configured. */
 export async function connectMongo(uri: string | null, options: ConnectMongoOptions = {}): Promise<MongoState> {
   const trimmed = uri?.trim() ?? "";
   if (!mongoConfigured(trimmed)) {

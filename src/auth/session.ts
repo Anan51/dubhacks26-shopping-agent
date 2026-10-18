@@ -14,12 +14,7 @@ declare global {
   }
 }
 
-/**
- * Auth method: a signed JWT in the httpOnly cookie `simmer_token`.
- * This is not a server session, so it does not share the in-memory cart store.
- * The same JWT is also accepted as `Authorization: Bearer` for non-browser clients.
- * SESSION_SECRET is unused while this JWT cookie is the session.
- */
+/** httpOnly cookie. Bearer is the same JWT for clients that do not send cookies. */
 export const SESSION_COOKIE = "simmer_token";
 const TOKEN_TTL = "7d";
 

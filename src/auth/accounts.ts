@@ -1,5 +1,5 @@
 import { hashPassword, verifyPassword } from "./password.js";
-import { User, type UserShape } from "./user.js";
+import { User } from "./user.js";
 
 export class AccountError extends Error {
   readonly status: number;
@@ -34,7 +34,7 @@ export function publicUser(user: AccountUser): PublicUser {
   return { id: user.id, email: user.email };
 }
 
-export function normalizeEmail(value: string): string | null {
+function normalizeEmail(value: string): string | null {
   const email = value.trim().toLowerCase();
   if (email.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return null;
@@ -97,7 +97,12 @@ export function mongooseDirectory(): AccountDirectory {
   };
 }
 
-function toAccount(doc: UserShape): AccountUser {
+function toAccount(doc: {
+  _id: { toString(): string };
+  email: string;
+  passwordHash: string;
+  backboardAssistantId?: string | null;
+}): AccountUser {
   return {
     id: doc._id.toString(),
     email: doc.email,
