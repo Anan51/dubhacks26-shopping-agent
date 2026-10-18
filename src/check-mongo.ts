@@ -50,7 +50,10 @@ async function runMongoCheck(): Promise<number> {
 
   try {
     try {
-      await connectMongo(uri, { serverSelectionTimeoutMS: SERVER_SELECTION_TIMEOUT_MS, dbName: "simmer" });
+      await connectMongo(uri, {
+        serverSelectionTimeoutMS: SERVER_SELECTION_TIMEOUT_MS,
+        dbName: process.env.MONGODB_DB?.trim() || "simmer",
+      });
       connected = true;
       console.log("connect: ok");
     } catch (error) {
