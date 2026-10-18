@@ -3,26 +3,36 @@ import { setTimeout as delay } from "node:timers/promises";
 /**
  * Backboard client.
  *
- * Confirmed from https://app.backboard.io/api and docs.backboard.io:
- * - Every request sends `X-API-Key`. Not `Authorization: Bearer`.
- * - POST /assistants { name, system_prompt } → { assistant_id }
- * - POST /assistants/{assistant_id}/memories { content, metadata? }
- * - GET /assistants/memories/operations/{operation_id} → { status: COMPLETED | IN_PROGRESS | ERROR }
- * - POST /assistants/{assistant_id}/memories/search { query, limit }
- *   The SDK's `searchMemories(assistantId, query, k)` maps `k` to this `limit`.
- * - POST /threads/messages { content, assistant_id, memory: "Auto", stream: false }
- *   Omitting assistant_id creates a new empty assistant. Always pass the per-user assistant.
- *   Documented model default is gpt-4o (`model_name`). Assistant create does not take a model.
- * - DELETE /assistants/{assistant_id}/memories
+ * Live check at 10:00 PM PT on Oct 17, 2026 confirmed these shapes:
+ * - `X-API-Key` is the raw `BACKBOARD_API_KEY`. No prefix. Not `Authorization: Bearer`.
+ * - POST /assistants { name, system_prompt } → 200 { assistant_id, name, created_at, ... }
+ * - POST /assistants/{assistant_id}/memories { content, metadata? } → 201
+ *   { success, message, memory_id, content }. No `status` and no `memory_operation_id`.
+ *   A `memory_id` with no status is COMPLETED, and that memory was searchable immediately.
+ * - POST /assistants/{assistant_id}/memories/search { query, limit } → 200
+ *   { memories: [{ id, content, score, created_at, updated_at }], total_count }
+ *   The SDK's `k` is `limit` on the wire. `updated_at` is not stored here.
+ * - GET /assistants/{assistant_id}/memories → 200
+ *   { memories: [{ id, content, metadata, ... }], total_count, page, ... }
+ *   Listing in Simmer reads the Mongo index instead of this route.
+ * - DELETE /assistants/{assistant_id} → 200 { message, assistant_id, deleted_at }
+ *   Two assistants were isolated: the second assistant's search returned 0 hits
+ *   for the first assistant's memory.
  *
- * UNCONFIRMED: whether BACKBOARD_API_KEY has a required prefix. Docs show the raw key.
- * This client sends the env value unchanged and does not add "Bearer" or any other prefix.
+ * Still unverified: GET /assistants/memories/operations/{operation_id}.
+ * Add-memory did not return an operation id, so this route was never called.
+ * Polling stays for a future write that includes `memory_operation_id` and a
+ * status other than COMPLETED.
  *
- * The add-memory 201 body is an open object in the published OpenAPI schema. We read
- * `memory_id`, `memory_operation_id`, and `status` from the integration contract.
+ * From the docs, not that live check:
+ * - POST /threads/messages always sends the stored assistant id, memory "Auto",
+ *   stream false, and model_name gpt-4o. Omitting assistant_id would create an
+ *   empty assistant. Assistant create does not take a model.
+ * - resetMemories calls DELETE /assistants/{assistant_id}/memories. The live
+ *   check confirmed deleting the assistant, not this clear-memories path.
  *
- * Memory is scoped to an assistant, not a user. Callers must pass the assistant id stored
- * on the authenticated user's Mongo document. This class does not accept a Simmer user id.
+ * Memory is scoped to an assistant, not a user. Callers pass the assistant id
+ * stored on the authenticated user's Mongo document.
  */
 
 export const DEFAULT_BACKBOARD_API_URL = "https://app.backboard.io/api";
@@ -144,11 +154,13 @@ export class HttpBackboardClient implements BackboardClient {
 
   async resetMemories(assistantId: string): Promise<void> {
     requireAssistant(assistantId);
+    // Not the live-checked delete. That one is DELETE /assistants/{id} and removes the assistant.
     await this.request("DELETE", `/assistants/${encodeURIComponent(assistantId)}/memories`);
   }
 
   private async request(method: string, path: string, payload?: unknown): Promise<unknown> {
     const headers: Record<string, string> = {
+      // Raw key. A live call accepted it with no prefix.
       "X-API-Key": this.apiKey,
     };
     const init: RequestInit = { method, headers };
@@ -246,7 +258,11 @@ export class InMemoryBackboardClient implements BackboardClient {
 
 const POLL_DELAYS_MS = [150, 300, 600, 1_200];
 
-/** Polls until the write is COMPLETED or ERROR. Recall must wait on this. */
+/**
+ * Polls GET /assistants/memories/operations/{id} until the write settles.
+ * The Oct 17 live add-memory response had no operation id, so this was not called.
+ * Kept for a write that returns memory_operation_id with status IN_PROGRESS.
+ */
 export async function waitForMemoryWrite(
   client: BackboardClient,
   write: MemoryWrite,
@@ -277,6 +293,7 @@ function requireAssistant(assistantId: string): void {
   }
 }
 
+/** Live 201 is { success, message, memory_id, content } with no status. That is COMPLETED. */
 function readMemoryWrite(body: unknown): MemoryWrite {
   if (!isRecord(body)) {
     throw new Error("Backboard memory response was not an object.");

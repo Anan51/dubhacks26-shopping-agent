@@ -35,24 +35,22 @@ No Google OAuth client is required.
 
 ## Confirmed Backboard contract
 
-Taken from [docs.backboard.io](https://docs.backboard.io) and the integration notes:
+A live check at 10:00 PM PT on Oct 17, 2026 confirmed the rows below. Every request sent the raw `BACKBOARD_API_KEY` in `X-API-Key`. There is no key prefix and it is not a bearer token.
 
-| Call | Request |
+| Call | Live result |
 | --- | --- |
-| Create assistant | `POST /assistants` `{ name, system_prompt }` → `assistant_id` |
-| Add memory | `POST /assistants/{assistant_id}/memories` `{ content, metadata? }` |
-| Operation status | `GET /assistants/memories/operations/{operation_id}` → `COMPLETED`, `IN_PROGRESS`, or `ERROR` |
-| Search | `POST /assistants/{assistant_id}/memories/search` `{ query, limit }` |
-| Send message | `POST /threads/messages` `{ content, assistant_id, memory: "Auto", stream: false, model_name: "gpt-4o" }` |
-| Reset | `DELETE /assistants/{assistant_id}/memories` |
+| Create assistant | `POST /assistants` `{ name, system_prompt }` → 200 `{ assistant_id, name, created_at, ... }` |
+| Add memory | `POST /assistants/{assistant_id}/memories` → 201 `{ success, message, memory_id, content }`. No `status` and no `memory_operation_id`. |
+| Search | `POST /assistants/{assistant_id}/memories/search` `{ query, limit }` → 200 `{ memories: [{ id, content, score, created_at, updated_at }], total_count }` |
+| List memories | `GET /assistants/{assistant_id}/memories` → 200 `{ memories: [{ id, content, metadata, ... }], total_count, page, ... }` |
+| Delete assistant | `DELETE /assistants/{assistant_id}` → 200 `{ message, assistant_id, deleted_at }` |
 
-Every request sends `X-API-Key`. Not `Authorization: Bearer`.
+A `memory_id` with no status is treated as `COMPLETED`. That memory was searchable immediately. Two assistants were isolated: the second assistant's search returned 0 hits for the first assistant's memory.
 
-Memory writes are asynchronous. A path that recalls immediately polls the operation until it settles.
+Simmer lists from the Mongo index rather than `GET /assistants/{id}/memories`. `resetMemories` still calls `DELETE /assistants/{assistant_id}/memories`, which was not part of this live check. The checked delete removes the assistant.
 
-Assistant create does not take a model. `gpt-4o` is the documented default on send message, and the client sets `model_name` there. The SDK's `searchMemories(assistantId, query, k)` is the search endpoint above; `k` is `limit` on the wire.
+`POST /threads/messages` is from the docs, not this live check. The client sends the stored assistant id, `memory: "Auto"`, `stream: false`, and `model_name: "gpt-4o"`. Assistant create does not take a model. The SDK's `k` is `limit` on search.
 
 ## Still unverified
 
-- **API key prefix.** The docs show the raw key in `X-API-Key` and do not document a prefix. The client sends `BACKBOARD_API_KEY` unchanged.
-- **Add-memory response fields.** The published OpenAPI schema for that 201 is an open object. The client reads `memory_id`, `memory_operation_id`, and `status` from the integration notes, and treats a present `memory_id` with no status as `COMPLETED`.
+`GET /assistants/memories/operations/{operation_id}` was never triggered. The live add-memory response had no operation id. The poller is unchanged for a later write that returns `memory_operation_id` with status `IN_PROGRESS`.
