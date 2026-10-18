@@ -167,7 +167,14 @@ export function Desk() {
             </select>
           </label>
         ) : null}
-        {cart ? <MathPanel cart={cart} gate={gate} personas={config?.personas ?? []} /> : null}
+        {cart ? (
+          <MathPanel
+            cart={cart}
+            gate={gate}
+            personas={config?.personas ?? []}
+            agentHandle={config?.agentHandle ?? null}
+          />
+        ) : null}
         {error ? <p role="alert">{error}</p> : null}
       </section>
     </div>
@@ -193,10 +200,12 @@ function MathPanel({
   cart,
   gate,
   personas,
+  agentHandle,
 }: {
   cart: CartResponse;
   gate: PayGate | null;
   personas: PublicConfig["personas"];
+  agentHandle: string | null;
 }) {
   const decision = cart.decision;
   const persona = personas.find((item) => item.id === (cart.personaId ?? "impulsive")) ?? null;
@@ -361,7 +370,7 @@ function MathPanel({
       {cart.lastPing?.delivered ? <p>Last ping landed in the linked thread.</p> : null}
       {cart.lastPing && !cart.lastPing.delivered ? (
         <p>
-          Ping {cart.lastPing.reason}. {pausedLinkLine(cart.linkMessage, config?.agentHandle ?? null)}
+          Ping {cart.lastPing.reason}. {pausedLinkLine(cart.linkMessage, agentHandle)}
         </p>
       ) : null}
     </div>
