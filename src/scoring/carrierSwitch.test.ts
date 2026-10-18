@@ -1,13 +1,20 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
+
+import { MongoMemoryServer } from "mongodb-memory-server";
+import mongoose from "mongoose";
 
 import { createApp } from "../app.js";
+import { connectMongo } from "../auth/db.js";
+import { User } from "../auth/user.js";
 import { itemsForBag, startLockedCart, withCartFacts } from "../carts.js";
 import { decide } from "../heuristic.js";
+import type { BackboardClient, MemorySearchHit } from "../memory/backboard.js";
 import { createMemoryStore } from "../store.js";
-import { applyImpulseReading, type CartReading } from "./cartReading.js";
+import type { Cart } from "../types.js";
+import { applyImpulseReading, readingForCart, type CartReading } from "./cartReading.js";
 import { EMPTY_IMPULSE_SIGNALS, scoreFromSignals } from "./backboardScore.js";
 import {
   CARRIER_PASS,
@@ -166,6 +173,56 @@ describe("carrier switch reasoning", () => {
     assert.equal(passing.carrierLine, carrierCardLine(CARRIER_PASS, REGRET_WHY));
   });
 
+  it("keeps one priced plan line after the carrier sentence, and an iPhone still scores over a cable", async () => {
+    const planCents = 3_500;
+    const carrier = startLockedCart({
+      items: itemsForBag(["Switch to Carrier X"], planCents, true),
+      totalCents: planCents,
+      parsedFromPage: true,
+      pageHost: "127.0.0.1",
+      fingerprint: "score|3500|switch to carrier x",
+      now: NOW,
+      demo: false,
+      lockMs: 600_000,
+      userId: "user-score",
+      code: "SCORE1",
+    });
+    carrier.necessity = "unnecessary";
+    applyCarrierLine(carrier, {
+      currentMonthlyCents: 8_000,
+      newMonthlyCents: planCents,
+      balanceCents: 36_000,
+      monthsLeft: 12,
+      feeCents: 12_000,
+    });
+    const priced = carrier.items.filter((item) => item.priceCents > 0);
+    assert.equal(priced.length, 1);
+    assert.equal(priced[0]?.name, "Switch to Carrier X");
+    assert.equal(carrier.carrierLine?.includes("$360"), true);
+
+    const apple = startLockedCart({
+      items: itemsForBag(["iPhone", "USB-C cable"], 80_900, true),
+      totalCents: 80_900,
+      parsedFromPage: true,
+      pageHost: "www.apple.com",
+      fingerprint: "score|80900|iphone|usb-c cable",
+      now: NOW,
+      demo: false,
+      lockMs: 600_000,
+      userId: "user-score",
+      code: "SCORE2",
+    });
+    apple.necessity = "unnecessary";
+    assert.equal(apple.carrierLine ?? null, null);
+    assert.equal(apple.items.filter((item) => item.priceCents > 0).length, 1);
+
+    const queries: string[] = [];
+    const carrierQuery = await scoreQuery(carrier, queries);
+    const appleQuery = await scoreQuery(apple, queries);
+    assert.equal(carrierQuery, "Switch to Carrier X other");
+    assert.equal(appleQuery, "iPhone phone");
+  });
+
   it("rejects a carrier payload that is not the five page numbers", () => {
     assert.equal(parseCarrierFacts(null), null);
     assert.equal(parseCarrierFacts({ currentMonthlyCents: 8_000 }), null);
@@ -176,6 +233,62 @@ describe("carrier switch reasoning", () => {
 });
 
 describe("carrier switch on the cart route", () => {
+  it("keeps a carrier wait locked when the plan price is under the $40 pause floor", async () => {
+    const underFloor: CarrierFacts = {
+      currentMonthlyCents: 8_000,
+      newMonthlyCents: 3_500,
+      balanceCents: 36_000,
+      monthsLeft: 12,
+      feeCents: 12_000,
+    };
+    assert.equal(underFloor.newMonthlyCents < 4_000, true);
+    assert.equal(carrierVerdict(underFloor), "wait");
+    const running = createApp({
+      store: createMemoryStore(),
+      origin: "http://127.0.0.1",
+      lockMs: 600_000,
+      demoReminderMs: 60_000,
+      demoDefault: false,
+      agentHandle: null,
+      photon: null,
+      xaiModel: "grok-4.20-0309-non-reasoning",
+      xaiTimeoutMs: 8_000,
+      polish: async (template) => template,
+    });
+    const server = createServer(running.app);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${address.port}`;
+    try {
+      const created = await post(base, "/api/carts", {
+        userId: "user-floor",
+        itemNames: ["Switch to Carrier X"],
+        totalCents: underFloor.newMonthlyCents,
+        parsed: true,
+        pageHost: "127.0.0.1",
+        demo: false,
+        carrier: underFloor,
+      });
+      assert.equal(created.status, 201);
+      const cart = created.body as CartSnap;
+      assert.equal(cart.totalCents, 3_500);
+      assert.equal(cart.necessity, "unnecessary");
+      assert.equal(cart.status, "locked");
+      assert.equal(cart.isUnlocked, false);
+      assert.equal(
+        cart.carrierLine,
+        "You'd pay $360 left on the phone plus a $120 fee to save $45 a month. That takes 11 months to break even. 12 months are left on the phone.",
+      );
+    } finally {
+      running.scheduler.stop();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it("keeps decide() and blocks the wait case", async () => {
     const running = createApp({
       store: createMemoryStore(),
@@ -288,11 +401,50 @@ type CartSnap = {
   code: string;
   status: string;
   isUnlocked: boolean;
+  totalCents?: number;
   necessity: string | null;
   carrierLine?: string | null;
   impulse?: { score1to8: number; why: string | null } | null;
   decision: unknown;
 };
+
+const SCORE_HASH = "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHQ$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+let scoreMongo: { mongod: MongoMemoryServer; userId: string } | null = null;
+
+after(async () => {
+  if (!scoreMongo) {
+    return;
+  }
+  await mongoose.disconnect();
+  await scoreMongo.mongod.stop();
+  scoreMongo = null;
+});
+
+async function scoreQuery(cart: Cart, queries: string[]): Promise<string> {
+  if (!scoreMongo) {
+    const mongod = await MongoMemoryServer.create({ binary: { version: "7.0.14" } });
+    await connectMongo(mongod.getUri());
+    const user = await User.create({
+      email: "carrier-score@example.com",
+      passwordHash: SCORE_HASH,
+      hourlyRate: 30,
+      weeklyBudget: 500,
+      backboardAssistantId: "asst-carrier-score",
+    });
+    scoreMongo = { mongod, userId: user.id };
+  }
+  const userId = scoreMongo.userId;
+  cart.userId = userId;
+  const start = queries.length;
+  await readingForCart(userId, cart, {
+    backboardEnabled: true,
+    client: scriptedScoreClient(async (_assistantId, query) => {
+      queries.push(query);
+      return [];
+    }),
+  });
+  return queries[start] ?? "";
+}
 
 function strictReading(why: string): CartReading {
   return {
@@ -300,6 +452,32 @@ function strictReading(why: string): CartReading {
     hoursOfWork: null,
     hoursOfWorkText: null,
     legacyImpulse: 1,
+  };
+}
+
+function scriptedScoreClient(
+  search: (assistantId: string, query: string, limit: number) => Promise<MemorySearchHit[]>,
+): BackboardClient {
+  return {
+    async createAssistant() {
+      return { assistantId: "asst-carrier-score" };
+    },
+    async addMemory() {
+      return { memoryId: "mem", operationId: null, status: "COMPLETED" };
+    },
+    async getMemoryOperation() {
+      return { status: "COMPLETED", memoryIds: [] };
+    },
+    searchMemories: search,
+    async sendMessage() {
+      throw new Error("sendMessage should not run");
+    },
+    async resetMemories() {
+      return undefined;
+    },
+    async deleteMemory() {
+      return undefined;
+    },
   };
 }
 
