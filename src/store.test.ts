@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
 import { itemsForBag, startLockedCart } from "./carts.js";
-import { createFileStore } from "./store.js";
+import { readAppConfig } from "./config.js";
+import { createDefaultStore, createFileStore } from "./store.js";
 
 describe("file store reset", () => {
   it("clears carts, sessions, phone links, and inbound ids on disk", () => {
@@ -46,5 +47,68 @@ describe("file store reset", () => {
     assert.equal(reloaded.listCarts().length, 0);
     assert.equal(reloaded.getPhoneLink("user-local"), undefined);
     assert.equal(reloaded.hasHandledInbound("m1"), false);
+  });
+});
+
+describe("default store fallback", () => {
+  it("keeps a writable file store", () => {
+    const filePath = path.join(mkdtempSync(path.join(tmpdir(), "simmer-store-ok-")), "waitmate.json");
+    const store = createDefaultStore(filePath);
+    store.savePhoneLink({
+      userId: "user-local",
+      conversationId: "thread-1",
+      linkedAt: "2026-10-18T00:00:00.000Z",
+    });
+    assert.equal(createDefaultStore(filePath).getPhoneLink("user-local")?.conversationId, "thread-1");
+  });
+
+  it("falls back to memory when the file store directory cannot be created", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "simmer-store-ro-"));
+    const blocker = path.join(root, "not-a-directory");
+    writeFileSync(blocker, "x");
+    const filePath = path.join(blocker, "waitmate.json");
+    const warnings: unknown[][] = [];
+    const original = console.warn;
+    console.warn = ((...args: unknown[]) => {
+      warnings.push(args);
+    }) as typeof console.warn;
+    try {
+      const store = createDefaultStore(filePath);
+      store.savePhoneLink({
+        userId: "user-local",
+        conversationId: "thread-1",
+        linkedAt: "2026-10-18T00:00:00.000Z",
+      });
+      assert.equal(store.getPhoneLink("user-local")?.conversationId, "thread-1");
+      assert.equal(existsSync(filePath), false);
+      assert.equal(warnings.length, 1);
+      assert.match(String(warnings[0]?.[0]), /in-memory store/);
+      assert.match(String(warnings[0]?.[0]), /not-a-directory/);
+    } finally {
+      console.warn = original;
+    }
+  });
+
+  it("uses memory on Vercel when WAITMATE_STORE_PATH is unset", () => {
+    const defaultFile = path.resolve("data/waitmate.json");
+    const existed = existsSync(defaultFile);
+    const warnings: unknown[][] = [];
+    const original = console.warn;
+    console.warn = ((...args: unknown[]) => {
+      warnings.push(args);
+    }) as typeof console.warn;
+    try {
+      const store = createDefaultStore(readAppConfig({ VERCEL: "1" }).storePath);
+      store.savePhoneLink({
+        userId: "user-local",
+        conversationId: "thread-1",
+        linkedAt: "2026-10-18T00:00:00.000Z",
+      });
+      assert.equal(store.getPhoneLink("user-local")?.conversationId, "thread-1");
+      assert.equal(existsSync(defaultFile), existed);
+      assert.deepEqual(warnings, []);
+    } finally {
+      console.warn = original;
+    }
   });
 });

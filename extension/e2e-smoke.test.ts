@@ -12,6 +12,7 @@ const root = path.resolve(import.meta.dirname, "..");
 const extensionDir = path.join(root, "extension", "dist");
 const origin = "http://127.0.0.1:4321";
 let activeServer: ChildProcess | undefined;
+let storeDir: string | undefined;
 
 process.on("exit", () => {
   killServer(activeServer);
@@ -21,7 +22,6 @@ const blankKeys = [
   "HOST",
   "WAITMATE_DEMO",
   "WAITMATE_CHANNEL",
-  "WAITMATE_STORE_PATH",
   "WAITMATE_PUBLIC_ORIGIN",
   "PHOTON_API_KEY",
   "PHOTON_PROJECT_ID",
@@ -75,6 +75,10 @@ describe("built extension smoke", { concurrency: 1 }, () => {
       activeServer = undefined;
       if (userDataDir) {
         rmSync(userDataDir, { recursive: true, force: true });
+      }
+      if (storeDir) {
+        rmSync(storeDir, { recursive: true, force: true });
+        storeDir = undefined;
       }
     }
   }, { timeout: 20_000 });
@@ -241,6 +245,8 @@ function serverEnv(): NodeJS.ProcessEnv {
   for (const key of blankKeys) {
     env[key] = "";
   }
+  storeDir = mkdtempSync(path.join(tmpdir(), "simmer-e2e-store-"));
+  env.WAITMATE_STORE_PATH = path.join(storeDir, "waitmate.json");
   return env;
 }
 
