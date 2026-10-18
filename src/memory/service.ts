@@ -200,6 +200,11 @@ function ownedIndexForHit(owned: readonly MemoryRecord[], used: ReadonlySet<numb
   if (byId !== -1) {
     return byId;
   }
+  // A hit that carries an id but matched no owned row above is not one of the caller's
+  // rows. Identical content from another user's memory must not pull the row in by text.
+  if ((hit.id?.trim() ?? "").length > 0) {
+    return -1;
+  }
   const content = hit.content.trim().toLowerCase();
   if (!content) {
     return -1;
