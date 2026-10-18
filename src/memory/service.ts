@@ -8,6 +8,7 @@ import {
   type BackboardClient,
   type MemoryKind,
   type MemoryRecord,
+  type MemorySearchHit,
 } from "./backboard.js";
 
 export class ScopeError extends Error {
@@ -54,12 +55,15 @@ export async function searchMemoriesForCurrentUser(
     throw new ScopeError(401, "Authentication required.");
   }
   const owned = await ownedMemories(deps.index, userId);
-  // Backboard hits have no Simmer user id. The response stays the Mongo rows for req.user.id.
+  // Backboard hits have no Simmer user id. Rank only Mongo rows owned by req.user.id.
   if (deps.remote && user.backboardAssistantId) {
-    await deps.client.searchMemories(user.backboardAssistantId, query, 10);
+    const hits = await deps.client.searchMemories(user.backboardAssistantId, query, 10);
+    const ranked = rankOwnedByHits(owned, hits);
+    if (ranked !== null) {
+      return ranked;
+    }
   }
-  const needle = query.toLowerCase();
-  return owned.filter((memory) => memory.text.toLowerCase().includes(needle) || memoryContent(memory.type, memory.text).toLowerCase().includes(needle));
+  return owned.filter((memory) => matchesAnyQueryToken(memory, query));
 }
 
 export function authenticatedUserId(req: Request): string {
@@ -155,6 +159,61 @@ function memoryContent(type: MemoryKind, text: string): string {
     default:
       return assertNever(type);
   }
+}
+
+/** Null when no hit has an id or content, so the caller can fall back to tokens. */
+function rankOwnedByHits(owned: readonly MemoryRecord[], hits: readonly MemorySearchHit[]): MemoryRecord[] | null {
+  const usable = hits.filter((hit) => (hit.id?.trim() ?? "").length > 0 || hit.content.trim().length > 0);
+  if (usable.length === 0) {
+    return null;
+  }
+  const used = new Set<number>();
+  const ranked: MemoryRecord[] = [];
+  for (const hit of usable) {
+    const index = ownedIndexForHit(owned, used, hit);
+    if (index < 0) {
+      continue;
+    }
+    const match = owned[index];
+    if (!match) {
+      continue;
+    }
+    used.add(index);
+    ranked.push(match);
+  }
+  return ranked;
+}
+
+function ownedIndexForHit(owned: readonly MemoryRecord[], used: ReadonlySet<number>, hit: MemorySearchHit): number {
+  const byId = owned.findIndex((memory, index) => !used.has(index) && sameBackboardId(hit.id, memory.backboardMemoryId));
+  if (byId !== -1) {
+    return byId;
+  }
+  const content = hit.content.trim().toLowerCase();
+  if (!content) {
+    return -1;
+  }
+  return owned.findIndex((memory, index) => {
+    if (used.has(index)) {
+      return false;
+    }
+    return memoryContent(memory.type, memory.text).trim().toLowerCase() === content;
+  });
+}
+
+function sameBackboardId(hitId: string | null, memoryId: string | null): boolean {
+  const left = hitId?.trim() ?? "";
+  const right = memoryId?.trim() ?? "";
+  return left.length > 0 && left === right;
+}
+
+function matchesAnyQueryToken(memory: MemoryRecord, query: string): boolean {
+  const haystack = memoryContent(memory.type, memory.text).toLowerCase();
+  return query
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length > 0)
+    .some((token) => haystack.includes(token));
 }
 
 export function createInMemoryIndex(): MemoryIndex {
