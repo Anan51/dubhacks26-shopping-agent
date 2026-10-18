@@ -60,13 +60,19 @@ export function isAppleCardCheckout(control: BagControl): boolean {
   return /\bapple\s*card\b/i.test(blob) && /\b(check\s*out|pay)\b/i.test(blob);
 }
 
+/** Collapse every whitespace run, then compare the whole label. A longer promo stays open. */
+function normalizePayLabel(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function isExactCheckOutLabel(value: string): boolean {
+  return value === "check out" || value === "check out now";
+}
+
 export function isCheckOutControl(control: BagControl): boolean {
-  const text = control.text.trim();
-  const label = control.ariaLabel.trim();
-  if (/^check\s*out$/i.test(text) || /^check\s*out$/i.test(label)) {
-    return true;
-  }
-  return /^check\s*out\b/i.test(text) && text.length <= 80;
+  const text = normalizePayLabel(control.text);
+  const label = normalizePayLabel(control.ariaLabel);
+  return isExactCheckOutLabel(text) || isExactCheckOutLabel(label);
 }
 
 /** Checkout and Apple Pay on the bag. On the checkout host, also the pay and continue controls. */

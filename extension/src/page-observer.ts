@@ -113,6 +113,8 @@ export function watchPage(doc: Document, onForeign: () => void): PageWatch {
       try {
         write();
       } finally {
+        // Callbacks run after mute() returns. Drop the records this write queued.
+        observer?.takeRecords();
         muted -= 1;
       }
     },
