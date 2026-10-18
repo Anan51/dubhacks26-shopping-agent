@@ -39,16 +39,43 @@ describe("glance", () => {
   it("names Marinating when a bag is locked and Unlocked when nothing is waiting", () => {
     assert.equal(lockGlance([item()]), "Marinating");
     assert.equal(lockGlance([item({ status: "unlocked" })]), "Unlocked");
-    assert.equal(lockGlance([item({ status: "vault" })]), "In the Vault");
+    assert.equal(lockGlance([item({ status: "vault" })]), "Paused");
   });
 
   it("uses one line for wait, buy, and vault time", () => {
-    assert.equal(oneLineVerdict(item(), NOW), "Wait ~2 mo, save ~$557");
-    assert.equal(oneLineVerdict(item({ decision: { ...item().decision!, action: "unlock", savingsCents: 0 } }), NOW), "Buy now");
+    assert.equal(oneLineVerdict(item(), NOW), "Waiting about 2 months saves about $557.");
+    assert.equal(
+      oneLineVerdict(item({ decision: { ...item().decision!, action: "unlock", savingsCents: 0 } }), NOW),
+      "Looks fine to buy.",
+    );
     assert.equal(
       oneLineVerdict(item({ status: "vault", vaultUntil: "2026-10-19T02:00:00.000Z" }), NOW),
-      "Vault · 14h left",
+      "Ready again in 14 hours.",
     );
+  });
+
+  it("says whether to buy in plain words, without a score", () => {
+    const free = oneLineVerdict(item({ purchaseScore: 4, scoreBucket: "free", status: "unlocked" }), NOW);
+    const soft = oneLineVerdict(item({ purchaseScore: 3, scoreBucket: "soft", status: "locked" }), NOW);
+    const strict = oneLineVerdict(
+      item({
+        purchaseScore: 1,
+        scoreBucket: "strict",
+        status: "vault",
+        vaultUntil: "2026-10-19T12:00:00.000Z",
+      }),
+      NOW,
+    );
+    const waiting = oneLineVerdict(item({ userImpulseScore: 2, purchaseScore: null, status: "locked" }), NOW);
+    assert.equal(free, "Looks fine to buy.");
+    assert.equal(soft, "Worth a pause before buying.");
+    assert.equal(strict, "This one can wait.");
+    assert.equal(waiting, "Reply and say why you want this.");
+    for (const line of [free, soft, strict, waiting]) {
+      assert.equal(line.includes("\n"), false);
+      assert.doesNotMatch(line, /\b(Score|Impulse|Vault)\b/);
+      assert.doesNotMatch(line, /\d/);
+    }
   });
 
   it("hides the example offer unless waiting for it saves money", () => {

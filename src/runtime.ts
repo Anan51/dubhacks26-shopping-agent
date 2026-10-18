@@ -13,7 +13,7 @@ export function createRuntime(deps: {
   store: Store;
   now: () => Date;
   demoReminderMs: number;
-  send: (message: OutboundMessage) => Promise<void>;
+  send: (message: OutboundMessage) => Promise<void | { ok: boolean }>;
   armReminder: (cart: Cart) => void;
   disarmReminder: (code: string) => void;
   polish: (template: string, action: Decision["action"]) => Promise<string>;
@@ -29,6 +29,24 @@ export function createRuntime(deps: {
     }
     // Claim the id before any await so a replay cannot send a second reply.
     deps.store.rememberInbound(message.id);
+    const prior = deps.store.getSession(message.conversationId);
+    const priorTurnCount = prior?.turns.length ?? 0;
+    const priorLastInboundId = prior?.lastInboundId ?? null;
+    try {
+      await handleInbound(message);
+    } catch (error) {
+      deps.store.forgetInbound(message.id);
+      const session = deps.store.getSession(message.conversationId);
+      if (session?.lastInboundId === message.id) {
+        session.turns = session.turns.slice(0, priorTurnCount);
+        session.lastInboundId = priorLastInboundId;
+        deps.store.saveSession(session);
+      }
+      throw error;
+    }
+  }
+
+  async function handleInbound(message: InboundMessage): Promise<void> {
     const result = await applyTurn({
       session: deps.store.getSession(message.conversationId) ?? null,
       conversationId: message.conversationId,
@@ -86,16 +104,25 @@ export function createRuntime(deps: {
         deps.disarmReminder(result.cart.code);
       }
     }
+    let delivered = false;
     try {
-      await deps.send({
+      const outcome = await deps.send({
         conversationId: message.conversationId,
         text: reply,
         agentSenderId: result.cart?.agentSenderId ?? message.agentSenderId,
         parentMessageId: message.id,
         idempotencyKey: `simmer:${message.id}`,
       });
+      delivered = !sendFailed(outcome);
+      if (!delivered) {
+        logSendFailure(undefined);
+      }
     } catch (error) {
-      console.error(error instanceof Error ? error.message : "Photon reply failed.");
+      logSendFailure(error);
+      delivered = false;
+    }
+    if (!delivered) {
+      throw new Error("iMessage send failed.");
     }
     if (result.markReplied && result.cart) {
       result.cart.replied = true;
@@ -117,4 +144,14 @@ export function createRuntime(deps: {
       return next;
     },
   };
+}
+
+function sendFailed(outcome: void | { ok: boolean }): boolean {
+  return typeof outcome === "object" && outcome !== null && outcome.ok === false;
+}
+
+/** Log the failure without the reply text, phone numbers, or API keys. */
+function logSendFailure(error: unknown): void {
+  const name = error instanceof Error ? error.name : "Error";
+  console.error(`iMessage send failed (${name}).`);
 }

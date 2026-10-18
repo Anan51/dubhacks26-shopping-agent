@@ -177,7 +177,8 @@ describe("score routing", () => {
     assert.equal(strict.status, "vault");
     assert.equal(strict.vaultMode, "enforced");
     assert.equal(strict.isUnlocked, false);
-    assert.match(held.reply, /24 hours/);
+    assert.match(held.reply, /This one can wait/);
+    assert.doesNotMatch(held.reply, /24 hours|Vault|skip 24/i);
     assert.match(held.reply, /example trade-in bundle/);
 
     const soft = cart();

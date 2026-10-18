@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import { formatUsd } from "../../src/format.js";
 import { oneLineVerdict, type GlanceItem, type GlanceSignals, type GlanceSources } from "../../src/glance.js";
+import { offersSleep } from "../../src/score-band.js";
 import { pauseSentence, priceLine, simmerKicker } from "../../src/overlay-copy.js";
 import type { Decision } from "../../src/types.js";
 
@@ -99,7 +100,7 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
       : model.status === "unlocked"
         ? "Unlocked"
         : model.status === "vault"
-          ? "In the Vault"
+          ? "Paused"
           : "Marinating";
   const clock =
     model.necessity === "necessary" && model.purchaseScore == null
@@ -150,17 +151,17 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
         </div>
         {open ? (
           <div>
-            <p>{unreadable ? "The Apple bag could not be read." : pauseSentence(glance)}</p>
+            <p className="why">{unreadable ? "The Apple bag could not be read." : pauseSentence(glance)}</p>
             {unreadable ? null : <p>{priceLine(model.totalCents, { cents: glance.decision?.costLaterCents ?? 0, example: true })}</p>}
             <div className="row">
-              {showLockControls ? (
+              {showSleepControl(model) ? (
                 <button type="button" className="quiet" onClick={actions.sleep}>
                   Sleep on it
                 </button>
               ) : null}
               {import.meta.env.VITE_SIMMER_DEMO === "1" && model.status === "vault" && actions.skipVault ? (
                 <button type="button" className="quiet" onClick={actions.skipVault}>
-                  Demo: skip 24 hours
+                  Demo: end the pause
                 </button>
               ) : null}
             </div>
@@ -170,6 +171,13 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
       </section>
     </div>
   );
+}
+
+/** Sleep is shown only when the server accepts POST /sleep (soft scores 2–3). */
+export function showSleepControl(model: Pick<OverlayModel, "necessity" | "error" | "scoreBucket">): boolean {
+  const unreadable = model.error === "Couldn't read bag";
+  const showLockControls = model.necessity !== "necessary" && !unreadable;
+  return showLockControls && offersSleep(model.scoreBucket);
 }
 
 function toGlance(model: OverlayModel): GlanceItem {

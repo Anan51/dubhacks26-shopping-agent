@@ -73,11 +73,12 @@ export class PhotonChannel {
 
       queue = queue
         .then(async () => {
-          if (generation !== epoch || metadata.seq <= cursor) {
+          if (generation !== epoch) {
             return;
           }
-          await this.handler?.(event);
-          cursor = metadata.seq;
+          cursor = await noteDelivery(cursor, metadata.seq, async () => {
+            await this.handler?.(event);
+          });
         })
         .catch((error: unknown) => {
           logFailure(error);
@@ -110,6 +111,18 @@ export class PhotonChannel {
   async send(message: OutboundMessage): Promise<void> {
     await sendPhotonMessage(this.config, message);
   }
+}
+
+/**
+ * Move the live cursor only after `handle` resolves.
+ * A throw leaves the previous cursor so the same delivery can be retried.
+ */
+export async function noteDelivery(cursor: number, seq: number, handle: () => Promise<void>): Promise<number> {
+  if (seq <= cursor) {
+    return cursor;
+  }
+  await handle();
+  return seq;
 }
 
 function logFailure(error: unknown): void {

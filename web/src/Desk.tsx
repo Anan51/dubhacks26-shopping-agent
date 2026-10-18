@@ -353,7 +353,7 @@ function MathPanel({
       ) : (
         <p>No verdict yet.</p>
       )}
-      {cart.vaultUntil ? <p>Vault until {formatLongDate(cart.vaultUntil)}.</p> : null}
+      {cart.vaultUntil ? <p>Paused until {formatLongDate(cart.vaultUntil)}.</p> : null}
       <p>
         Link once: <code>{cart.linkMessage}</code>
       </p>

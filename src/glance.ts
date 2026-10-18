@@ -53,7 +53,7 @@ export type GlanceItem = {
   scoreReason?: string | null;
 };
 
-export type LockGlance = "Marinating" | "Unlocked" | "In the Vault";
+export type LockGlance = "Marinating" | "Unlocked" | "Paused";
 
 /** Header for the popup. A live bag lock wins over a resting vault. */
 export function lockGlance(items: readonly GlanceItem[]): LockGlance {
@@ -61,43 +61,41 @@ export function lockGlance(items: readonly GlanceItem[]): LockGlance {
     return "Marinating";
   }
   if (items.some((item) => item.status === "vault")) {
-    return "In the Vault";
+    return "Paused";
   }
   return "Unlocked";
 }
 
-/** One line for a card. No explanation. */
+/** One plain sentence for the card and popup. No score numbers. */
 export function oneLineVerdict(item: GlanceItem, nowMs: number): string {
   if (item.necessity === "necessary" && item.purchaseScore == null) {
-    return "Necessary buy";
+    return "This is a necessary buy.";
   }
-  if (item.purchaseScore != null && item.scoreBucket === "strict" && item.status === "vault") {
-    return `Score ${item.purchaseScore} · ${vaultLine(item.vaultUntil, nowMs)}`;
-  }
-  if (item.purchaseScore != null && item.scoreBucket === "soft" && item.status === "vault") {
-    return `Score ${item.purchaseScore} · optional pause`;
+  if (item.purchaseScore != null && item.scoreBucket === "strict") {
+    return "This one can wait.";
   }
   if (item.purchaseScore != null && item.scoreBucket === "soft") {
-    return `Score ${item.purchaseScore} · Sleep on it`;
+    return "Worth a pause before buying.";
   }
   if (item.purchaseScore != null && item.scoreBucket === "free") {
-    return `Score ${item.purchaseScore} · Buy now`;
+    return "Looks fine to buy.";
   }
   if (item.status === "vault") {
     return vaultLine(item.vaultUntil, nowMs);
   }
   if (item.userImpulseScore != null && item.purchaseScore == null && item.status === "locked") {
-    return `Impulse ${item.userImpulseScore} · need a reason`;
+    return "Reply and say why you want this.";
   }
   if (item.status === "unlocked") {
-    return "Buy now";
+    return "Looks fine to buy.";
   }
   const decision = item.decision;
   if (!decision || decision.action === "unlock" || decision.savingsCents <= 0) {
-    return "Buy now";
+    return "Looks fine to buy.";
   }
   const months = decision.waitMonths > 0 ? decision.waitMonths : 1;
-  return `Wait ~${months} mo, save ~${approxUsd(decision.savingsCents)}`;
+  const monthWord = months === 1 ? "month" : "months";
+  return `Waiting about ${months} ${monthWord} saves about ${approxUsd(decision.savingsCents)}.`;
 }
 
 export type BreakdownLine = {
@@ -192,7 +190,7 @@ function appendScoreLines(item: GlanceItem, lines: BreakdownLine[]): void {
     });
   }
   if (item.scoreBucket === "strict") {
-    lines.push({ label: "Time limit", value: "24 hours, required. Demo: skip 24 hours lifts it." });
+    lines.push({ label: "Time limit", value: "Checkout stays paused until the hold ends." });
   } else if (item.scoreBucket === "soft") {
     lines.push({ label: "Time limit", value: "Optional. Sleep on it is not required." });
   } else if (item.scoreBucket === "free") {
@@ -215,14 +213,14 @@ function alternativeGlance(decision: GlanceDecision): string {
 
 function vaultLine(vaultUntil: string | null, nowMs: number): string {
   if (!vaultUntil) {
-    return "Vault · 24h left";
+    return "This one can wait.";
   }
   const left = Date.parse(vaultUntil) - nowMs;
   if (left <= 0) {
-    return "Vault over";
+    return "The pause is over.";
   }
   const hours = Math.max(1, Math.ceil(left / 3_600_000));
-  return `Vault · ${hours}h left`;
+  return hours === 1 ? "Ready again in 1 hour." : `Ready again in ${hours} hours.`;
 }
 
 function approxUsd(cents: number): string {

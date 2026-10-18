@@ -74,6 +74,45 @@ describe("overlay copy", () => {
     );
   });
 
+  it("keeps the why line to exactly one plain sentence", () => {
+    const sources = item().motiveSources;
+    assert.ok(sources);
+    const cases = [
+      item(),
+      item({
+        signals: { needVsWant: "want", urgency: "low", currentPhoneBroken: false },
+        motiveSources: { ...sources, needVsWant: "keywords", urgency: "keywords" },
+      }),
+      item({
+        signals: { needVsWant: "need", currentPhoneBroken: true },
+        motiveSources: { ...sources, needVsWant: "keywords", currentPhoneBroken: "keywords" },
+      }),
+      item({
+        signals: { needVsWant: "need" },
+        motiveSources: { ...sources, needVsWant: "keywords" },
+      }),
+      item({
+        signals: { currentPhoneBroken: true },
+        motiveSources: { ...sources, currentPhoneBroken: "keywords" },
+      }),
+      item({
+        signals: { currentPhoneBroken: false },
+        motiveSources: { ...sources, currentPhoneBroken: "keywords" },
+      }),
+      item({ purchaseScore: 4, scoreBucket: "free", userImpulseScore: 5, justificationGrade: 3 }),
+    ];
+    for (const entry of cases) {
+      const why = pauseSentence(entry);
+      assert.equal(why.includes("\n"), false, why);
+      assert.doesNotMatch(why, /[•*]|(?:^|\n)\s*[-–—]\s/u, why);
+      assert.doesNotMatch(why, /\b(score|impulse|vault|bucket|grade)\b/i, why);
+      assert.doesNotMatch(why, /\d/, why);
+      const sentences = why.split(/[.!?]/).filter((part) => part.trim().length > 0);
+      assert.equal(sentences.length, 1, why);
+      assert.match(why, /[.!?]$/, why);
+    }
+  });
+
   it("sends buy, wait, or skip with one sentence", () => {
     assert.equal(adviceMessage(item({ scoreBucket: "strict" })), "Skip. This one can wait.");
     assert.equal(adviceMessage(item({ scoreBucket: "free", decision: { ...item().decision!, action: "unlock" } })), "Buy. You can check out after you press Unlock.");

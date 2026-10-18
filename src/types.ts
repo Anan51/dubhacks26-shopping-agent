@@ -129,7 +129,7 @@ export type Cart = {
   advice: string | null;
   lockStartedAt: string;
   lockEndsAt: string;
-  /** When set and still in the future, the Apple bag and checkout stay in the Impulse Vault. */
+  /** When set and still in the future, checkout stays paused until this time. */
   vaultUntil: string | null;
   /** Enforced vaults ignore Unlock. A soft vault is the optional pause. */
   vaultMode: VaultMode | null;

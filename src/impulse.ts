@@ -3,6 +3,7 @@ import type { ExtractOptions } from "./extract-signals.js";
 import { unwrapJsonFence } from "./extract-signals.js";
 import { formatUsd } from "./format.js";
 import { grokChat, DEFAULT_XAI_MODEL, DEFAULT_XAI_TIMEOUT_MS } from "./grok.js";
+import { FREE_SCORE_MIN, SOFT_SCORE_MIN } from "./score-band.js";
 import { formatImpulseScore } from "./scoring/lockBand.js";
 import { assertNever, type Cart, type Decision, type ScoreBucket, type SignalSource } from "./types.js";
 
@@ -40,10 +41,10 @@ export function purchaseScore(userImpulseScore: number, justificationGrade: numb
 /** 1 is strict, 2–3 is soft, 4 and above unlocks. */
 export function scoreBucket(score: number): ScoreBucket {
   const clamped = clampImpulse(score);
-  if (clamped >= 4) {
+  if (clamped >= FREE_SCORE_MIN) {
     return "free";
   }
-  if (clamped >= 2) {
+  if (clamped >= SOFT_SCORE_MIN) {
     return "soft";
   }
   return "strict";
@@ -175,7 +176,7 @@ export function scoreReply(input: {
     case "soft":
       return `${math} Score ${input.score} is soft. ${input.alternative} Sleep on it if you want. That pause is optional.`;
     case "strict":
-      return `${math} Score 1 holds this bag for 24 hours. ${input.alternative} Demo: skip 24 hours is the only early way out.`;
+      return `${math} This one can wait. Checkout stays paused until the hold ends. ${input.alternative}`;
     default:
       return assertNever(input.bucket);
   }
@@ -183,7 +184,7 @@ export function scoreReply(input: {
 
 /**
  * Writes the score onto the cart and moves the lock.
- * Score 1 vaults for 24 hours. Score 2–3 stays locked until the shopper chooses sleep.
+ * Score 1 pauses checkout until the hold ends. Score 2–3 stays locked until the shopper chooses sleep.
  * Score 4+ lifts the lock and any vault.
  */
 export function applyPurchaseScore(
