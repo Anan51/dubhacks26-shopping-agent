@@ -4,7 +4,7 @@
 - **Branch / head:** `cursor/regret-search-category-timeout-6acb` @ `1450b758eba6929170e913aa3a93d16afc036b9d`
 - **Runtime:** Node v24.22.0, tsx. The client is the real `HttpBackboardClient` (`https://app.backboard.io/api`) from `createBackboardClient(env)`, with `remote: true`. The user store was mongodb-memory-server 7.0.14, because Atlas isn't reachable from the box.
 - **API key:** [REDACTED]. It was loaded into the process env only, and was never printed, logged or committed.
-- **Code path:** `computeImpulseScore(userId, bag, { weeklyBudget: null }, { backboardEnabled: true, client })` with the defaults `REGRET_SEARCH_TIMEOUT_MS = 3500` and `DEFAULT_REGRET_SEARCH_MAX_DISTANCE = 0.7`. The user had no budget, hours or goals, so the regret search is the only thing that can move the score.
+- **Code path:** `computeImpulseScore(userId, bag, { weeklyBudget: null }, { backboardEnabled: true, client })` with the defaults `REGRET_SEARCH_TIMEOUT_MS = 3500` and `DEFAULT_REGRET_SEARCH_MAX_DISTANCE = 0.6`. The live run at head 1450b75 used that 0.6 max-distance cap, which is what the '≤ 0.6?' column reflects. The user had no budget, hours or goals, so the regret search is the only thing that can move the score. The default was raised to 0.7 later at head `7d1d1ba` for headroom over the 0.615 on-record match and the 0.578 Pixel, still well below the 0.88 unrelated floor.
 - **Cleanup:** The seeded memory was deleted and the throwaway assistant was deleted. Both calls succeeded.
 
 ## Why the score is treated as a distance
@@ -24,7 +24,7 @@ The live API behaves the other way: **lower means closer**. In a live check on 2
 | `banana bread recipe` | 0.92408866 | 0.89199275 |
 | `quarterly tax filing deadline` | 0.92468363 | 0.9104123 |
 
-An identical memory scores 0. Matching items score about 0.40–0.58, and unrelated text scores about 0.88–0.92. That is a distance. The doc example (0.95 at the top) doesn't match what this account's API actually returns. Head 1450b75 therefore counts a hit only when `score <= 0.7`, and weights each counted hit by `1 - score`. The category check still runs first. 0.7 gives headroom over the 0.615 on-record relevant match.
+An identical memory scores 0. Matching items score about 0.40–0.58, and unrelated text scores about 0.88–0.92. That is a distance. The doc example (0.95 at the top) doesn't match what this account's API actually returns. At the time of this run (1450b75) the default `REGRET_SEARCH_MAX_DISTANCE` was 0.6, so a hit counted only when `score <= 0.6`, and each counted hit was weighted by `1 - score`. The category check still runs first. The default was raised to 0.7 later at head `7d1d1ba` for headroom over the 0.615 on-record match and the 0.578 Pixel, still well below the 0.88 unrelated floor. The outcomes are identical under both caps: the near hit 0.439 counts either way and 0.883 is dropped on category.
 
 At head 2ec9930, which treated the score as a similarity with a 0.5 floor, the same near bag stayed at **4.5 on 5/5 runs**: its 0.439 hit was dropped.
 
