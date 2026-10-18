@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { describe, it, mock } from "node:test";
 
 import { createApp } from "./app.js";
-import { itemsForBag, startLockedCart } from "./carts.js";
+import { itemsForBag, lockState, startLockedCart, VAULT_MS } from "./carts.js";
 import type { OutboundMessage } from "./channel.js";
 import { ReminderScheduler } from "./reminders.js";
 import { createMemoryStore, type Store } from "./store.js";
@@ -71,15 +71,16 @@ describe("countdown expiry", () => {
     });
   });
 
-  it("unlocks an unnecessary vault when its timer expires", async () => {
+  it("keeps a strict enforced vault locked when the early reminder fires", async () => {
     await withFakeTimers(async () => {
       const sent: OutboundMessage[] = [];
       const clock = { at: new Date(START) };
       const store = createMemoryStore();
+      const vaultUntil = new Date(START.getTime() + VAULT_MS).toISOString();
       const cart = dueCart({
         status: "vault",
         vaultMode: "enforced",
-        vaultUntil: new Date(START.getTime() + WAIT_MS).toISOString(),
+        vaultUntil,
         purchaseScore: 1,
         scoreBucket: "strict",
         conversationId: "desk:cart-CART23",
@@ -92,12 +93,95 @@ describe("countdown expiry", () => {
       await flush();
       scheduler.stop();
 
+      const held = store.getCart("CART23");
+      assert.ok(held);
+      assert.equal(held.status, "vault");
+      assert.equal(held.isUnlocked, false);
+      assert.equal(held.unlockReason, null);
+      assert.equal(held.vaultUntil, vaultUntil);
+      assert.equal(lockState(held, clock.at).ok, false);
+      assert.equal(sent.length, 1);
+    });
+  });
+
+  it("unlocks a non-vaulted unnecessary bag at 0:00", async () => {
+    await withFakeTimers(async () => {
+      const sent: OutboundMessage[] = [];
+      const clock = { at: new Date(START) };
+      const store = createMemoryStore();
+      const cart = dueCart({
+        necessity: "unnecessary",
+        status: "locked",
+        vaultUntil: null,
+        vaultMode: null,
+        purchaseScore: null,
+        conversationId: "desk:cart-CART23",
+      });
+      store.saveCart(cart);
+      const scheduler = schedulerFor(store, sent, clock);
+      scheduler.arm(cart);
+      clock.at = new Date(START.getTime() + WAIT_MS);
+      mock.timers.tick(WAIT_MS);
+      await flush();
+      scheduler.stop();
+
+      const opened = store.getCart("CART23");
+      assert.ok(opened);
+      assert.equal(opened.status, "unlocked");
+      assert.equal(opened.isUnlocked, true);
+      assert.equal(opened.unlockReason, "timer");
+      assert.equal(lockState(opened, clock.at).ok, true);
+      assert.equal(sent.length, 1);
+      assert.equal(sent[0]?.idempotencyKey, `simmer:reminder:CART23:${cart.reminderFireAt}`);
+    });
+  });
+
+  it("unlocks before the send and retries a failed send once", async () => {
+    await withFakeTimers(async () => {
+      const keys: string[] = [];
+      let calls = 0;
+      const clock = { at: new Date(START.getTime() + WAIT_MS) };
+      const store = createMemoryStore();
+      const fireAt = new Date(START.getTime() + WAIT_MS).toISOString();
+      store.saveCart(
+        dueCart({
+          conversationId: "desk:cart-CART23",
+          reminderAt: fireAt,
+          reminderFireAt: fireAt,
+          vaultUntil: null,
+        }),
+      );
+      const scheduler = new ReminderScheduler({
+        store,
+        origin: "http://127.0.0.1",
+        now: () => clock.at,
+        send: async (message) => {
+          calls += 1;
+          keys.push(message.idempotencyKey);
+          if (calls === 1) {
+            throw new Error("down");
+          }
+        },
+      });
+      scheduler.armPending();
+      await flush();
       const opened = store.getCart("CART23");
       assert.equal(opened?.status, "unlocked");
-      assert.equal(opened?.isUnlocked, true);
       assert.equal(opened?.unlockReason, "timer");
-      assert.equal(opened?.vaultUntil, null);
-      assert.equal(sent.length, 1);
+      assert.equal(opened?.reminderSentAt, null);
+      assert.equal(calls, 1);
+
+      mock.timers.tick(5_000);
+      await flush();
+      assert.equal(calls, 2);
+      assert.equal(keys[0], keys[1]);
+      assert.equal(keys[0], `simmer:reminder:CART23:${fireAt}`);
+      assert.equal(store.getCart("CART23")?.reminderSentAt == null, false);
+
+      mock.timers.tick(10_000);
+      await flush();
+      assert.equal(calls, 2);
+      scheduler.stop();
     });
   });
 

@@ -220,12 +220,15 @@ export function scheduleCountdown(cart: Cart, demoReminderMs: number, demoTimers
   }
 }
 
-/** Opens an unnecessary bag when its countdown or vault timer is up. A low score does not. */
-export function releaseExpiredLock(cart: Cart): void {
+/** Opens an unnecessary bag when the countdown is up and no vault is still active. */
+export function releaseExpiredLock(cart: Cart, now: Date): void {
   if (cart.status === "unlocked" || cart.necessity === "necessary") {
     return;
   }
-  if (cart.status !== "vault" && (cart.purchaseScore != null || cart.replied)) {
+  if (isVaultActive(cart, now)) {
+    return;
+  }
+  if (cart.purchaseScore != null || cart.replied) {
     return;
   }
   liftCart(cart);
