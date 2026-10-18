@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import { JSDOM } from "jsdom";
@@ -6,6 +7,9 @@ import { JSDOM } from "jsdom";
 import { readPageBag } from "./bag-dom.js";
 import { installGate } from "./gate.js";
 import { watchPage } from "./page-observer.js";
+import { appleAdapter } from "./stores/apple.js";
+
+const FALLBACK_HTML = new URL("../../web/fallback.html", import.meta.url);
 
 function iphoneDocument(): Document {
   return new JSDOM(`<!doctype html><html><head><title>Bag - Apple</title></head><body>
@@ -92,6 +96,68 @@ describe("locked bag observer", () => {
     }
     assert.equal(document.querySelector("[data-simmer-badge]"), null);
     assert.equal(document.querySelector("[data-simmer-blocked]"), null);
+
+    watch.disconnect();
+  });
+
+  it("does not repaint itself while Apple toggles classes, attributes, and labels", async () => {
+    const html = readFileSync(FALLBACK_HTML, "utf8");
+    const document = new JSDOM(html, { url: "https://www.apple.com/shop/bag" }).window.document;
+    const checkout = document.querySelector("#checkout");
+    const applePay = document.querySelector("#apple-pay");
+    const nav = document.querySelector("#nav-store");
+    const label = checkout?.querySelector("span");
+    const shell = document.querySelector("#page");
+    const view = document.defaultView;
+    assert.ok(view);
+    assert.ok(checkout instanceof view.HTMLButtonElement);
+    assert.ok(applePay);
+    assert.ok(nav);
+    assert.ok(label);
+    assert.ok(shell);
+
+    let paints = 0;
+    const gate = installGate(document, () => appleAdapter.checkoutButtons(document));
+    const watch = watchPage(document, () => {
+      paints += 1;
+      if (paints > 8) {
+        watch.disconnect();
+        return;
+      }
+      watch.mute(() => gate.paint());
+    });
+    watch.mute(() => gate.paint());
+    await flush();
+    assert.equal(paints, 0, "painting the block scheduled another pass");
+    assert.equal(checkout.getAttribute("data-simmer-blocked"), "1");
+    assert.equal(nav.hasAttribute("data-simmer-blocked"), false);
+
+    for (let tick = 0; tick < 20; tick += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      checkout.classList.toggle("button-block");
+      applePay.classList.toggle("rs-applepay");
+      checkout.setAttribute("aria-busy", tick % 2 === 0 ? "true" : "false");
+      shell.setAttribute("data-render", String(tick));
+      nav.classList.toggle("globalnav-link");
+      label.textContent = tick % 2 === 0 ? "Check Out" : "Check Out";
+    }
+    await flush();
+    assert.ok(paints <= 3, `paints during an Apple edit storm: ${paints}`);
+    const settled = paints;
+    await flush();
+    assert.equal(paints, settled);
+
+    const added = document.createElement("button");
+    added.type = "button";
+    added.id = "late-checkout";
+    added.textContent = "Check Out";
+    document.querySelector(".rs-bag-checkoutbuttons-wrapper")?.append(added);
+    await flush();
+    assert.equal(added.getAttribute("data-simmer-blocked"), "1");
+    assert.ok(paints - settled <= 2, `paints after a new checkout button: ${paints - settled}`);
+    const afterAdd = paints;
+    await flush();
+    assert.equal(paints, afterAdd);
 
     watch.disconnect();
   });

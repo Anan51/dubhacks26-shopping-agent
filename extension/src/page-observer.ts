@@ -1,4 +1,4 @@
-import { BLOCKED_STYLE_ID } from "./gate.js";
+import { BLOCKED_STYLE_ID, PAY_CONTROLS } from "./gate.js";
 
 export type PageWatch = {
   disconnect: () => void;
@@ -83,12 +83,14 @@ export function watchPage(doc: Document, onForeign: () => void): PageWatch {
     observer?.disconnect();
     const ObserverCtor = view.MutationObserver ?? globalThis.MutationObserver;
     observer = new ObserverCtor((records) => {
-      if (muted > 0 || records.every(mutationIsOurs)) {
+      if (muted > 0 || !recordsNeedGate(records)) {
         return;
       }
       schedule();
     });
-    observer.observe(doc.documentElement, { childList: true, subtree: true, characterData: true });
+    // childList only. characterData on apple.com never stops (hydration, live regions,
+    // analytics) and was repainting the gate on every one of those edits.
+    observer.observe(doc.documentElement, { childList: true, subtree: true });
   };
 
   connect();
@@ -105,18 +107,41 @@ export function watchPage(doc: Document, onForeign: () => void): PageWatch {
       observer = null;
     },
     mute: (write) => {
+      // Stay connected. Disconnecting and re-observing documentElement makes Chrome
+      // walk Apple's whole tree, and a locked bag was doing that on every edit.
       muted += 1;
-      observer?.disconnect();
       try {
         write();
       } finally {
         muted -= 1;
-        if (muted === 0 && doc.documentElement) {
-          connect();
-        }
       }
     },
   };
+}
+
+function recordsNeedGate(records: MutationRecord[]): boolean {
+  if (records.every(mutationIsOurs)) {
+    return false;
+  }
+  return records.some(recordTouchesPay);
+}
+
+function recordTouchesPay(record: MutationRecord): boolean {
+  if (mutationIsOurs(record) || record.type !== "childList") {
+    return false;
+  }
+  const nodes = [...record.addedNodes, ...record.removedNodes];
+  return nodes.some(nodeTouchesPay);
+}
+
+function nodeTouchesPay(node: Node): boolean {
+  if (!isElementNode(node)) {
+    return false;
+  }
+  if (node.matches(PAY_CONTROLS) || node.hasAttribute("data-simmer-blocked") || node.id === BLOCKED_STYLE_ID) {
+    return true;
+  }
+  return node.querySelector(`${PAY_CONTROLS}, [data-simmer-blocked], #${BLOCKED_STYLE_ID}`) !== null;
 }
 
 function isElementNode(node: Node): node is Element {

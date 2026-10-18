@@ -35,6 +35,11 @@ if (adapter) {
 }
 
 async function start(site: StoreAdapter): Promise<void> {
+  // Product, buy-flow, and add-to-bag URLs are not a bag or checkout. The manifest
+  // should not inject there; if it does, do not install the gate or the observers.
+  if (applePage(location.href) === null) {
+    return;
+  }
   let stopped = false;
   onContextDead = () => {
     stopped = true;
@@ -301,11 +306,22 @@ async function start(site: StoreAdapter): Promise<void> {
 
   whenReady(() => {
     bagWatch = watchBagDom(document, readBagNow);
+    let gatePaints = 0;
+    let gateWindow = 0;
     pageWatch = watchPage(document, () => {
       if (stopped) {
         return;
       }
-      if (showBlock) {
+      const now = Date.now();
+      if (now - gateWindow > 1000) {
+        gateWindow = now;
+        gatePaints = 0;
+      }
+      // A locked bag used to repaint on every Apple edit and reconnect the document
+      // observer each time. A few structural paints per second is enough; the 1s
+      // cart poll re-applies the block if Apple replaces a button later.
+      if (showBlock && gatePaints < 3) {
+        gatePaints += 1;
         paintLock();
       }
       if (bagWatch && !bagWatch.connected() && bagWatch.retarget()) {

@@ -295,15 +295,15 @@ export function bagWatchTargets(root: ParentNode): Element[] {
     return [];
   }
   const shared = item && total ? ancestorWithinBag(item, total) : null;
-  if (shared) {
+  if (shared && !containsSiteChrome(shared)) {
     return [shared];
   }
   const targets: Element[] = [];
   if (item) {
-    addTarget(targets, hostWithinBag(item));
+    addTarget(targets, watchHost(item));
   }
   if (total) {
-    addTarget(targets, hostWithinBag(total));
+    addTarget(targets, watchHost(total));
   }
   return targets;
 }
@@ -398,6 +398,22 @@ function hostWithinBag(node: Element): Element {
     return parent;
   }
   return node;
+}
+
+const CHROME_INSIDE =
+  "nav, footer, header, #globalnav, #globalheader, #ac-globalnav, #ac-globalfooter, #globalfooter, #ac-globalheader, [role='banner'], [role='contentinfo']";
+
+function watchHost(node: Element): Element {
+  const host = hostWithinBag(node);
+  if (containsSiteChrome(host)) {
+    return node;
+  }
+  return host;
+}
+
+/** #page on apple.com wraps the nav and the footer. Watching it re-reads the bag on every header edit. */
+function containsSiteChrome(node: Element): boolean {
+  return node.matches(CHROME_INSIDE) || node.querySelector(CHROME_INSIDE) !== null;
 }
 
 function isShell(node: Element): boolean {

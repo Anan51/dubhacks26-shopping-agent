@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import { JSDOM } from "jsdom";
 
+import { readPageBag } from "./bag-dom.js";
 import { BLOCKED_STYLE_ID, installGate } from "./gate.js";
+import { appleAdapter } from "./stores/apple.js";
+
+const FALLBACK_HTML = new URL("../../web/fallback.html", import.meta.url);
 
 function bagDocument(): Document {
   return new JSDOM(`<!doctype html><html><head></head><body>
@@ -140,4 +145,67 @@ describe("checkout gate", () => {
     assert.equal(document.querySelector("[data-simmer-badge]"), null);
     assert.equal(document.querySelector("#checkout")?.hasAttribute("data-simmer-blocked"), false);
   });
+
+  it("on a locked or vaulted Apple bag, blocks only Check Out and Apple Pay", () => {
+    const html = readFileSync(FALLBACK_HTML, "utf8");
+    const document = new JSDOM(html, { url: "https://www.apple.com/shop/bag" }).window.document;
+    const simmer = document.createElement("div");
+    simmer.id = "simmer-root";
+    const unlock = document.createElement("button");
+    unlock.id = "simmer-unlock";
+    unlock.type = "button";
+    unlock.textContent = "Unlock";
+    simmer.append(unlock);
+    document.body.append(simmer);
+
+    const bag = readPageBag(document.body);
+    assert.equal(bag.parsed, true);
+    assert.deepEqual(bag.itemNames, ["Example phone"]);
+    assert.equal(bag.totalCents, 120_000);
+
+    const shell = document.querySelector("#page");
+    assert.equal(shell?.getAttribute("role"), "button");
+    const gate = installGate(document, () => appleAdapter.checkoutButtons(document));
+    gate.paint();
+    assertOnlyPayBlocked(document);
+
+    // Vault uses the same paint while the bag stays closed.
+    gate.paint();
+    assertOnlyPayBlocked(document);
+
+    gate.lift();
+    for (const id of ["checkout", "apple-pay", "remove", "nav-store", "nav-mac", "nav-bag", "continue", "product", "foot-pay", "foot-home", "simmer-unlock"]) {
+      const node = document.querySelector(`#${id}`);
+      assert.ok(node, id);
+      assert.equal(node.hasAttribute("data-simmer-blocked"), false, id);
+      assert.equal(node.hasAttribute("data-simmer-disabled"), false, id);
+      assert.equal(node.hasAttribute("aria-disabled"), false, id);
+      assert.equal(node.hasAttribute("disabled"), false, id);
+      assert.equal(click(node).defaultPrevented, false, id);
+    }
+    assert.equal(document.querySelector("[data-simmer-badge]"), null);
+    assert.equal(document.querySelector("[data-simmer-blocked]"), null);
+  });
 });
+
+function assertOnlyPayBlocked(document: Document): void {
+  const payIds = ["checkout", "apple-pay"];
+  for (const id of payIds) {
+    const node = document.querySelector(`#${id}`);
+    assert.ok(node, id);
+    assert.equal(node.getAttribute("data-simmer-blocked"), "1", id);
+    assert.equal(node.getAttribute("aria-disabled"), "true", id);
+    assert.equal(click(node).defaultPrevented, true, id);
+  }
+  const openIds = ["remove", "nav-store", "nav-mac", "nav-bag", "continue", "product", "foot-pay", "foot-home", "simmer-unlock", "qty", "page"];
+  for (const id of openIds) {
+    const node = document.querySelector(`#${id}`);
+    assert.ok(node, id);
+    assert.equal(node.hasAttribute("data-simmer-blocked"), false, id);
+    assert.equal(node.hasAttribute("data-simmer-disabled"), false, id);
+    assert.equal(node.getAttribute("aria-disabled"), null, id);
+    assert.equal(node.hasAttribute("disabled"), false, id);
+    assert.equal([...node.attributes].some((attribute) => attribute.name.startsWith("data-simmer")), false, id);
+    assert.equal(click(node).defaultPrevented, false, id);
+  }
+}
