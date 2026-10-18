@@ -85,7 +85,7 @@ export function decide(signals: Signals): Decision {
     offerSavingCents: offerPick?.offer.savingCents ?? 0,
     offerMonthsFromNow: offerPick?.offer.monthsFromNow ?? 0,
     waitMonths: action === "sleep" ? (moneyMonths > 0 ? moneyMonths : 1) : 0,
-    savingsCents: effect === "math" ? moneySavings : moneySavings,
+    savingsCents: moneySavings,
     costNowCents,
     costLaterCents: showMoneyWait ? moneyQuote.costLaterCents - (offerPick?.offer.savingCents ?? 0) : costNowCents,
     tradeInNowCents,
