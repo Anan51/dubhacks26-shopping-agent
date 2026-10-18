@@ -59,14 +59,28 @@ export type CartItem = {
   cadence: "once" | "monthly";
 };
 
-export type CartStatus = "cooling" | "saved" | "completed";
+export type CartStatus = "locked" | "vault" | "unlocked";
+
+/** What the extension shows when the checkout ping cannot land in a linked thread. */
+export type CheckoutPing = {
+  delivered: boolean;
+  reason: "unlinked" | "send_failed" | null;
+  smsLink: string | null;
+  qrDataUrl: string | null;
+  prefilled: string;
+};
 
 export type Cart = {
   code: string;
   items: CartItem[];
+  /** Bag total the heuristic treats as the price of buying now. */
+  totalCents: number;
+  /** False when the extension could not read the Apple bag and used the example phone. */
+  parsedFromPage: boolean;
+  pageHost: string | null;
+  fingerprint: string;
   createdAt: string;
   status: CartStatus;
-  coolingOffEndsAt: string;
   demo: boolean;
   signals: Partial<Signals>;
   decision: Decision | null;
@@ -77,56 +91,37 @@ export type Cart = {
   conversationId: string | null;
   agentSenderId: string | null;
   lastInboundMessageId: string | null;
-  orderId: string | null;
-  completedAt: string | null;
-  /** Cooldown that was selected when this cart was created. */
-  coolingMs: number;
-  /** Due-today threshold, in cents, that was selected when this cart was created. */
-  lockThresholdCents: number;
-  /** Whether the WaitMate guard was on when this cart was created. */
-  guardEnabled: boolean;
-  /** Set when the shopper uses Buy anyway. Chat unlock leaves this empty. */
-  buyAnywayAt: string | null;
+  /** Marinating. The extension keeps Apple's buttons blocked until this is true. */
+  isUnlocked: boolean;
+  lockStartedAt: string;
+  lockEndsAt: string;
+  /** When set and still in the future, the Apple bag and checkout stay in the Impulse Vault. */
+  vaultUntil: string | null;
   /** Which parser produced the shopper signals used for the verdict. */
   signalSource: SignalSource | null;
-  /** Set when the shopper switches the cart to a synthetic alternative. */
-  selectedAlternativeId: string | null;
   /** True while Grok is reading the latest shopper message for this cart. */
   reading: boolean;
+  userId: string | null;
+  lastPing: CheckoutPing | null;
 };
 
-export type ReasonCode =
-  | "unusable-phone"
-  | "over-budget"
-  | "young-and-working"
-  | "upside-down"
-  | "waiting-saves-money"
-  | "old-and-failing"
-  | "default-wait"
-  | "better-option";
+/** Sleep on it, or end marinating. Switches on `action` use `assertNever`. */
+export type VerdictAction = "sleep" | "unlock";
 
-/**
- * Buy or wait for now. Add `{ action: "better"; alternativeId: string }`
- * when a synthetic alternative should be the third call. Switches on `action`
- * use `assertNever`, so that variant will fail the build until it is handled.
- */
-export type Verdict =
-  | { action: "buy"; alternativeId: null }
-  | { action: "wait"; alternativeId: null }
-  | { action: "better"; alternativeId: string };
-
-export type Decision = Verdict & {
-  reasons: ReasonCode[];
-  horizonMonths: number;
-  netNowCents: number;
-  netLaterCents: number;
+export type Decision = {
+  action: VerdictAction;
+  /** Month in 1..12 where waiting saves the most. 0 when buying now is cheaper. */
+  waitMonths: number;
+  savingsCents: number;
+  costNowCents: number;
+  costLaterCents: number;
   tradeInNowCents: number;
   tradeInLaterCents: number;
-  owedNowCents: number;
-  owedLaterCents: number;
-  paydownCents: number;
-  tradeInDecayCents: number;
-  upsideDownCents: number;
+  financingNowCents: number;
+  financingLaterCents: number;
+  newDeviceCents: number;
+  /** Example-data curve for the overlay graph. Month 0 is today. */
+  tradeInCurve: { month: number; cents: number }[];
 };
 
 export function assertNever(value: never): never {

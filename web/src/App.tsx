@@ -1,39 +1,32 @@
-import { Checkout } from "./Checkout.js";
-import { DevChat } from "./DevChat.js";
-import { cartCode, usePath } from "./path.js";
+import { Desk } from "./Desk.js";
 
 export function App() {
-  const path = usePath();
   return (
     <>
       <a className="skip" href="#main">
         Skip to content
       </a>
       <p className="synthetic" role="note">
-        SYNTHETIC DATA — fictional phones, plans, and prices for a hackathon demo. Not a real store. No card will be
-        charged.
+        EXAMPLE DATA — trade-in values and financing are synthetic. Simmer reads an Apple bag and never places the
+        order.
       </p>
       <header className="top">
-        <a className="wordmark" href="/">
+        <a className="wordmark" href="/dev">
           <span className="mark" aria-hidden="true">
             <i />
             <i />
           </span>
-          WaitMate
+          Simmer
         </a>
         <nav>
-          <a href="/" aria-current={path.startsWith("/c/") || path === "/" ? "page" : undefined}>
-            Checkout
-          </a>
-          <a href="/dev" aria-current={path.startsWith("/dev") ? "page" : undefined}>
-            Desk chat
+          <a href="/dev" aria-current="page">
+            Desk
           </a>
         </nav>
       </header>
       <main id="main">
-        {path.startsWith("/dev") ? <DevChat /> : <Checkout code={cartCode(path)} />}
+        <Desk />
       </main>
     </>
   );
 }
-

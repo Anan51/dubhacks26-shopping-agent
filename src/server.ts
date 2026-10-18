@@ -55,8 +55,7 @@ export async function startServer(): Promise<void> {
   const running = createApp({
     store: createDefaultStore(appConfig.storePath ? path.resolve(appConfig.storePath) : null),
     origin: appConfig.origin,
-    coolingMs: appConfig.coolingMs,
-    lockThresholdCents: appConfig.lockThresholdCents,
+    lockMs: appConfig.lockMs,
     demoReminderMs: appConfig.demoReminderMs,
     demoDefault: appConfig.demoDefault,
     agentHandle: appConfig.agentHandle,
@@ -74,7 +73,7 @@ export async function startServer(): Promise<void> {
 
   const server = createServer(running.app);
   server.listen(appConfig.port, () => {
-    console.log(`WaitMate listening on ${appConfig.origin}`);
+    console.log(`Simmer listening on ${appConfig.origin}`);
     console.log(photon ? "Photon live connection is starting." : "Desk chat is standing in for Photon. No API key needed.");
   });
 
@@ -120,7 +119,7 @@ async function attachClient(app: express.Express): Promise<void> {
 const isDirectRun = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isDirectRun) {
   startServer().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : "WaitMate failed to start.");
+    console.error(error instanceof Error ? error.message : "Simmer failed to start.");
     process.exitCode = 1;
   });
 }

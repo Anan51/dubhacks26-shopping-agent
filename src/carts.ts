@@ -1,6 +1,8 @@
-import { alternativeById, alternativeItem } from "./alternatives.js";
-import { shouldLock } from "./guard.js";
+import { EXAMPLE_DEVICE_AGE_MONTHS, EXAMPLE_OWED_CENTS } from "./heuristic.js";
 import type { Cart, CartItem, Signals } from "./types.js";
+
+/** Used when the Apple bag cannot be read. Labeled example data in the UI. */
+export const FALLBACK_TOTAL_CENTS = 120_000;
 
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -28,54 +30,66 @@ export function monthlyPlanCents(items: readonly CartItem[]): number {
   return items.filter((item) => item.cadence === "monthly").reduce((sum, item) => sum + item.priceCents, 0);
 }
 
-export function withCartFacts(partial: Partial<Signals>, items: readonly CartItem[]): Signals {
-  if (
-    partial.deviceAgeMonths === undefined ||
-    partial.condition === undefined ||
-    partial.owedCents === undefined ||
-    partial.budgetCents === undefined
-  ) {
-    throw new Error("Shopper signals are incomplete.");
-  }
+/** Missing age and balance use labeled example data. There is no survey. */
+export function withCartFacts(partial: Partial<Signals>, totalCents: number): Signals {
   return {
-    deviceAgeMonths: partial.deviceAgeMonths,
-    condition: partial.condition,
+    deviceAgeMonths: partial.deviceAgeMonths ?? EXAMPLE_DEVICE_AGE_MONTHS,
+    condition: partial.condition ?? "fine",
     problemText: partial.problemText ?? "",
-    owedCents: partial.owedCents,
-    budgetCents: partial.budgetCents,
+    owedCents: partial.owedCents ?? EXAMPLE_OWED_CENTS,
+    budgetCents: partial.budgetCents ?? 0,
     problems: partial.problems ?? [],
-    dueTodayCents: dueTodayCents(items),
-    phonePriceCents: phonePriceCents(items),
-    monthlyPlanCents: monthlyPlanCents(items),
+    dueTodayCents: totalCents,
+    phonePriceCents: totalCents,
+    monthlyPlanCents: 0,
   };
 }
 
-export function createCart(input: {
+export function bagFingerprint(userId: string, names: readonly string[], totalCents: number): string {
+  const titles = names.map((name) => name.trim().toLowerCase()).filter((name) => name.length > 0).sort();
+  return `${userId}|${totalCents}|${titles.join("|")}`;
+}
+
+export function itemsForBag(names: readonly string[], totalCents: number, parsed: boolean): CartItem[] {
+  const detail = parsed ? "Read from the Apple bag" : "Synthetic fallback. The Apple bag could not be read.";
+  const list = names.map((name) => name.trim()).filter((name) => name.length > 0);
+  const titles = list.length > 0 ? list : [parsed ? "Apple bag" : "Example phone"];
+  return titles.map((name, index) => ({
+    id: `bag-${index}`,
+    kind: index === 0 ? "phone" : "accessory",
+    name,
+    detail,
+    priceCents: index === 0 ? totalCents : 0,
+    cadence: "once" as const,
+  }));
+}
+
+export const VAULT_MS = 24 * 60 * 60 * 1000;
+
+export function startLockedCart(input: {
   items: CartItem[];
+  totalCents: number;
+  parsedFromPage: boolean;
+  pageHost: string | null;
+  fingerprint: string;
   now: Date;
   demo: boolean;
-  coolingMs: number;
-  lockThresholdCents: number;
-  guardEnabled: boolean;
-  /** False completes the synthetic order immediately. */
-  lock: boolean;
+  lockMs: number;
+  userId: string | null;
   code?: string;
   taken?: (code: string) => boolean;
 }): Cart {
-  if (!input.items.some((item) => item.kind === "phone")) {
-    throw new Error("Choose a phone before buying.");
-  }
   const code = input.code ?? uniqueCode(input.taken);
   const createdAt = input.now.toISOString();
-  const cart: Cart = {
+  return {
     code,
     items: input.items,
+    totalCents: input.totalCents,
+    parsedFromPage: input.parsedFromPage,
+    pageHost: input.pageHost,
+    fingerprint: input.fingerprint,
     createdAt,
-    status: "cooling",
-    coolingOffEndsAt: new Date(input.now.getTime() + input.coolingMs).toISOString(),
-    coolingMs: input.coolingMs,
-    lockThresholdCents: input.lockThresholdCents,
-    guardEnabled: input.guardEnabled,
+    status: "locked",
     demo: input.demo,
     signals: {},
     decision: null,
@@ -86,54 +100,82 @@ export function createCart(input: {
     conversationId: null,
     agentSenderId: null,
     lastInboundMessageId: null,
-    orderId: null,
-    completedAt: null,
-    buyAnywayAt: null,
+    isUnlocked: false,
+    lockStartedAt: createdAt,
+    lockEndsAt: new Date(input.now.getTime() + input.lockMs).toISOString(),
+    vaultUntil: null,
     signalSource: null,
-    selectedAlternativeId: null,
     reading: false,
+    userId: input.userId,
+    lastPing: null,
   };
-  if (!input.lock) {
-    cart.status = "completed";
-    cart.orderId = `WM-${code.slice(0, 4)}`;
-    cart.completedAt = createdAt;
-    cart.coolingOffEndsAt = createdAt;
-  }
-  return cart;
 }
 
-/** Shared unlock for chat confirmation and Buy anyway. */
-export function completeOrder(cart: Cart, now: Date, source: "chat" | "buy-anyway"): Cart {
-  if (cart.status === "completed") {
+export function unlockCart(cart: Cart): Cart {
+  if (isVaultActive(cart, new Date())) {
     return cart;
   }
-  cart.status = "completed";
-  cart.orderId = `WM-${cart.code.slice(0, 4)}`;
-  cart.completedAt = now.toISOString();
-  cart.reminderFireAt = null;
-  if (source === "buy-anyway") {
-    cart.buyAnywayAt = now.toISOString();
+  cart.isUnlocked = true;
+  cart.status = "unlocked";
+  return cart;
+}
+
+export function sleepCart(cart: Cart, now: Date, vaultMs: number = VAULT_MS, demoReminderMs: number = 60_000): Cart {
+  cart.isUnlocked = false;
+  cart.status = "vault";
+  cart.vaultUntil = new Date(now.getTime() + vaultMs).toISOString();
+  cart.reminderAt = cart.vaultUntil;
+  cart.reminderFireAt = cart.demo ? new Date(now.getTime() + demoReminderMs).toISOString() : cart.vaultUntil;
+  cart.reminderSentAt = null;
+  return cart;
+}
+
+export function skipVault(cart: Cart, now: Date): Cart {
+  cart.vaultUntil = now.toISOString();
+  if (cart.status === "vault") {
+    cart.status = "locked";
   }
   return cart;
 }
 
-export function switchToAlternative(cart: Cart, alternativeId: string, now: Date): Cart {
-  const alternative = alternativeById(alternativeId);
-  if (!alternative) {
-    throw new Error("Unknown alternative.");
+export function isVaultActive(cart: Cart, now: Date): boolean {
+  return cart.vaultUntil !== null && Date.parse(cart.vaultUntil) > now.getTime();
+}
+
+export type LockGate =
+  | { ok: true; httpStatus: 200; isUnlocked: true; reason: null; vaultUntil: null; cartStatus: Cart["status"] }
+  | {
+      ok: false;
+      httpStatus: 423;
+      isUnlocked: false;
+      reason: "locked" | "vault";
+      vaultUntil: string | null;
+      cartStatus: Cart["status"];
+    };
+
+/** Lock-state check for /dev. Does not place an order or change the cart. */
+export function lockState(cart: Cart, now: Date): LockGate {
+  if (isVaultActive(cart, now)) {
+    return {
+      ok: false,
+      httpStatus: 423,
+      isUnlocked: false,
+      reason: "vault",
+      vaultUntil: cart.vaultUntil,
+      cartStatus: cart.status,
+    };
   }
-  cart.items = [alternativeItem(alternative)];
-  cart.selectedAlternativeId = alternative.id;
-  if (
-    !shouldLock({
-      enabled: cart.guardEnabled,
-      dueTodayCents: alternative.priceCents,
-      thresholdCents: cart.lockThresholdCents,
-    })
-  ) {
-    completeOrder(cart, now, "chat");
+  if (!cart.isUnlocked) {
+    return {
+      ok: false,
+      httpStatus: 423,
+      isUnlocked: false,
+      reason: "locked",
+      vaultUntil: null,
+      cartStatus: cart.status,
+    };
   }
-  return cart;
+  return { ok: true, httpStatus: 200, isUnlocked: true, reason: null, vaultUntil: null, cartStatus: cart.status };
 }
 
 function uniqueCode(taken: ((code: string) => boolean) | undefined): string {

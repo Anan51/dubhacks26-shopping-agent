@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Simmer fallback bag</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: Georgia, "Iowan Old Style", serif;
+        background: #f6efe4;
+        color: #3a2416;
+      }
+      main {
+        max-width: 36rem;
+        margin: 2rem auto;
+        padding: 1.5rem;
+      }
+      .note {
+        background: #f3e2cf;
+        padding: 0.8rem 1rem;
+        border-radius: 0.8rem;
+      }
+      button {
+        font: inherit;
+        margin-right: 0.5rem;
+        border: 0;
+        border-radius: 999px;
+        padding: 0.7rem 1rem;
+        background: #8a4b24;
+        color: white;
+      }
+      #apple-pay {
+        background: #111;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="note">
+        Fallback bag. Example data. Open this only when apple.com will not load. Simmer reads the product name and the
+        bag total, then waits. This page never takes a card.
+      </p>
+      <h1>Example phone</h1>
+      <p>Bag Subtotal</p>
+      <p>$1,200.00</p>
+      <p>
+        <button type="button" id="checkout">Check Out</button>
+        <button type="button" id="apple-pay">Apple Pay</button>
+      </p>
+      <p id="result" hidden>The button is uncovered. No order was placed.</p>
+    </main>
+    <script>
+      function uncover() {
+        document.getElementById("result").hidden = false;
+      }
+      document.getElementById("checkout").addEventListener("click", uncover);
+      document.getElementById("apple-pay").addEventListener("click", uncover);
+    </script>
+  </body>
+</html>

@@ -1,13 +1,15 @@
 import type { OutboundMessage } from "./channel.js";
-import { checkoutUrl } from "./links.js";
+import { formatLongDate } from "./format.js";
+import { deskChatUrl } from "./links.js";
 import type { Store } from "./store.js";
 import type { Cart } from "./types.js";
 
 const MAX_TIMEOUT_MS = 2_147_000_000;
 
 export function reminderCopy(cart: Cart, origin: string): string {
-  const phone = cart.items.find((item) => item.kind === "phone")?.name ?? "your phone";
-  return `WaitMate here. You asked to wait on cart ${cart.code} (${phone}). Open your saved checkout: ${checkoutUrl(origin, cart.code)}`;
+  const name = cart.items[0]?.name ?? "your bag";
+  const until = cart.vaultUntil ? formatLongDate(cart.vaultUntil) : "the saved date";
+  return `Simmer here. Cart ${cart.code} (${name}) stays covered in the Vault until ${until}. Your Apple bag stays marinating. Desk: ${origin.replace(/\/$/, "")}${deskChatUrl(cart.code)}`;
 }
 
 export class ReminderScheduler {
@@ -24,7 +26,7 @@ export class ReminderScheduler {
 
   arm(cart: Cart): void {
     this.disarm(cart.code);
-    if (!cart.reminderFireAt || cart.reminderSentAt || cart.status === "completed" || !cart.conversationId) {
+    if (!cart.reminderFireAt || cart.reminderSentAt || cart.status === "unlocked" || !cart.conversationId) {
       return;
     }
     const delay = new Date(cart.reminderFireAt).getTime() - this.deps.now().getTime();
@@ -59,7 +61,7 @@ export class ReminderScheduler {
 
   armPending(): void {
     for (const cart of this.deps.store.listCarts()) {
-      if (cart.reminderFireAt && !cart.reminderSentAt && cart.status !== "completed") {
+      if (cart.reminderFireAt && !cart.reminderSentAt && cart.status !== "unlocked") {
         this.arm(cart);
       }
     }
@@ -73,7 +75,7 @@ export class ReminderScheduler {
 
   private async fire(code: string): Promise<void> {
     const cart = this.deps.store.getCart(code);
-    if (!cart?.reminderFireAt || cart.reminderSentAt || !cart.conversationId || cart.status === "completed") {
+    if (!cart?.reminderFireAt || cart.reminderSentAt || !cart.conversationId || cart.status === "unlocked") {
       return;
     }
     const text = reminderCopy(cart, this.deps.origin);
@@ -83,7 +85,7 @@ export class ReminderScheduler {
         text,
         agentSenderId: cart.agentSenderId ?? undefined,
         parentMessageId: cart.lastInboundMessageId ?? undefined,
-        idempotencyKey: `waitmate:reminder:${cart.code}:${cart.reminderFireAt}`,
+        idempotencyKey: `simmer:reminder:${cart.code}:${cart.reminderFireAt}`,
       });
     } catch (error) {
       console.error(error instanceof Error ? error.message : "Reminder failed.");

@@ -121,10 +121,8 @@ describe("parseGrokSignalJson", () => {
     assert.equal(offline.source, "keywords");
 
     const decision = decide(fullSignals(grok.signals));
-    assert.equal(decision.action, "better");
-    if (decision.action === "better") {
-      assert.equal(decision.alternativeId, "battery-swap");
-    }
+    assert.equal(decision.action, "unlock");
+    assert.equal(decision.waitMonths, 0);
   });
 });
 
@@ -155,7 +153,7 @@ describe("Grok defaults", () => {
 
 describe("extractCartCode", () => {
   it("reads a labeled code or a message that is only the code", () => {
-    assert.equal(extractCartCode("Hey WaitMate, cart k7mq2p"), "K7MQ2P");
+    assert.equal(extractCartCode("Hey Simmer, cart k7mq2p"), "K7MQ2P");
     assert.equal(extractCartCode("K7MQ2P"), "K7MQ2P");
     assert.equal(extractCartCode("my code is K7MQ2P somewhere"), undefined);
   });

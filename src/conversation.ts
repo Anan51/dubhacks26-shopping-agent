@@ -1,16 +1,11 @@
-import { completeOrder, withCartFacts } from "./carts.js";
+import { isVaultActive, sleepCart, unlockCart, VAULT_MS, withCartFacts } from "./carts.js";
 import { extractCartCode, extractSignals, pickShopperSignals, type ExtractOptions } from "./extract-signals.js";
-import { addMonths, formatLongDate } from "./format.js";
+import { formatLongDate } from "./format.js";
 import { decide } from "./heuristic.js";
+import { parseLinkCommand, threadUserId } from "./phone-link.js";
 import { phraseDecision } from "./phrase.js";
-import {
-  assertNever,
-  type AskStep,
-  type Cart,
-  type ConversationContext,
-  type Session,
-  type Signals,
-} from "./types.js";
+import type { PhoneLink } from "./store.js";
+import { assertNever, type Cart, type ConversationContext, type Session } from "./types.js";
 
 export type ApplyInput = {
   session: Session | null;
@@ -33,7 +28,10 @@ export type ApplyResult = {
   duplicate: boolean;
   armReminder: boolean;
   disarmReminder: boolean;
+  phoneLink?: PhoneLink;
 };
+
+type Intent = "unlock" | "sleep" | null;
 
 export async function applyTurn(input: ApplyInput): Promise<ApplyResult> {
   if (input.session?.lastInboundId === input.messageId) {
@@ -68,14 +66,30 @@ export async function applyTurn(input: ApplyInput): Promise<ApplyResult> {
   session.updatedAt = nowIso;
   session.turns.push({ role: "shopper", text: input.text });
 
+  const link = parseLinkCommand(input.text);
+  const phoneLink = link
+    ? {
+        userId: link.userId ?? threadUserId(input.conversationId),
+        conversationId: input.conversationId,
+        ...(input.agentSenderId ? { agentSenderId: input.agentSenderId } : {}),
+        linkedAt: nowIso,
+      }
+    : undefined;
+  if (link) {
+    return say(session, "Linked. I'll text this thread the next time a checkout pauses.", {
+      ...(phoneLink ? { phoneLink } : {}),
+    });
+  }
+
   const foundCode = extractCartCode(input.text, { allowBare: session.step === "need_code" || !session.cartCode });
   if (foundCode && foundCode !== session.cartCode) {
     session.cartCode = foundCode;
     session.signals = {};
+    session.signalSource = null;
     session.step = "need_code";
   }
   if (!session.cartCode) {
-    return say(session, question("need_code"), { step: "need_code" });
+    return say(session, "Send the cart code from the Apple bag overlay, like: cart AB23CD.");
   }
 
   const loaded = input.loadCart(session.cartCode);
@@ -83,26 +97,67 @@ export async function applyTurn(input: ApplyInput): Promise<ApplyResult> {
     const missing = session.cartCode;
     session.cartCode = null;
     session.step = "need_code";
-    return say(
-      session,
-      `I can't find cart ${missing}. Press Buy on the checkout page and text me that code.`,
-    );
+    return say(session, `I can't find cart ${missing}. Open your Apple bag so Simmer can read it, then text that code.`);
   }
 
-  if (loaded.status === "completed") {
-    return say(
-      session,
-      `Order ${loaded.orderId ?? "the mock order"} for cart ${loaded.code} already went through. No card was charged.`,
-    );
-  }
-
-  const cart: Cart = { ...loaded, signals: { ...loaded.signals } };
+  const cart: Cart = { ...loaded, signals: { ...loaded.signals }, items: loaded.items.map((item) => ({ ...item })) };
   cart.conversationId = input.conversationId;
   if (input.agentSenderId) {
     cart.agentSenderId = input.agentSenderId;
   }
   cart.lastInboundMessageId = input.messageId;
 
+  const intent = readIntent(input.text);
+  switch (intent) {
+    case "unlock":
+      return unlockTurn(session, cart, input.now);
+    case "sleep":
+      return sleepTurn(session, cart, input);
+    case null:
+      return justifyTurn(session, cart, input);
+    default:
+      return assertNever(intent);
+  }
+}
+
+function unlockTurn(session: Session, cart: Cart, now: Date): ApplyResult {
+  if (isVaultActive(cart, now)) {
+    const until = cart.vaultUntil ? formatLongDate(cart.vaultUntil) : "the saved time";
+    return say(session, `This bag keeps marinating in the Vault until ${until}. Unlock stays on the overlay and waits until then.`, { cart });
+  }
+  unlockCart(cart);
+  session.step = "confirm";
+  return say(session, "Unlock — Apple's own button works again. Simmer will not click it or place the order.", {
+    cart,
+    disarmReminder: true,
+  });
+}
+
+async function sleepTurn(session: Session, cart: Cart, input: ApplyInput): Promise<ApplyResult> {
+  await fillDecision(session, cart, input);
+  sleepCart(cart, input.now, VAULT_MS, input.demoReminderMs);
+  session.step = "confirm";
+  const until = cart.vaultUntil ? formatLongDate(cart.vaultUntil) : "tomorrow";
+  const lead = cart.explanation ?? "Sleep on it.";
+  return say(session, `${lead}\n\nYour Apple bag is covered in the Vault until ${until}. Unlock stays available there.`, {
+    cart,
+    armReminder: true,
+  });
+}
+
+async function justifyTurn(session: Session, cart: Cart, input: ApplyInput): Promise<ApplyResult> {
+  await fillDecision(session, cart, input);
+  session.step = "confirm";
+  const explanation = cart.explanation ?? "Tell me why you want this.";
+  if (isVaultActive(cart, input.now) && cart.vaultUntil) {
+    return say(session, `${explanation}\n\nThis bag stays covered in the Vault until ${formatLongDate(cart.vaultUntil)}.`, {
+      cart,
+    });
+  }
+  return say(session, explanation, { cart });
+}
+
+async function fillDecision(session: Session, cart: Cart, input: ApplyInput): Promise<void> {
   const context: ConversationContext = {
     step: session.step,
     signals: session.signals,
@@ -122,238 +177,49 @@ export async function applyTurn(input: ApplyInput): Promise<ApplyResult> {
     }
   }
   session.signalSource = extraction.source;
-  const patch = pickShopperSignals(extraction.signals);
-  const changed = signalsChanged(session.signals, patch);
-  session.signals = mergeSignals(session.signals, patch);
-
-  if (session.step === "confirm" && cart.decision && !changed) {
-    return confirmTurn(session, cart, input);
-  }
-
-  const ask = nextAsk(session.signals);
-  if (ask !== "ready") {
-    const repeat = session.step === ask;
-    session.step = ask;
-    const reply = repeat ? `${hint(ask)} ${question(ask)}` : question(ask);
-    return say(session, reply, { cart });
-  }
-
-  return decideTurn(session, cart, input);
-}
-
-function confirmTurn(session: Session, cart: Cart, input: ApplyInput): ApplyResult {
-  const decision = cart.decision;
-  if (!decision) {
-    return decideTurn(session, cart, input);
-  }
-  const intent = readIntent(input.text);
-  const action = decision.action;
-  switch (action) {
-    case "buy":
-      if (intent === "yes" || intent === "buy") {
-        return completeCart(session, cart, input.now);
-      }
-      if (intent === "wait") {
-        return saveWait(session, cart, input);
-      }
-      return say(session, "Reply YES to unlock checkout, or WAIT to save the cart.", { cart });
-    case "wait":
-      if (intent === "buy") {
-        return completeCart(session, cart, input.now);
-      }
-      return say(
-        session,
-        `Still holding cart ${cart.code}. I'll text you on ${cart.reminderAt ? formatLongDate(cart.reminderAt) : "the date I saved"}. Reply BUY if you want checkout unlocked.`,
-        { cart },
-      );
-    case "better":
-      if (intent === "yes" || intent === "buy") {
-        return completeCart(session, cart, input.now);
-      }
-      if (intent === "wait") {
-        return saveWait(session, cart, input);
-      }
-      return say(
-        session,
-        "Reply BUY to unlock the original cart, or WAIT to save it. The checkout can switch to the cheaper option.",
-        { cart },
-      );
-    default:
-      return assertNever(action);
-  }
-}
-
-function decideTurn(session: Session, cart: Cart, input: ApplyInput): ApplyResult {
-  const signals = withCartFacts(session.signals, cart.items);
+  session.signals = mergeSignals(session.signals, pickShopperSignals(extraction.signals));
+  const signals = withCartFacts(session.signals, cart.totalCents);
   const decision = decide(signals);
-  const explanation = phraseDecision(decision, signals, session.signalSource ?? "keywords");
-  cart.signalSource = session.signalSource;
+  cart.signalSource = extraction.source;
   cart.signals = signals;
   cart.decision = decision;
-  cart.explanation = explanation;
+  cart.explanation = phraseDecision(decision, signals, extraction.source);
   session.signals = signals;
-  session.step = "confirm";
+}
 
-  const action = decision.action;
-  switch (action) {
-    case "wait":
-      return saveWait(session, cart, input);
-    case "buy":
-      cart.status = "cooling";
-      cart.reminderAt = null;
-      cart.reminderFireAt = null;
-      cart.reminderSentAt = null;
-      return say(session, `${explanation}\n\nReply YES to unlock checkout, or WAIT to save the cart.`, {
-        cart,
-        disarmReminder: true,
-      });
-    case "better":
-      cart.status = "cooling";
-      cart.reminderAt = null;
-      cart.reminderFireAt = null;
-      cart.reminderSentAt = null;
-      return say(
-        session,
-        `${explanation}\n\nThe checkout can switch to that option. Reply BUY to unlock the original cart, or WAIT to save it.`,
-        { cart, disarmReminder: true },
-      );
-    default:
-      return assertNever(action);
+function readIntent(text: string): Intent {
+  const normalized = text.trim().toLowerCase().replace(/[.!]+$/, "");
+  if (normalized === "unlock" || normalized === "i've decided" || normalized === "ive decided") {
+    return "unlock";
   }
+  if (normalized === "sleep" || normalized === "sleep on it" || normalized === "wait") {
+    return "sleep";
+  }
+  return null;
 }
 
-function saveWait(session: Session, cart: Cart, input: ApplyInput): ApplyResult {
-  const explanation = cart.explanation ?? "";
-  const reminderAt = addMonths(input.now, cart.decision?.horizonMonths ?? 6);
-  const fireAt = cart.demo ? new Date(input.now.getTime() + input.demoReminderMs) : reminderAt;
-  cart.status = "saved";
-  cart.reminderAt = reminderAt.toISOString();
-  cart.reminderFireAt = fireAt.toISOString();
-  cart.reminderSentAt = null;
-  const when = formatLongDate(cart.reminderAt);
-  const demoLine = cart.demo
-    ? ` Demo mode is on, so I'll text you in about a minute instead of waiting until ${when}.`
-    : "";
-  return say(
-    session,
-    `${explanation}\n\nI saved cart ${cart.code}. I'll text you on ${when} with your checkout link.${demoLine} Reply BUY if you want it unlocked anyway.`,
-    { cart, armReminder: true },
-  );
-}
-
-function completeCart(session: Session, cart: Cart, now: Date): ApplyResult {
-  completeOrder(cart, now, "chat");
-  return say(
-    session,
-    `Checkout is unlocked. Order ${cart.orderId} is in for cart ${cart.code}. It's a mock receipt — no card was charged. The checkout page will update on its own.`,
-    { cart, disarmReminder: true },
-  );
+function mergeSignals(base: Session["signals"], patch: Session["signals"]): Session["signals"] {
+  return {
+    ...base,
+    ...patch,
+    problems: patch.problems ?? base.problems,
+  };
 }
 
 function say(
   session: Session,
   reply: string,
-  extra: { step?: AskStep; cart?: Cart; armReminder?: boolean; disarmReminder?: boolean } = {},
+  extra: { cart?: Cart; armReminder?: boolean; disarmReminder?: boolean; phoneLink?: PhoneLink } = {},
 ): ApplyResult {
-  if (extra.step) {
-    session.step = extra.step;
-  }
   session.turns.push({ role: "agent", text: reply });
+  session.updatedAt = new Date().toISOString();
   return {
     session,
-    cart: extra.cart,
     reply,
     duplicate: false,
-    armReminder: extra.armReminder ?? false,
-    disarmReminder: extra.disarmReminder ?? false,
+    armReminder: extra.armReminder === true,
+    disarmReminder: extra.disarmReminder === true,
+    ...(extra.cart ? { cart: extra.cart } : {}),
+    ...(extra.phoneLink ? { phoneLink: extra.phoneLink } : {}),
   };
-}
-
-function nextAsk(signals: Partial<Signals>): AskStep | "ready" {
-  if (signals.deviceAgeMonths === undefined) {
-    return "age";
-  }
-  if (signals.condition === undefined) {
-    return "problem";
-  }
-  if (signals.owedCents === undefined) {
-    return "owed";
-  }
-  if (signals.budgetCents === undefined) {
-    return "budget";
-  }
-  return "ready";
-}
-
-function question(step: AskStep): string {
-  switch (step) {
-    case "need_code":
-      return "What's the cart code from checkout? It looks like K7MQ2P.";
-    case "age":
-      return "How old is the phone you have now? Months or years is fine — for example, 18 months or 2 years.";
-    case "problem":
-      return "What's wrong with it? For example: it works fine, the screen is cracked, or the battery dies by the afternoon.";
-    case "owed":
-      return "How much do you still owe on it, in dollars? Say 0 if it's paid off.";
-    case "budget":
-      return "What's the most you want to spend out of pocket today?";
-    case "confirm":
-      return "Reply YES to unlock checkout, or WAIT to save the cart.";
-    default:
-      return assertNever(step);
-  }
-}
-
-function hint(step: AskStep): string {
-  switch (step) {
-    case "need_code":
-      return "I still need the cart code.";
-    case "age":
-      return "I need an age, like 14 months or 2 years.";
-    case "problem":
-      return "Tell me if it's fine, scratched, cracked, the battery's going, or it won't turn on.";
-    case "owed":
-      return "Reply with a dollar amount, or 0.";
-    case "budget":
-      return "Reply with a dollar amount.";
-    case "confirm":
-      return "Reply YES or WAIT.";
-    default:
-      return assertNever(step);
-  }
-}
-
-function readIntent(text: string): "yes" | "buy" | "wait" | null {
-  const normalized = text.trim().toLowerCase();
-  if (/\b(wait|hold off|not yet|save it)\b/.test(normalized) && !/\bbuy\b/.test(normalized)) {
-    return "wait";
-  }
-  if (/^(no|nope)\b/.test(normalized)) {
-    return "wait";
-  }
-  if (/\bbuy\b/.test(normalized)) {
-    return "buy";
-  }
-  if (/^(yes|yep|yeah|y|confirm|unlock|do it|ok|okay)\b/.test(normalized)) {
-    return "yes";
-  }
-  return null;
-}
-
-function mergeSignals(base: Partial<Signals>, patch: Partial<Signals>): Partial<Signals> {
-  return { ...base, ...patch };
-}
-
-function signalsChanged(before: Partial<Signals>, patch: Partial<Signals>): boolean {
-  const keys = ["deviceAgeMonths", "condition", "problemText", "problems", "owedCents", "budgetCents"] as const;
-  return keys.some((key) => {
-    const value = patch[key];
-    if (value === undefined) {
-      return false;
-    }
-    if (key === "problems") {
-      return JSON.stringify(value) !== JSON.stringify(before.problems ?? []);
-    }
-    return value !== before[key];
-  });
 }

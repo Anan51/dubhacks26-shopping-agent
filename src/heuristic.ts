@@ -1,15 +1,15 @@
-import { ALTERNATIVES, type Alternative } from "./alternatives.js";
-import type { Condition, Decision, ReasonCode, Signals } from "./types.js";
-
-/** Months we look ahead when comparing "buy today" with "keep paying the old phone". */
-export const HORIZON_MONTHS = 6;
+import type { Condition, Decision, Signals } from "./types.js";
 
 /** Synthetic installment used only for the payoff side of the comparison. */
 export const MONTHLY_PAYMENT_CENTS = 3_500;
 
-const UPSIDE_DOWN_CENTS = 10_000;
-const SAVINGS_WORTH_WAITING_CENTS = 5_000;
-const YOUNG_PHONE_MONTHS = 24;
+/** Example age when the shopper has not named one. */
+export const EXAMPLE_DEVICE_AGE_MONTHS = 24;
+
+/** Example remaining balance: twelve $35 payments. Not a carrier balance. */
+export const EXAMPLE_OWED_CENTS = 42_000;
+
+const MAX_WAIT_MONTHS = 12;
 
 const CONDITION_FACTOR: Record<Condition, number> = {
   fine: 1,
@@ -28,89 +28,76 @@ const TRADE_IN_ANCHORS: readonly { months: number; cents: number }[] = [
 ];
 
 /**
- * Deterministic buy-or-wait call.
- * Inputs are structured signals. This function does not read chat text.
+ * Cost now versus cost later. Later is the month in the next year where
+ * financing paydown beats trade-in decay by the most. No promo prices.
+ * This function does not read chat text.
  */
 export function decide(signals: Signals): Decision {
-  const math = project(signals);
-  if (signals.condition !== "unusable") {
-    const alternative = coveringAlternative(signals);
-    if (alternative) {
-      return { action: "better", alternativeId: alternative.id, reasons: ["better-option"], ...math };
+  const newDeviceCents = signals.phonePriceCents;
+  const tradeInNowCents = tradeInValueCents(signals.deviceAgeMonths, signals.condition);
+  const financingNowCents = Math.max(0, signals.owedCents);
+  const costNowCents = newDeviceCents + financingNowCents - tradeInNowCents;
+  let bestMonths = 0;
+  let bestSavings = 0;
+  let best = quoteAt(signals, newDeviceCents, costNowCents, financingNowCents, 0);
+  for (let month = 1; month <= MAX_WAIT_MONTHS; month += 1) {
+    const quote = quoteAt(signals, newDeviceCents, costNowCents, financingNowCents, month);
+    if (quote.savingsCents > bestSavings) {
+      bestSavings = quote.savingsCents;
+      bestMonths = month;
+      best = quote;
     }
   }
-  const affordable = math.netNowCents <= signals.budgetCents;
-  const reasons: ReasonCode[] = [];
-  let action: "buy" | "wait" = "wait";
-
-  if (signals.condition === "unusable" && affordable) {
-    action = "buy";
-    reasons.push("unusable-phone");
-  } else if (!affordable) {
-    reasons.push("over-budget");
-    if (signals.condition === "unusable") {
-      reasons.push("unusable-phone");
-    }
-  } else if (
-    (signals.condition === "fine" || signals.condition === "minor") &&
-    signals.deviceAgeMonths < YOUNG_PHONE_MONTHS
-  ) {
-    reasons.push("young-and-working");
-  } else if (math.upsideDownCents > UPSIDE_DOWN_CENTS) {
-    reasons.push("upside-down");
-  } else if (math.paydownCents - math.tradeInDecayCents >= SAVINGS_WORTH_WAITING_CENTS) {
-    reasons.push("waiting-saves-money");
-  } else if (signals.condition === "broken" && signals.deviceAgeMonths >= YOUNG_PHONE_MONTHS) {
-    action = "buy";
-    reasons.push("old-and-failing");
-  } else {
-    reasons.push("default-wait");
-  }
-
-  return { action, alternativeId: null, reasons, ...math };
+  const action = bestSavings > 0 ? "sleep" : "unlock";
+  return {
+    action,
+    waitMonths: action === "sleep" ? bestMonths : 0,
+    savingsCents: action === "sleep" ? bestSavings : best.savingsCents,
+    costNowCents,
+    costLaterCents: action === "sleep" ? best.costLaterCents : costNowCents,
+    tradeInNowCents,
+    tradeInLaterCents: action === "sleep" ? best.tradeInLaterCents : tradeInNowCents,
+    financingNowCents,
+    financingLaterCents: action === "sleep" ? best.financingLaterCents : financingNowCents,
+    newDeviceCents,
+    tradeInCurve: tradeInCurve(signals.deviceAgeMonths, signals.condition, MAX_WAIT_MONTHS),
+  };
 }
 
-function coveringAlternative(signals: Signals): Alternative | null {
-  if (signals.problems.length === 0) {
-    return null;
+export function tradeInCurve(ageMonths: number, condition: Condition, span: number): { month: number; cents: number }[] {
+  const points: { month: number; cents: number }[] = [];
+  for (let month = 0; month <= span; month += 1) {
+    points.push({ month, cents: tradeInValueCents(ageMonths + month, condition) });
   }
-  const fits = ALTERNATIVES.filter((alternative) => {
-    if (alternative.priceCents >= signals.dueTodayCents) {
-      return false;
-    }
-    return signals.problems.every((tag) => alternative.solves.includes(tag));
-  });
-  fits.sort((left, right) => left.priceCents - right.priceCents || left.id.localeCompare(right.id));
-  return fits[0] ?? null;
+  return points;
 }
 
-/** Synthetic trade-in for a phone of this age and condition, in cents. */
+/** Synthetic trade-in for a phone of this age and condition, in cents. Example data, not a carrier quote. */
 export function tradeInValueCents(ageMonths: number, condition: Condition): number {
   const fine = fineTradeInCents(Math.max(0, ageMonths));
   return Math.round(fine * CONDITION_FACTOR[condition]);
 }
 
-function project(signals: Signals): Omit<Decision, "action" | "alternativeId" | "reasons"> {
-  const tradeInNowCents = tradeInValueCents(signals.deviceAgeMonths, signals.condition);
-  const tradeInLaterCents = tradeInValueCents(signals.deviceAgeMonths + HORIZON_MONTHS, signals.condition);
-  const owedNowCents = Math.max(0, signals.owedCents);
-  const owedLaterCents = Math.max(0, owedNowCents - MONTHLY_PAYMENT_CENTS * HORIZON_MONTHS);
-  const paydownCents = owedNowCents - owedLaterCents;
-  const tradeInDecayCents = tradeInNowCents - tradeInLaterCents;
-  const netNowCents = signals.dueTodayCents + owedNowCents - tradeInNowCents;
-  const netLaterCents = signals.dueTodayCents + owedLaterCents - tradeInLaterCents;
-  const upsideDownCents = Math.max(0, owedNowCents - tradeInNowCents);
+function quoteAt(
+  signals: Signals,
+  newDeviceCents: number,
+  costNowCents: number,
+  financingNowCents: number,
+  month: number,
+): {
+  savingsCents: number;
+  costLaterCents: number;
+  tradeInLaterCents: number;
+  financingLaterCents: number;
+} {
+  const financingLaterCents = Math.max(0, financingNowCents - MONTHLY_PAYMENT_CENTS * month);
+  const tradeInLaterCents = tradeInValueCents(signals.deviceAgeMonths + month, signals.condition);
+  const costLaterCents = newDeviceCents + financingLaterCents - tradeInLaterCents;
   return {
-    horizonMonths: HORIZON_MONTHS,
-    netNowCents,
-    netLaterCents,
-    tradeInNowCents,
+    savingsCents: costNowCents - costLaterCents,
+    costLaterCents,
     tradeInLaterCents,
-    owedNowCents,
-    owedLaterCents,
-    paydownCents,
-    tradeInDecayCents,
-    upsideDownCents,
+    financingLaterCents,
   };
 }
 

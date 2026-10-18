@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "Simmer",
+  "version": "0.2.0",
+  "description": "Marinates an Apple bag so the shopper can decide. Simmer never places the order.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://www.apple.com/shop/bag*",
+    "https://www.apple.com/*/shop/bag*",
+    "https://www.apple.com.cn/shop/bag*",
+    "https://www.apple.com.cn/*/shop/bag*",
+    "https://*.store.apple.com/*checkout*",
+    "https://*.store.apple.com/*Checkout*",
+    "http://127.0.0.1:4321/*",
+    "http://localhost:4321/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Simmer"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.apple.com/shop/bag*",
+        "https://www.apple.com/*/shop/bag*",
+        "https://www.apple.com.cn/shop/bag*",
+        "https://www.apple.com.cn/*/shop/bag*",
+        "https://*.store.apple.com/*checkout*",
+        "https://*.store.apple.com/*Checkout*",
+        "http://127.0.0.1:4321/fallback*",
+        "http://localhost:4321/fallback*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
+}

@@ -1,14 +1,14 @@
 :root {
   color-scheme: light;
-  --paper: #f3efe6;
-  --ink: #1b1914;
-  --muted: #5f584e;
-  --line: #e4d9c8;
-  --card: #fffdf8;
-  --pine: #1d5c45;
-  --pine-deep: #12382b;
-  --foam: #e7f3ec;
-  --clay: #9c3b16;
+  --paper: #f6efe4;
+  --ink: #3a2416;
+  --muted: #7a5b45;
+  --line: #eadccb;
+  --card: #fffaf3;
+  --pine: #8a4b24;
+  --pine-deep: #5c3016;
+  --foam: #f3e2cf;
+  --clay: #8a4b24;
   --clay-soft: #f8ece4;
   --gold: #f6e6cc;
   --shadow: 0 18px 50px rgba(48, 32, 12, 0.08);
@@ -88,10 +88,13 @@ a {
 
 .mark i {
   display: block;
-  width: 0.28rem;
-  height: 1rem;
-  background: var(--pine);
-  border-radius: 99px;
+  width: 0.35rem;
+  height: 0.7rem;
+  margin-top: 0.25rem;
+  background: transparent;
+  border: 2px solid var(--pine);
+  border-radius: 99px 99px 99px 99px;
+  border-bottom: 0;
 }
 
 nav {
@@ -523,6 +526,54 @@ input:focus-visible,
 textarea:focus-visible {
   outline: 3px solid var(--pine);
   outline-offset: 2px;
+}
+
+.math table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0 1rem;
+}
+
+.math th,
+.math td {
+  text-align: left;
+  padding: 0.35rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.math th {
+  width: 7rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.curve {
+  margin: 0.5rem 0 1rem;
+  color: var(--pine);
+}
+
+.curve svg {
+  width: 100%;
+  max-width: 22rem;
+  height: auto;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+}
+
+.curve figcaption,
+.fine {
+  color: var(--muted);
+}
+
+select {
+  width: 100%;
+  margin-top: 0.3rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 0.7rem;
+  border: 1px solid var(--line);
+  background: white;
 }
 
 @media (max-width: 860px) {

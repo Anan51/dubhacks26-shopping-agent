@@ -3,8 +3,8 @@ import { xaiModelFrom, xaiTimeoutFrom } from "./grok.js";
 /** Docs default. Socket.IO and the HTTP client both use this origin, not a /v1 suffix. */
 export const DEFAULT_API_ORIGIN = "https://api.photon.codes";
 
-/** Default cooling-off lock. Override with WAITMATE_COOLING_MS. */
-export const DEFAULT_COOLING_MS = 600_000;
+/** Default soft lock. Override with WAITMATE_LOCK_MS. Unlock stays available the whole time. */
+export const DEFAULT_LOCK_MS = 600_000;
 
 export type AgentConfig = {
   apiKey: string;
@@ -33,9 +33,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
 export type AppConfig = {
   port: number;
   origin: string;
-  coolingMs: number;
-  /** Null keeps today's behavior: every cart starts the cooling-off lock. */
-  lockThresholdCents: number | null;
+  lockMs: number;
   demoReminderMs: number;
   demoDefault: boolean;
   /** Null uses the in-memory store. A path selects the JSON file store. */
@@ -55,8 +53,7 @@ export function readAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   return {
     port,
     origin: env.WAITMATE_PUBLIC_ORIGIN?.trim() || `http://localhost:${port}`,
-    coolingMs: numberFrom(env.WAITMATE_COOLING_MS, DEFAULT_COOLING_MS),
-    lockThresholdCents: centsFrom(env.WAITMATE_LOCK_THRESHOLD_CENTS),
+    lockMs: numberFrom(env.WAITMATE_LOCK_MS, DEFAULT_LOCK_MS),
     demoReminderMs: numberFrom(env.WAITMATE_DEMO_REMINDER_MS, 60_000),
     demoDefault: env.WAITMATE_DEMO === "1",
     storePath: env.WAITMATE_STORE_PATH?.trim() || null,
@@ -75,17 +72,6 @@ export function photonConfigured(env: NodeJS.ProcessEnv = process.env): boolean 
       env.PHOTON_PLATFORM?.trim() &&
       env.PHOTON_AGENT_HANDLE?.trim(),
   );
-}
-
-function centsFrom(value: string | undefined): number | null {
-  if (!value?.trim()) {
-    return null;
-  }
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 0) {
-    return null;
-  }
-  return parsed;
 }
 
 function numberFrom(value: string | undefined, fallback: number): number {

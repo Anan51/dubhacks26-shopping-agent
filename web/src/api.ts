@@ -1,87 +1,75 @@
-export type Kind = "phone" | "plan" | "accessory";
-
-export type Product = {
-  id: string;
-  kind: Kind;
-  name: string;
-  detail: string;
-  blurb: string;
-  priceCents: number;
-  cadence: "once" | "monthly";
-};
-
-export type LineItem = {
-  id: string;
-  kind: Kind;
-  name: string;
-  detail: string;
-  priceCents: number;
-  cadence: "once" | "monthly";
-};
-
-export type GuardSettings = {
-  enabled: boolean;
-  thresholdCents: number;
-  coolingMs: number;
-};
-
-export type Alternative = {
-  id: string;
-  name: string;
-  label: string;
-  priceCents: number;
-  solves: string[];
-  reason: string;
-};
+export type CurvePoint = { month: number; cents: number };
 
 export type Decision = {
-  action: "buy" | "wait" | "better";
-  alternativeId: string | null;
-  horizonMonths: number;
-  netNowCents: number;
-  netLaterCents: number;
+  action: "sleep" | "unlock";
+  waitMonths: number;
+  savingsCents: number;
+  costNowCents: number;
+  costLaterCents: number;
   tradeInNowCents: number;
   tradeInLaterCents: number;
-  owedNowCents: number;
-  owedLaterCents: number;
-  upsideDownCents: number;
+  financingNowCents: number;
+  financingLaterCents: number;
+  newDeviceCents: number;
+  tradeInCurve: CurvePoint[];
+};
+
+export type CheckoutPing = {
+  delivered: boolean;
+  reason: "unlinked" | "send_failed" | null;
+  smsLink: string | null;
+  qrDataUrl: string | null;
+  prefilled: string;
 };
 
 export type CartResponse = {
   code: string;
-  items: LineItem[];
-  status: "cooling" | "saved" | "completed";
-  createdAt: string;
-  coolingOffEndsAt: string;
-  coolingMs: number;
-  lockThresholdCents: number;
-  guardEnabled: boolean;
-  buyAnywayAt: string | null;
+  items: { name: string; detail: string; priceCents: number }[];
+  totalCents: number;
+  parsedFromPage: boolean;
+  pageHost: string | null;
+  status: "locked" | "vault" | "unlocked";
+  isUnlocked: boolean;
+  lockEndsAt: string;
+  vaultUntil: string | null;
+  userId: string | null;
   signalSource: "grok" | "keywords" | null;
   reading: boolean;
-  selectedAlternativeId: string | null;
-  demo: boolean;
+  signals: {
+    deviceAgeMonths?: number;
+    condition?: string;
+    problemText?: string;
+    owedCents?: number;
+    problems?: string[];
+  };
   decision: Decision | null;
   explanation: string | null;
-  reminderAt: string | null;
-  orderId: string | null;
-  completedAt: string | null;
-  textMessage: string;
-  smsLink: string | null;
+  lastPing: CheckoutPing | null;
+  smsLink: string;
+  linkMessage: string | null;
+  linkSmsLink: string | null;
   deskPath: string;
+  textMessage: string;
   synthetic: true;
 };
 
 export type PublicConfig = {
   channel: "photon" | "stub";
   agentHandle: string | null;
-  coolingMs: number;
-  lockThresholdCents: number | null;
-  guardDefaults: GuardSettings;
-  cooldownChoicesMs: number[];
+  lockMs: number;
   demoReminderMs: number;
-  demoDefault: boolean;
   grokEnabled: boolean;
+  exampleOwedCents: number;
+  fallbackTotalCents: number;
+};
+
+export type PayGate = {
+  ok: boolean;
+  httpStatus: number;
+  isUnlocked: boolean;
+  reason: "locked" | "vault" | null;
+  vaultUntil: string | null;
+  code?: string;
 };
 
 export type TranscriptTurn = {
@@ -89,63 +77,44 @@ export type TranscriptTurn = {
   text: string;
 };
 
-export async function getAlternatives(): Promise<Alternative[]> {
-  const body = await request<{ alternatives: Alternative[] }>("/api/alternatives");
-  return body.alternatives;
-}
-
-export async function switchCart(code: string, alternativeId: string): Promise<CartResponse> {
-  return request<CartResponse>(`/api/carts/${code}/switch`, {
-    method: "POST",
-    body: JSON.stringify({ alternativeId }),
-  });
-}
-
-export async function getCatalog(): Promise<Product[]> {
-  const body = await request<{ products: Product[] }>("/api/catalog");
-  return body.products;
-}
-
 export async function getConfig(): Promise<PublicConfig> {
   return request<PublicConfig>("/api/config");
 }
 
-export async function createCart(
-  itemIds: string[],
-  demo: boolean,
-  sessionId: string,
-  guard: GuardSettings,
-): Promise<CartResponse> {
-  return request<CartResponse>("/api/carts", {
-    method: "POST",
-    body: JSON.stringify({ itemIds, demo, sessionId, guard }),
-  });
-}
-
-export async function getGuard(sessionId: string): Promise<{ settings: GuardSettings; cooldownChoicesMs: number[] }> {
-  return request(`/api/guard?sessionId=${encodeURIComponent(sessionId)}`);
-}
-
-export async function saveGuard(sessionId: string, settings: GuardSettings): Promise<GuardSettings> {
-  const body = await request<{ settings: GuardSettings }>("/api/guard", {
-    method: "PUT",
-    body: JSON.stringify({ sessionId, settings }),
-  });
-  return body.settings;
-}
-
-export async function buyAnyway(code: string): Promise<CartResponse> {
-  return request<CartResponse>(`/api/carts/${code}/buy-anyway`, { method: "POST" });
+export async function listCarts(): Promise<CartResponse[]> {
+  const body = await request<{ carts: CartResponse[] }>("/api/carts");
+  return body.carts;
 }
 
 export async function getCart(code: string): Promise<CartResponse> {
   return request<CartResponse>(`/api/carts/${code}`);
 }
 
+export async function readPayGate(code: string): Promise<PayGate> {
+  const response = await fetch("/api/pay", {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  return (await response.json()) as PayGate;
+}
+
+export async function linkDesk(userId: string, conversationId: string): Promise<void> {
+  await request("/api/dev/link", {
+    method: "POST",
+    body: JSON.stringify({ userId, conversationId }),
+  });
+}
+
+export async function notifyCart(code: string, fail: boolean): Promise<CartResponse> {
+  return request<CartResponse>(`/api/carts/${code}/notify`, {
+    method: "POST",
+    body: JSON.stringify({ fail }),
+  });
+}
+
 export async function getTranscript(conversationId: string): Promise<{ turns: TranscriptTurn[]; reading: boolean }> {
-  return request<{ turns: TranscriptTurn[]; reading: boolean }>(
-    `/api/dev/messages?conversationId=${encodeURIComponent(conversationId)}`,
-  );
+  return request(`/api/dev/messages?conversationId=${encodeURIComponent(conversationId)}`);
 }
 
 export async function sendDeskMessage(conversationId: string, text: string): Promise<TranscriptTurn[]> {

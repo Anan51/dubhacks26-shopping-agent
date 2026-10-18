@@ -5,74 +5,45 @@ import { decide } from "./heuristic.js";
 import { phraseDecision, polishPhrase } from "./phrase.js";
 import type { Signals } from "./types.js";
 
-const signals: Signals = {
-  deviceAgeMonths: 14,
-  condition: "fine",
-  problemText: "it works fine",
-  problems: [],
-  owedCents: 42_000,
-  budgetCents: 150_000,
-  dueTodayCents: 82_800,
-  phonePriceCents: 79_900,
-  monthlyPlanCents: 7_000,
-};
-
-function chatReply(text: string): Response {
-  return Response.json({
-    choices: [{ message: { content: text } }],
-  });
+function signals(overrides: Partial<Signals> = {}): Signals {
+  return {
+    deviceAgeMonths: 0,
+    condition: "fine",
+    problemText: "the battery dies by 3pm",
+    problems: ["battery"],
+    owedCents: 42_000,
+    budgetCents: 0,
+    dueTodayCents: 100_000,
+    phonePriceCents: 100_000,
+    monthlyPlanCents: 0,
+    ...overrides,
+  };
 }
 
 describe("phraseDecision", () => {
-  it("states the call and the cost, trade-in, and financing figures", () => {
-    const decision = decide(signals);
-    const text = phraseDecision(decision, signals);
-    assert.match(text, /^Wait/);
-    assert.match(text, /\$988/);
-    assert.match(text, /\$260/);
-    assert.match(text, /\$200/);
-    assert.match(text, /\$420/);
-    assert.match(text, /\$210/);
-    assert.match(text, /\$35/);
-    assert.match(text, /synthetic curve/);
-    assert.doesNotMatch(text, /^Buy/);
+  it("leads with the savings and labels example data", () => {
+    const decision = decide(signals());
+    const text = phraseDecision(decision, signals(), "keywords");
+    assert.match(text, /^Waiting 12 months saves you \$280\./);
+    assert.match(text, /You said "the battery dies by 3pm"/);
+    assert.match(text, /Parsed with keywords/);
+    assert.match(text, /example data/);
+  });
+
+  it("leads with Unlock when waiting costs more", () => {
+    const decision = decide(signals({ owedCents: 0 }));
+    const text = phraseDecision(decision, signals({ owedCents: 0, problemText: "" }), null);
+    assert.match(text, /^Unlock /);
+    assert.match(text, /example trade-in and financing until you reply/);
   });
 });
 
 describe("polishPhrase", () => {
-  it("returns the template when no key is set and does not call the network", async () => {
-    const template = "Wait — hold.";
-    let called = false;
-    const fetchImpl: typeof fetch = () => {
-      called = true;
-      throw new Error("network");
-    };
-    const text = await polishPhrase(template, "wait", undefined, fetchImpl);
-    assert.equal(text, template);
-    assert.equal(called, false);
-  });
-
-  it("returns the template when the model flips the call or the request fails", async () => {
-    const template = "Wait — hold.";
-    const flipped = await polishPhrase(template, "wait", "test-key", async () => chatReply("Buy — do it."));
-    assert.equal(flipped, template);
-
-    const failed = await polishPhrase(template, "wait", "test-key", async () => {
-      throw new Error("offline");
+  it("keeps the template when the rewrite drops the call", async () => {
+    const template = "Waiting 12 months saves you $280. Sleep on it?";
+    const kept = await polishPhrase(template, "sleep", "test-key", async () => {
+      return Response.json({ choices: [{ message: { content: "Buy it today." } }] });
     });
-    assert.equal(failed, template);
-  });
-
-  it("uses the model text when the call stays the same", async () => {
-    let url = "";
-    let authorization = "";
-    const polished = await polishPhrase("Wait — hold.", "wait", "test-key", async (input, init) => {
-      url = String(input);
-      authorization = new Headers(init?.headers).get("authorization") ?? "";
-      return chatReply("Wait — I'd still hold off. Today you'd lay out $988.");
-    });
-    assert.equal(url, "https://api.x.ai/v1/chat/completions");
-    assert.equal(authorization, "Bearer test-key");
-    assert.match(polished, /^Wait — I'd still hold off/);
+    assert.equal(kept, template);
   });
 });

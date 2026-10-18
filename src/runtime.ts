@@ -41,7 +41,10 @@ export function createRuntime(deps: {
 
     let reply = result.reply;
     const action = result.cart?.decision?.action;
-    if (action && (reply.startsWith("Buy") || reply.startsWith("Wait") || reply.startsWith("Better"))) {
+    if (result.phoneLink) {
+      deps.store.savePhoneLink(result.phoneLink);
+    }
+    if (action && (reply.startsWith("Waiting") || reply.startsWith("Unlock"))) {
       reply = await deps.polish(reply, action);
       const last = result.session.turns.at(-1);
       if (last?.role === "agent") {
@@ -54,7 +57,7 @@ export function createRuntime(deps: {
       text: reply,
       agentSenderId: result.cart?.agentSenderId ?? message.agentSenderId,
       parentMessageId: message.id,
-      idempotencyKey: `waitmate:${message.id}`,
+      idempotencyKey: `simmer:${message.id}`,
     });
     deps.store.saveSession(result.session);
     if (result.cart) {

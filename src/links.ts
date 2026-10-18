@@ -5,13 +5,24 @@ export function isCartCode(value: string): boolean {
 }
 
 export function prefilledText(code: string): string {
-  return `Hey WaitMate, cart ${code}`;
+  return `Hey Simmer, cart ${code}`;
 }
 
 /** Opens Messages. A shared iMessage line delivers it when the recipient is the agent number. */
-export function textWaitMateLink(handle: string, code: string): string {
-  const body = encodeURIComponent(prefilledText(code));
-  return `sms:${handle.trim()}&body=${body}`;
+export function textSimmerLink(handle: string | null, code: string): string {
+  return smsLink(handle, prefilledText(code));
+}
+
+export function linkPhoneText(userId: string): string {
+  return `link ${userId}`;
+}
+
+export function linkPhoneSms(handle: string | null, userId: string): string {
+  return smsLink(handle, linkPhoneText(userId));
+}
+
+function smsLink(handle: string | null, body: string): string {
+  return `sms:${handle?.trim() ?? ""}&body=${encodeURIComponent(body)}`;
 }
 
 export function checkoutUrl(origin: string, code: string): string {
