@@ -57,7 +57,6 @@ describe("sendPhotonMessage", () => {
       conversationId: "pho_spc_shared",
       text: "Buy.",
       agentSenderId: "pho_usr_agent",
-      parentMessageId: "pho_msg_parent",
       idempotencyKey: "simmer:pho_msg_parent",
     };
 
