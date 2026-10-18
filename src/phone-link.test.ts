@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { itemsForBag, startLockedCart } from "./carts.js";
-import { notifyCheckout, parseLinkCommand } from "./phone-link.js";
+import { justificationAsk, notifyCheckout, parseLinkCommand } from "./phone-link.js";
 import { createMemoryStore, type PhoneLink } from "./store.js";
-import type { Cart } from "./types.js";
+import type { Cart, CartItem } from "./types.js";
 
 const NOW = new Date("2026-10-18T00:00:00.000Z");
 
@@ -68,9 +68,10 @@ describe("phone link", () => {
       qr: async () => "unused",
     });
     assert.equal(delivered.delivered, true);
-    assert.match(sent, /paused your \$1,199 checkout/);
-    assert.match(sent, /What's making you want to upgrade\?/);
-    assert.match(sent, /AB23CD/);
+    assert.equal(
+      sent,
+      "Simmer paused your iPhone 16 Pro ($1,199) checkout. Cart AB23CD. What's making you want to upgrade?",
+    );
 
     const failed = await notifyCheckout({
       store,
@@ -87,4 +88,106 @@ describe("phone link", () => {
     assert.equal(failed.reason, "send_failed");
     assert.ok(failed.qrDataUrl);
   });
+
+  it("names one item and the bag total, with no more-count", () => {
+    assert.equal(
+      justificationAsk(bag(["iPhone 16 Pro"], 119_900)),
+      "iPhone 16 Pro ($1,199) is marinating. What's making you want to upgrade?",
+    );
+    assert.equal(
+      justificationAsk(bag(["USB-C Charge Cable"], 1_999)),
+      "USB-C Charge Cable ($19.99) is marinating. What's making you want to upgrade?",
+    );
+  });
+
+  it("names the main item and counts the rest, including titles the card leaves off", () => {
+    const caseFirst = bag(["iPhone 16 case", "iPhone 16"], 82_800);
+    assert.equal(
+      justificationAsk(caseFirst),
+      "iPhone 16 +1 more ($828) is marinating. What's making you want to upgrade?",
+    );
+
+    const priced = bag([], 81_800, [
+      line("USB-C Charge Cable", 1_900),
+      line("iPhone 16", 79_900),
+    ]);
+    assert.equal(
+      justificationAsk(priced),
+      "iPhone 16 +1 more ($818) is marinating. What's making you want to upgrade?",
+    );
+
+    const priceyCase = bag([], 82_800, [
+      line("iPhone 16 case", 2_900),
+      line("iPhone 16", 79_900),
+    ]);
+    assert.equal(
+      justificationAsk(priceyCase),
+      "iPhone 16 +1 more ($828) is marinating. What's making you want to upgrade?",
+    );
+
+    const tied = bag([], 100_000, [
+      line("iPhone 16", 50_000),
+      line("iPhone 17", 50_000),
+    ]);
+    assert.equal(
+      justificationAsk(tied),
+      "iPhone 16 +1 more ($1,000) is marinating. What's making you want to upgrade?",
+    );
+
+    const many = bag(["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"], 6_000);
+    assert.equal(
+      justificationAsk(many),
+      "Alpha +5 more ($60) is marinating. What's making you want to upgrade?",
+    );
+
+    const hidden = Object.assign(bag(["Alpha", "Bravo"], 5_000), { hiddenItemCount: 3 });
+    assert.equal(
+      justificationAsk(hidden),
+      "Alpha +4 more ($50) is marinating. What's making you want to upgrade?",
+    );
+
+    const repeated = bag(["iPhone 16", "  iPhone 16  ", "USB-C Charge Cable"], 10_000);
+    assert.equal(
+      justificationAsk(repeated),
+      "iPhone 16 +1 more ($100) is marinating. What's making you want to upgrade?",
+    );
+  });
+
+  it("ignores a blank title and falls back when the bag has no name", () => {
+    const blank = bag([], 60_000, [line("   ", 50_000), line("iPhone 16", 10_000)]);
+    assert.equal(
+      justificationAsk(blank),
+      "iPhone 16 ($600) is marinating. What's making you want to upgrade?",
+    );
+    assert.equal(
+      justificationAsk(bag([], 0, [])),
+      "Your bag ($0) is marinating. What's making you want to upgrade?",
+    );
+  });
 });
+
+function bag(names: readonly string[], totalCents: number, items?: CartItem[]): Cart {
+  return startLockedCart({
+    items: items ?? itemsForBag(names, totalCents, true),
+    totalCents,
+    parsedFromPage: true,
+    pageHost: "www.apple.com",
+    fingerprint: "user-demo1|bag",
+    now: NOW,
+    demo: false,
+    lockMs: 600_000,
+    userId: "user-demo1",
+    code: "AB23CD",
+  });
+}
+
+function line(name: string, priceCents: number): CartItem {
+  return {
+    id: name.trim().toLowerCase().replace(/\s+/g, "-") || "blank",
+    kind: "accessory",
+    name,
+    detail: "Read from the Apple bag",
+    priceCents,
+    cadence: "once",
+  };
+}
