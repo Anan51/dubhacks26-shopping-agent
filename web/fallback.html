@@ -33,23 +33,59 @@
       #apple-pay {
         background: #111;
       }
+      nav, footer {
+        padding: 0.8rem 1.2rem;
+      }
+      nav a, footer a, #continue {
+        margin-right: 0.8rem;
+      }
     </style>
   </head>
   <body>
-    <main>
-      <p class="note">
-        Fallback bag. Example data. Open this only when apple.com will not load. Simmer reads the product name and the
-        bag total, then waits. This page never takes a card.
-      </p>
-      <h1>Example phone</h1>
-      <p>Bag Subtotal</p>
-      <p>$1,200.00</p>
-      <p>
-        <button type="button" id="checkout">Check Out</button>
-        <button type="button" id="apple-pay">Apple Pay</button>
-      </p>
-      <p id="result" hidden>The button is uncovered. No order was placed.</p>
-    </main>
+    <!--
+      Same shape as www.apple.com/shop/bag: a page shell, global nav, the
+      checkout cluster (button > span, data-autom), quantity, Remove,
+      Continue shopping, and the footer. The shell is role=button because a
+      wrapper whose text starts with Check Out used to become the blocked control.
+    -->
+    <div id="page" role="button">
+      <div class="rs-bag-checkoutbuttons-wrapper">
+        <div class="rs-bag-checkoutbutton rs-bag-checkout-mainbutton">
+          <button type="button" id="checkout" data-autom="checkout"><span>Check Out</span></button>
+        </div>
+        <div class="rs-bag-checkoutbutton rs-bag-applepay">
+          <button type="button" id="apple-pay" class="rs-applepay" data-autom="checkout-with-apple-pay">
+            <span>Apple Pay</span>
+          </button>
+        </div>
+        <a id="continue" href="/shop/buy-iphone">Continue shopping</a>
+        <label for="qty">Quantity</label>
+        <select id="qty" data-autom="item-quantity-dropdown">
+          <option value="1" selected>1</option>
+          <option value="2">2</option>
+        </select>
+        <button type="button" id="remove">Remove</button>
+      </div>
+      <nav id="globalnav" aria-label="Global">
+        <a id="nav-store" href="/store">Store</a>
+        <a id="nav-mac" href="/mac">Mac</a>
+        <a id="nav-bag" href="/shop/bag" role="button">Bag</a>
+      </nav>
+      <main>
+        <p class="note">
+          Fallback bag. Example data. Open this only when apple.com will not load. Simmer reads the product name and the
+          bag total, then waits. This page never takes a card.
+        </p>
+        <h1><a id="product" href="/shop/product/example">Example phone</a></h1>
+        <p>Bag Subtotal</p>
+        <p>$1,200.00</p>
+        <p id="result" hidden>The button is uncovered. No order was placed.</p>
+      </main>
+      <footer id="global-footersection" role="contentinfo">
+        <a id="foot-pay" href="/apple-pay/">Apple Pay</a>
+        <a id="foot-home" href="/">Apple</a>
+      </footer>
+    </div>
     <script>
       function uncover() {
         document.getElementById("result").hidden = false;

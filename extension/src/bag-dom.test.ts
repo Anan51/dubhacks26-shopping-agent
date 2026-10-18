@@ -144,6 +144,13 @@ describe("apple.com cable row fixture", () => {
     assert.deepEqual(bagWatchTargets(document), [column]);
     assert.equal(column.contains(document.querySelector("#outside")), false);
 
+    const wide = new JSDOM(
+      `<!doctype html><body><div id="page"><nav id="globalnav"><a href="/store">Store</a></nav><div id="bag">${row}</div><footer><a href="/">Apple</a></footer></div></body></html>`,
+    ).window.document;
+    const watched = bagWatchTargets(wide);
+    assert.ok(watched.length > 0);
+    assert.equal(watched.some((node) => node.id === "page" || node.querySelector("nav")), false);
+
     const queued: Array<() => void> = [];
     let scheduled = 0;
     let cancelled = 0;

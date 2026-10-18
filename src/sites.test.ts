@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import { applePage, isFallbackBag, isLocalAmazonFixture, shouldEngage } from "./sites.js";
+
+const MANIFEST = new URL("../extension/manifest.json", import.meta.url);
 
 describe("apple pages", () => {
   it("matches the bag and regional checkout hosts", () => {
@@ -13,6 +16,9 @@ describe("apple pages", () => {
     assert.equal(applePage("https://secure6.store.apple.com/shop/checkout"), "checkout");
     assert.equal(applePage("https://secure.store.apple.com/us/shop/checkout/start"), "checkout");
     assert.equal(applePage("https://www.apple.com/shop/buy-iphone"), null);
+    assert.equal(applePage("https://www.apple.com/shop/buy-iphone/iphone-17"), null);
+    assert.equal(applePage("https://www.apple.com/shop/buy-iphone/iphone-17/accessories"), null);
+    assert.equal(applePage("https://www.apple.com/shop/product/mw2l3am/a/usb-c-charge-cable"), null);
     assert.equal(applePage("https://example.com/shop/bag"), null);
   });
 
@@ -37,4 +43,72 @@ describe("apple pages", () => {
     assert.equal(isFallbackBag("http://127.0.0.1:4321/amazon"), true);
     assert.equal(isFallbackBag("http://127.0.0.1:4321/fallback"), true);
   });
+
+  it("does not inject the content script on product or buy-flow pages", () => {
+    const manifest = JSON.parse(readFileSync(MANIFEST, "utf8")) as {
+      content_scripts: { matches: string[] }[];
+    };
+    const patterns = manifest.content_scripts.flatMap((script) => script.matches);
+    for (const url of [
+      "https://www.apple.com/shop/buy-iphone/iphone-17",
+      "https://www.apple.com/shop/buy-iphone/iphone-17/accessories",
+      "https://www.apple.com/shop/product/mw2l3am/a/usb-c-charge-cable",
+      "https://www.apple.com/shop/accessories/all",
+    ]) {
+      assert.equal(patterns.some((pattern) => matchPattern(pattern, url)), false, url);
+    }
+    for (const url of [
+      "https://www.apple.com/shop/bag",
+      "https://www.apple.com/uk/shop/bag",
+      "https://secure6.store.apple.com/shop/checkout",
+      "http://127.0.0.1:4321/fallback",
+    ]) {
+      assert.equal(patterns.some((pattern) => matchPattern(pattern, url)), true, url);
+    }
+  });
 });
+
+function matchPattern(pattern: string, url: string): boolean {
+  const parsed = new URL(url);
+  const match = /^(\*|https?|http):\/\/(\*|[^/]+)(\/.*)$/.exec(pattern);
+  if (!match) {
+    return false;
+  }
+  const scheme = match[1] ?? "";
+  const host = match[2] ?? "";
+  const path = match[3] ?? "/";
+  const protocol = parsed.protocol.replace(":", "");
+  if (scheme === "*") {
+    if (protocol !== "http" && protocol !== "https") {
+      return false;
+    }
+  } else if (scheme !== protocol) {
+    return false;
+  }
+  if (!hostMatches(host, parsed)) {
+    return false;
+  }
+  const expression = `^${path.split("*").map(escapeRegex).join(".*")}$`;
+  return new RegExp(expression).test(parsed.pathname);
+}
+
+function hostMatches(pattern: string, parsed: URL): boolean {
+  if (pattern === "*") {
+    return true;
+  }
+  const portAt = pattern.lastIndexOf(":");
+  const host = portAt === -1 ? pattern : pattern.slice(0, portAt);
+  const port = portAt === -1 ? "" : pattern.slice(portAt + 1);
+  if (port !== "" && parsed.port !== port) {
+    return false;
+  }
+  if (host.startsWith("*.")) {
+    const rest = host.slice(2);
+    return parsed.hostname === rest || parsed.hostname.endsWith(`.${rest}`);
+  }
+  return parsed.hostname === host;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}

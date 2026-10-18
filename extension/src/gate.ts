@@ -28,7 +28,16 @@ export const BLOCKED_BUTTON_CSS = `
 }
 `;
 
-const CANDIDATES = "button, a, input, apple-pay-button, [role='button']";
+/**
+ * Checkout and express-pay controls only.
+ * `[role=button]` is not here: Apple wraps the bag in that role, and the shell's
+ * text includes Check Out. A bare `<a>Check Out</a>` still matches, then
+ * `isControlContainer` drops any anchor that wraps other controls.
+ */
+export const PAY_CONTROLS =
+  "button, a, input[type='submit'], input[type='button'], input[type='image'], apple-pay-button, [data-autom='checkout'], [data-autom='checkout-with-apple-pay']";
+
+const NESTED_INTERACTIVE = "a, button, input, select, textarea, apple-pay-button, [role='button']";
 
 export type Gate = {
   paint: () => void;
@@ -41,7 +50,7 @@ export function installGate(doc: Document, scope: ApplePage | (() => readonly El
   const kind: ApplePage | null = typeof scope === "function" ? null : scope;
   const targeted = (node: Element) => {
     if (listed) {
-      return listed().some((button) => button === node || button.contains(node));
+      return scopeBlockedControls(listed()).some((button) => button === node || button.contains(node));
     }
     return kind !== null && shouldBlock(node, kind);
   };
@@ -132,13 +141,13 @@ function paintListed(doc: Document, buttons: readonly Element[], blocked: boolea
     }
     return;
   }
-  const chosen = new Set(buttons);
+  const chosen = new Set(scopeBlockedControls(buttons));
   for (const node of doc.querySelectorAll("[data-simmer-blocked]")) {
     if (!chosen.has(node)) {
       restoreControl(node);
     }
   }
-  for (const node of buttons) {
+  for (const node of chosen) {
     markBlocked(node);
   }
   for (const badge of doc.querySelectorAll("[data-simmer-badge]")) {
@@ -163,12 +172,14 @@ export function paintBlockedControls(doc: Document, kind: ApplePage, blocked: bo
     }
     return;
   }
-  for (const node of doc.querySelectorAll(CANDIDATES)) {
-    if (shouldBlock(node, kind)) {
-      markBlocked(node);
-    } else if (node.hasAttribute("data-simmer-blocked")) {
+  const chosen = new Set<Element>(collectPayControls(doc, kind));
+  for (const node of doc.querySelectorAll("[data-simmer-blocked]")) {
+    if (!chosen.has(node)) {
       restoreControl(node);
     }
+  }
+  for (const node of chosen) {
+    markBlocked(node);
   }
   for (const badge of doc.querySelectorAll("[data-simmer-badge]")) {
     const previous = badge.previousElementSibling;
@@ -227,14 +238,57 @@ function restoreControl(node: Element): void {
   }
 }
 
-const SITE_CHROME = "footer, nav, #globalheader, #globalfooter, #ac-globalfooter, #ac-globalheader, #globalnav, #ac-globalnav, .globalheader, .globalfooter, [role='banner'], [role='contentinfo']";
+const SITE_CHROME =
+  "footer, nav, header, #globalheader, #globalfooter, #ac-globalfooter, #ac-globalheader, #globalnav, #ac-globalnav, .globalheader, .globalfooter, [role='banner'], [role='contentinfo']";
+
+const OWNED_ROOT = `${SITE_CHROME}, #simmer-root`;
+
+/** Drop page shells and anything sitting in site chrome. Keeps the pay control itself. */
+export function scopeBlockedControls(nodes: readonly Element[]): Element[] {
+  const kept: Element[] = [];
+  for (const node of nodes) {
+    if (node.closest(OWNED_ROOT) || isControlContainer(node)) {
+      continue;
+    }
+    kept.push(node);
+  }
+  return kept.filter((node) => !kept.some((other) => other !== node && node.contains(other)));
+}
+
+/** Checkout and express-pay leaves for this page. Containers that merely wrap them are left out. */
+export function collectPayControls(doc: Document, kind: ApplePage): HTMLElement[] {
+  return [...doc.querySelectorAll(PAY_CONTROLS)].flatMap((node) => {
+    const element = asHtmlElement(node);
+    if (!element || !shouldBlock(element, kind)) {
+      return [];
+    }
+    return [element];
+  });
+}
 
 function shouldBlock(node: Element, kind: ApplePage): boolean {
-  if (node.closest(SITE_CHROME)) {
+  if (node.closest(OWNED_ROOT) || isControlContainer(node)) {
     return false;
   }
   const control = controlFrom(node);
   return control !== null && isBlockedControl(control, kind);
+}
+
+/** A shell whose text happens to include "Check Out" or "Apple Pay" because the real buttons sit inside it. */
+function isControlContainer(node: Element): boolean {
+  for (const inner of node.querySelectorAll(NESTED_INTERACTIVE)) {
+    if (inner !== node) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function asHtmlElement(node: Element): HTMLElement | null {
+  if (typeof HTMLElement === "undefined") {
+    return node as HTMLElement;
+  }
+  return node instanceof HTMLElement ? node : null;
 }
 
 function ensureBadge(node: Element): void {
@@ -252,8 +306,19 @@ function ensureBadge(node: Element): void {
 }
 
 function controlElement(target: EventTarget | null): Element | null {
-  const element = isElementTarget(target) ? target : null;
-  return element?.closest(CANDIDATES) ?? null;
+  const element = eventElement(target);
+  return element?.closest(PAY_CONTROLS) ?? null;
+}
+
+function eventElement(target: EventTarget | null): Element | null {
+  if (isElementTarget(target)) {
+    return target;
+  }
+  if (typeof target === "object" && target !== null && "parentElement" in target) {
+    const parent = (target as Node).parentElement;
+    return parent ?? null;
+  }
+  return null;
 }
 
 function controlFrom(node: Element): BagControl | null {

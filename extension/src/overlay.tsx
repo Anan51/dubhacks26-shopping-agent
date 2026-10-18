@@ -138,7 +138,7 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
             Why
           </button>
         </div>
-        {import.meta.env.VITE_SIMMER_DEMO === "1" && actions.demoReply ? <DemoReplyForm onSend={actions.demoReply} /> : null}
+        {import.meta.env?.VITE_SIMMER_DEMO === "1" && actions.demoReply ? <DemoReplyForm onSend={actions.demoReply} /> : null}
         {open ? (
           <div>
             <p className="why">{unreadable ? "The Apple bag could not be read." : pauseSentence(glance)}</p>
@@ -149,7 +149,7 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
                   Sleep on it
                 </button>
               ) : null}
-              {import.meta.env.VITE_SIMMER_DEMO === "1" && model.status === "vault" && actions.skipVault ? (
+              {import.meta.env?.VITE_SIMMER_DEMO === "1" && model.status === "vault" && actions.skipVault ? (
                 <button type="button" className="quiet" onClick={actions.skipVault}>
                   Demo: end the pause
                 </button>
@@ -213,7 +213,7 @@ function toGlance(model: OverlayModel): GlanceItem {
 
 function DemoReplyForm({ onSend }: { onSend: (text: string) => void }) {
   const [text, setText] = useState("");
-  if (import.meta.env.VITE_SIMMER_DEMO !== "1") {
+  if (import.meta.env?.VITE_SIMMER_DEMO !== "1") {
     return null;
   }
   return (
