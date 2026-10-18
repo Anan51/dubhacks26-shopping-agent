@@ -1,0 +1,134 @@
+:host {
+  all: initial;
+}
+
+.panel {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 2147483646;
+  width: min(22rem, calc(100vw - 2rem));
+  font-family: Georgia, "Iowan Old Style", serif;
+  color: #3a2416;
+}
+
+.card {
+  width: min(28rem, calc(100vw - 2rem));
+  max-height: min(70vh, 28rem);
+  overflow: auto;
+  background: #f6efe4;
+  border-radius: 1.4rem;
+  padding: 1.3rem 1.3rem 1.1rem;
+  box-shadow: 0 24px 70px rgba(20, 32, 24, 0.2);
+}
+
+.rings {
+  height: 4.5rem;
+  display: grid;
+  place-items: center;
+  margin-bottom: 0.4rem;
+}
+
+.rings span {
+  grid-area: 1 / 1;
+  border: 1px solid #c4a484;
+  border-radius: 999px;
+  animation: steam 4.8s ease-in-out infinite;
+}
+
+.rings span:nth-child(1) { width: 2.2rem; height: 2.2rem; }
+.rings span:nth-child(2) { width: 3.4rem; height: 3.4rem; animation-delay: 0.4s; }
+.rings span:nth-child(3) { width: 4.6rem; height: 4.6rem; animation-delay: 0.8s; }
+
+@keyframes steam {
+  0%, 100% { transform: translateY(8px) scale(0.88); opacity: 0.28; }
+  50% { transform: translateY(-6px) scale(1); opacity: 0.8; }
+}
+
+h1 {
+  font-size: 1.35rem;
+  margin: 0 0 0.2rem;
+}
+
+.kicker, .fine, figcaption {
+  color: #7a5b45;
+  font-size: 0.85rem;
+}
+
+.clock {
+  font-variant-numeric: tabular-nums;
+  font-size: 1.8rem;
+  margin: 0.2rem 0;
+}
+
+.row {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.8rem 0;
+}
+
+button, textarea {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.65rem 0.9rem;
+  background: #8a4b24;
+  color: white;
+  cursor: pointer;
+}
+
+button.quiet {
+  background: transparent;
+  color: #8a4b24;
+  border: 1px solid #8a4b24;
+}
+
+textarea {
+  width: 100%;
+  min-height: 4.2rem;
+  border-radius: 0.8rem;
+  border: 1px solid #ddd4c6;
+  padding: 0.6rem;
+  background: white;
+}
+
+.turns {
+  list-style: none;
+  padding: 0;
+  margin: 0.4rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.turns li {
+  background: white;
+  border-radius: 0.7rem;
+  padding: 0.45rem 0.6rem;
+  white-space: pre-wrap;
+}
+
+dl { margin: 0.4rem 0 0; }
+dt { color: #7a5b45; font-size: 0.75rem; }
+dd { margin: 0 0 0.35rem; }
+
+.note {
+  background: #f3e2cf;
+  border-radius: 0.8rem;
+  padding: 0.6rem 0.7rem;
+}
+
+svg {
+  width: 100%;
+  height: auto;
+  color: #8a4b24;
+}
+
+a { color: #8a4b24; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rings span { animation: none; opacity: 0.7; }
+}

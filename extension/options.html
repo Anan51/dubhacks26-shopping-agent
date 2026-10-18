@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Simmer options</title>
+    <style>
+      body {
+        font-family: Georgia, "Iowan Old Style", serif;
+        background: #f6efe4;
+        color: #3a2416;
+        margin: 2rem;
+        max-width: 36rem;
+      }
+      label { display: block; margin: 1rem 0; }
+      input, textarea { width: 100%; font: inherit; padding: 0.5rem; }
+      button {
+        font: inherit;
+        background: #8a4b24;
+        color: white;
+        border: 0;
+        border-radius: 999px;
+        padding: 0.6rem 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Simmer</h1>
+    <p>apple.com stays on until you list it here. The extension only watches the Apple bag, Apple checkout, and the local fallback bag.</p>
+    <label>
+      Local server
+      <input id="origin" value="http://127.0.0.1:4321" />
+    </label>
+    <label>
+      Sites where Simmer is off
+      <textarea id="optout" rows="5" placeholder="apple.com"></textarea>
+    </label>
+    <p id="user"></p>
+    <button id="save" type="button">Save</button>
+    <p id="saved" hidden>Saved.</p>
+    <script src="options.js"></script>
+  </body>
+</html>
