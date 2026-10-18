@@ -190,6 +190,8 @@ export function scoreReply(input: {
   bucket: ScoreBucket;
   gradeSource: SignalSource;
   alternative: string;
+  /** Bag total in cents. A strict bag under `PAUSE_FLOOR_CENTS` has no hold. */
+  totalCents: number;
   /** 1–8 impulsiveness, when the cart has a backboard reading. */
   impulseScore1to8?: number | null;
   impulseWhy?: string | null;
@@ -205,6 +207,9 @@ export function scoreReply(input: {
     case "soft":
       return `${math} Score ${input.score} is soft. ${input.alternative} Sleep on it if you want. That pause is optional.`;
     case "strict":
+      if (input.totalCents < PAUSE_FLOOR_CENTS) {
+        return `${math} This one can wait. ${input.alternative}`;
+      }
       return `${math} This one can wait. Checkout stays paused until the hold ends. ${input.alternative}`;
     default:
       return assertNever(input.bucket);
@@ -213,7 +218,7 @@ export function scoreReply(input: {
 
 /**
  * Writes the score onto the cart and moves the lock.
- * Score 1 pauses checkout until the hold ends. A bag under `PAUSE_FLOOR_CENTS` is not vaulted.
+ * Score 1 pauses checkout until the hold ends. A bag under `PAUSE_FLOOR_CENTS` is not vaulted, and the reply does not promise a hold.
  * Score 2–3 stays locked until the shopper chooses sleep.
  * Score 4+ lifts the lock and any vault.
  */
@@ -241,6 +246,7 @@ export function applyPurchaseScore(
     bucket,
     gradeSource: grade.source,
     alternative: decision ? alternativeLine(decision) : "Alternative: not ready yet.",
+    totalCents: cart.totalCents,
     impulseScore1to8: cart.impulse?.score1to8 ?? null,
     impulseWhy: cart.impulse?.why ?? null,
   });

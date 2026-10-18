@@ -308,6 +308,25 @@ describe("score routing", () => {
     assert.notEqual(pricey.vaultUntil, null);
   });
 
+  it("does not promise a hold in the strict reply when the bag is under the pause floor", () => {
+    const grade = { grade: -2, source: "keywords" as const, reason: "Look." };
+    const cheap = pricedCart(["Apple AirTag"], 3_200);
+    cheap.decision = decide(withCartFacts({}, cheap.totalCents));
+    const skipped = applyPurchaseScore(cheap, grade, 2, NOW, 60_000);
+    assert.equal(skipped.bucket, "strict");
+    assert.equal(cheap.totalCents, 3_200);
+    assert.equal(skipped.reply.includes("until the hold ends"), false);
+    assert.match(skipped.reply, /This one can wait\. /);
+
+    const pricey = pricedCart(["iPad Pro 11"], 99_900);
+    pricey.decision = decide(withCartFacts({}, pricey.totalCents));
+    const held = applyPurchaseScore(pricey, grade, 2, NOW, 60_000);
+    assert.equal(held.bucket, "strict");
+    assert.equal(pricey.totalCents, 99_900);
+    assert.match(held.reply, /until the hold ends/);
+    assert.match(held.reply, /This one can wait\. Checkout stays paused until the hold ends\. /);
+  });
+
   it("says a free score can be unlocked, and that Apple's button works only after Unlock", () => {
     const free = cart();
     free.decision = decide(withCartFacts({}, free.totalCents));
