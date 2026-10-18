@@ -176,11 +176,11 @@ describe("memory scope", () => {
     const headphones = record(USER, "regret", "Bought noise-cancelling headphones for a flight", "bb-phones");
     const cable = record(USER, "goal", "spare headphones audio cable", "bb-cable");
     const client = searchClient([
-      { id: "bb-monitors", content: "mentioned speakers", score: 0.93, createdAt: null },
+      { id: "bb-monitors", content: "mentioned speakers", score: 0.31, createdAt: null },
       {
         id: null,
         content: "Regret: Bought noise-cancelling headphones for a flight",
-        score: 0.81,
+        score: 0.36,
         createdAt: null,
       },
     ]);
@@ -205,7 +205,7 @@ describe("memory scope", () => {
       {
         id: "bb-phones",
         content: "Regret: Bought noise-cancelling headphones for a flight",
-        score: 0.88,
+        score: 0.4,
         createdAt: null,
       },
     ]);
@@ -225,7 +225,7 @@ describe("memory scope", () => {
     const adaMemory = record(USER, "regret", "Bought noise-cancelling headphones for a flight", "bb-ada");
     const byronMemory = record(OTHER, "regret", "headphones audio desk", "bb-byron");
     const client = searchClient([
-      { id: "bb-byron", content: "Regret: headphones audio desk", score: 0.99, createdAt: null },
+      { id: "bb-byron", content: "Regret: headphones audio desk", score: 0.2, createdAt: null },
       {
         id: "bb-ada",
         content: "Regret: Bought noise-cancelling headphones for a flight",
@@ -302,7 +302,177 @@ describe("memory scope", () => {
     assert.deepEqual(narrowed, [secret]);
     assert.deepEqual(local.calls, []);
   });
+
+  it("falls back to the caller's token matches when Backboard hits match none of their rows", async () => {
+    const phone = record(USER, "regret", "lost the phone", "bb-ada");
+    const milk = record(USER, "goal", "milk and eggs", null);
+    const other = record(OTHER, "regret", "someone else's phone note", "bb-other");
+    const client = searchClient([
+      { id: "bb-other", content: "Regret: someone else's phone note", score: 0.33, createdAt: null },
+    ]);
+    const found = await searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "phone" } }), {
+      directory: directoryOfUsers([account(USER, "asst-ada"), account(OTHER, "asst-other")]),
+      client,
+      index: listing([other, milk, phone]),
+      remote: true,
+    });
+    assert.deepEqual(found, [phone]);
+    assert.equal(
+      found.every((memory) => memory.userId === USER),
+      true,
+    );
+    assert.deepEqual(client.calls, [{ assistantId: "asst-ada", query: "phone", limit: 10 }]);
+  });
+
+  it("returns every owned row for an empty query and none of another user's", async () => {
+    const goal = record(USER, "goal", "wait a month");
+    const regret = record(USER, "regret", "bought the headphones");
+    const other = record(OTHER, "regret", "bought the headphones");
+    const client = searchClient([
+      { id: "bb-other", content: "Regret: bought the headphones", score: 1, createdAt: null },
+    ]);
+    const deps = {
+      directory: directoryOfUsers([account(USER, "asst-ada"), account(OTHER, "asst-other")]),
+      client,
+      index: listing([other, regret, goal]),
+      remote: true,
+    };
+    const blank = await searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "" } }), deps);
+    const spaces = await searchMemoriesForCurrentUser(request({ id: USER }, { query: { query: "   " } }), deps);
+    assert.deepEqual(blank, [regret, goal]);
+    assert.deepEqual(spaces, [regret, goal]);
+    assert.equal(
+      blank.every((memory) => memory.userId === USER),
+      true,
+    );
+    assert.equal(
+      spaces.every((memory) => memory.userId === USER),
+      true,
+    );
+    assert.deepEqual(client.calls, []);
+  });
+
+  it("ignores short filler tokens and still matches a real word", async () => {
+    const phone = record(USER, "regret", "left the phone on the desk", null);
+    const other = record(OTHER, "regret", "left the phone on the desk", null);
+    const deps = {
+      directory: directoryOf(account(USER, null)),
+      client: searchClient([]),
+      index: listing([other, phone]),
+      remote: false,
+    };
+    const found = await searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "my phone" } }), deps);
+    assert.deepEqual(found, [phone]);
+    const filler = await searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "to my" } }), deps);
+    assert.deepEqual(filler, []);
+  });
+
+  it("returns no rows when every Backboard hit is past the distance cutoff", async () => {
+    const headphones = record(USER, "regret", "noise-cancelling headphones", "bb-phones");
+    const monitors = record(USER, "goal", "studio monitors", "bb-monitors");
+    const other = record(OTHER, "regret", "wool socks for winter", "bb-other");
+    const deps = {
+      directory: directoryOfUsers([account(USER, "asst-ada"), account(OTHER, "asst-other")]),
+      client: searchClient([
+        { id: "bb-phones", content: "Regret: noise-cancelling headphones", score: 0.91, createdAt: null },
+        { id: "bb-monitors", content: "Goal: studio monitors", score: 0.88, createdAt: null },
+        { id: "bb-other", content: "Regret: wool socks for winter", score: 0.05, createdAt: null },
+      ]),
+      index: listing([other, headphones, monitors]),
+      remote: true,
+    };
+    for (const query of ["wool socks", "kitchen blender"]) {
+      const found = await searchWithDistance("0.7", () =>
+        searchMemoriesForCurrentUser(request({ id: USER }, { body: { query } }), deps),
+      );
+      assert.deepEqual(found, []);
+    }
+
+    const phone = record(USER, "regret", "Bought noise-cancelling headphones for a flight", "bb-phone");
+    const socks = await searchWithDistance("0.7", () =>
+      searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "socks" } }), {
+        directory: directoryOfUsers([account(USER, "asst-ada"), account(OTHER, "asst-other")]),
+        client: searchClient([
+          {
+            id: "bb-phone",
+            content: "Regret: Bought noise-cancelling headphones for a flight",
+            score: 0.9,
+            createdAt: null,
+          },
+          { id: "bb-other", content: "Regret: wool socks for winter", score: 0.05, createdAt: null },
+        ]),
+        index: listing([other, phone]),
+        remote: true,
+      }),
+    );
+    assert.deepEqual(socks, []);
+  });
+
+  it("returns only the in-cutoff row when another hit is farther", async () => {
+    const headphones = record(USER, "regret", "noise-cancelling headphones", "bb-phones");
+    const monitors = record(USER, "goal", "studio monitors", "bb-monitors");
+    const other = record(OTHER, "regret", "studio monitors", "bb-other");
+    const deps = {
+      directory: directoryOfUsers([account(USER, "asst-ada"), account(OTHER, "asst-other")]),
+      index: listing([other, monitors, headphones]),
+      remote: true,
+    };
+    const found = await searchWithDistance("0.7", () =>
+      searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "headphones monitors" } }), {
+        ...deps,
+        client: searchClient([
+          { id: "bb-phones", content: "Regret: noise-cancelling headphones", score: 0.7, createdAt: null },
+          { id: "bb-monitors", content: "Goal: studio monitors", score: 0.71, createdAt: null },
+        ]),
+      }),
+    );
+    assert.deepEqual(found, [headphones]);
+
+    const missingScore = await searchWithDistance("0.7", () =>
+      searchMemoriesForCurrentUser(request({ id: USER }, { body: { query: "headphones monitors" } }), {
+        ...deps,
+        client: searchClient([
+          { id: "bb-phones", content: "Regret: noise-cancelling headphones", score: null, createdAt: null },
+          { id: "bb-monitors", content: "Goal: studio monitors", score: 0.9, createdAt: null },
+        ]),
+      }),
+    );
+    assert.deepEqual(missingScore, [headphones]);
+  });
+
+  it("honors REGRET_SEARCH_MAX_DISTANCE and still returns only owned rows", async () => {
+    const monitors = record(USER, "regret", "studio monitors", "bb-monitors");
+    const other = record(OTHER, "regret", "wool socks for winter", "bb-other");
+    const depsFor = (score: number) => ({
+      directory: directoryOfUsers([account(USER, "asst-ada"), account(OTHER, "asst-other")]),
+      client: searchClient([
+        { id: "bb-monitors", content: "Regret: studio monitors", score, createdAt: null },
+        { id: "bb-other", content: "Regret: wool socks for winter", score: 0.01, createdAt: null },
+      ]),
+      index: listing([other, monitors]),
+      remote: true,
+    });
+    const query = request({ id: USER }, { body: { query: "kitchen blender" } });
+
+    assert.deepEqual(await searchWithDistance("0.7", () => searchMemoriesForCurrentUser(query, depsFor(0.85))), []);
+    assert.deepEqual(await searchWithDistance("0.9", () => searchMemoriesForCurrentUser(query, depsFor(0.85))), [monitors]);
+    assert.deepEqual(await searchWithDistance("0.4", () => searchMemoriesForCurrentUser(query, depsFor(0.5))), []);
+    assert.deepEqual(await searchWithDistance("0.7", () => searchMemoriesForCurrentUser(query, depsFor(0.5))), [monitors]);
+  });
 });
+
+/** The search reads the cutoff before its first await, so the variable is restored before that promise settles. */
+function searchWithDistance<T>(distance: string, start: () => Promise<T>): Promise<T> {
+  const previous = process.env.REGRET_SEARCH_MAX_DISTANCE;
+  process.env.REGRET_SEARCH_MAX_DISTANCE = distance;
+  const pending = start();
+  if (previous === undefined) {
+    delete process.env.REGRET_SEARCH_MAX_DISTANCE;
+  } else {
+    process.env.REGRET_SEARCH_MAX_DISTANCE = previous;
+  }
+  return pending;
+}
 
 function request(user: { id: string }, extra: { query?: Request["query"]; body?: unknown; params?: Request["params"] } = {}): Request {
   return {
