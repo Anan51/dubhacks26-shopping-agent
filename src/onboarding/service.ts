@@ -1,3 +1,5 @@
+import mongoose from "mongoose";
+
 import type { AccountDirectory } from "../auth/accounts.js";
 import { User } from "../auth/user.js";
 import type { BackboardClient } from "../memory/backboard.js";
@@ -6,7 +8,7 @@ import {
   budgetMemoryLine,
   categoryForItem,
   insertRealPurchase,
-  surveyWasCompleted,
+  purchaseVoteLine,
   writeUserMemoryLine,
   type PurchaseView,
 } from "../purchases/service.js";
@@ -49,33 +51,58 @@ export async function submitSurvey(
   body: unknown,
   deps: { directory: AccountDirectory; client: BackboardClient; remote: boolean },
 ): Promise<SurveyView & { purchases: PurchaseView[] }> {
-  if (await surveyWasCompleted(userId)) {
-    throw new SurveyError(409, "Survey already completed.");
-  }
   const parsed = parseSurvey(body);
+  const session = await mongoose.startSession();
+  let purchases: PurchaseView[] = [];
+  try {
+    await session.withTransaction(async () => {
+      purchases = [];
+      const updated = await User.updateOne(
+        { _id: userId, surveyCompleted: { $ne: true } },
+        { $set: { hourlyRate: parsed.hourlyRate, weeklyBudget: parsed.weeklyBudget, surveyCompleted: true } },
+        { session },
+      );
+      if (updated.modifiedCount !== 1) {
+        throw new SurveyError(409, "Survey already completed.");
+      }
+      for (const purchase of parsed.recentPurchases) {
+        purchases.push(
+          await insertRealPurchase(
+            {
+              userId,
+              item: purchase.item,
+              category: categoryForItem(purchase.item),
+              price: purchase.price,
+              verdict: null,
+              feedback: purchase.regretted ? "regretted" : "kept",
+            },
+            { session },
+          ),
+        );
+      }
+    });
+  } finally {
+    await session.endSession();
+  }
   if (parsed.hourlyRate !== null) {
     await writeUserMemoryLine(userId, budgetMemoryLine("hourly rate", parsed.hourlyRate), "goal", deps, { field: "hourlyRate" });
   }
   if (parsed.weeklyBudget !== null) {
     await writeUserMemoryLine(userId, budgetMemoryLine("weekly budget", parsed.weeklyBudget), "goal", deps, { field: "weeklyBudget" });
   }
-  const purchases: PurchaseView[] = [];
   for (const purchase of parsed.recentPurchases) {
-    purchases.push(
-      await insertRealPurchase({
-        userId,
-        item: purchase.item,
-        category: categoryForItem(purchase.item),
-        price: purchase.price,
-        verdict: null,
-        feedback: purchase.regretted ? "regretted" : "kept",
-      }),
+    if (!purchase.regretted) {
+      continue;
+    }
+    const category = categoryForItem(purchase.item);
+    await writeUserMemoryLine(
+      userId,
+      purchaseVoteLine("regretted", purchase.item, category, purchase.price),
+      "regret",
+      deps,
+      { category, feedback: "regretted" },
     );
   }
-  await User.updateOne(
-    { _id: userId },
-    { $set: { hourlyRate: parsed.hourlyRate, weeklyBudget: parsed.weeklyBudget, surveyCompleted: true } },
-  );
   return {
     completed: true,
     hourlyRate: parsed.hourlyRate,

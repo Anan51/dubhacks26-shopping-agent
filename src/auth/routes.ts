@@ -97,6 +97,7 @@ function createAuthRouter(deps: AuthRouteDeps): Router {
   });
 
   router.post("/logout", (_req, res) => {
+    // Clears the cookie only. The 7-day JWT is not revoked; a jti denylist is the follow-up.
     clearSessionCookie(res);
     res.json({ ok: true });
   });

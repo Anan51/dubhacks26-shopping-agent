@@ -1,3 +1,5 @@
+import type { ClientSession } from "mongoose";
+
 import type { Cart } from "../types.js";
 import type { AccountDirectory, AccountUser } from "../auth/accounts.js";
 import { MemoryNote, User } from "../auth/user.js";
@@ -163,15 +165,18 @@ export async function listPurchases(userId: string, limit: number): Promise<Purc
   return docs.map(toView);
 }
 
-export async function insertRealPurchase(input: {
-  userId: string;
-  item: string;
-  category: string;
-  price: number;
-  verdict: string | null;
-  feedback: PurchaseFeedback | null;
-}): Promise<PurchaseView> {
-  const doc = await PurchaseRecord.create({
+export async function insertRealPurchase(
+  input: {
+    userId: string;
+    item: string;
+    category: string;
+    price: number;
+    verdict: string | null;
+    feedback: PurchaseFeedback | null;
+  },
+  options?: { session?: ClientSession },
+): Promise<PurchaseView> {
+  const payload = {
     userId: input.userId,
     item: input.item,
     category: input.category.trim().toLowerCase(),
@@ -181,7 +186,16 @@ export async function insertRealPurchase(input: {
     isExample: false,
     ratedAt: input.feedback ? new Date() : null,
     cartCode: null,
-  });
+  };
+  if (options?.session) {
+    const created = await PurchaseRecord.create([payload], { session: options.session });
+    const doc = created[0];
+    if (!doc) {
+      throw new PurchaseError(500, "Purchase was not recorded.");
+    }
+    return toView(doc);
+  }
+  const doc = await PurchaseRecord.create(payload);
   return toView(doc);
 }
 
@@ -199,7 +213,7 @@ export async function setPurchaseFeedback(
     throw new PurchaseError(404, "Purchase not found.");
   }
   if (doc.userId.toString() !== userId) {
-    throw new PurchaseError(403, "That purchase belongs to someone else.");
+    throw new PurchaseError(404, "Purchase not found.");
   }
   if (doc.feedback === feedback) {
     return toView(doc);
@@ -263,7 +277,7 @@ export async function writeUserMemoryLine(
   const assistantId = await assistantIdForVote(user, deps);
   const write = await deps.client.addMemory(assistantId, { content: line, metadata: { type: kind, ...meta } });
   const settled = await waitForMemoryWrite(deps.client, write);
-  if (settled.status === "ERROR") {
+  if (settled.status !== "COMPLETED") {
     throw new Error("Backboard memory write failed.");
   }
   await MemoryNote.create({

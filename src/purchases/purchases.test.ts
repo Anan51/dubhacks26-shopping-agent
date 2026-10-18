@@ -130,7 +130,8 @@ describe("purchase feedback", () => {
     assert.equal(blakeIds.has(adaRow._id), false);
 
     const denied = await post(`/purchases/${adaRow._id}/feedback`, { feedback: "regretted" }, blake.cookie);
-    assert.equal(denied.status, 403);
+    assert.equal(denied.status, 404);
+    assert.equal((denied.body as { error: string }).error, "Purchase not found.");
     const foreignList = await get(`/purchases/history?userId=${ada.id}`, blake.cookie);
     assert.equal(foreignList.status, 400);
 

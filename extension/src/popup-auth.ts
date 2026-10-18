@@ -103,8 +103,13 @@ export function mountPopupAuth(parent: HTMLElement, originValue: unknown): boole
 
   async function refresh(): Promise<void> {
     try {
-      const response = await authFetch(origin, "/auth/me");
+      const token = await authorization();
+      const response = await authFetch(origin, "/auth/me", undefined, token);
       if (!response.ok) {
+        if (response.status === 401) {
+          sessionToken = null;
+          await clearStoredToken();
+        }
         showSignedOut();
         return;
       }
@@ -188,12 +193,13 @@ function actionButton(text: string): HTMLButtonElement {
 }
 
 /** credentials: include so the httpOnly simmer_token cookie is stored and sent. */
-async function authFetch(origin: string, path: string, body?: unknown): Promise<Response> {
+async function authFetch(origin: string, path: string, body?: unknown, token?: string | null): Promise<Response> {
   return fetch(`${origin}${path}`, {
     method: body === undefined ? "GET" : "POST",
     credentials: "include",
     headers: {
       accept: "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...(body === undefined ? {} : { "content-type": "application/json" }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),

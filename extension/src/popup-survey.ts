@@ -66,6 +66,10 @@ export function attachSurvey(
   };
 
   async function submit(): Promise<void> {
+    if (save.disabled) {
+      return;
+    }
+    save.disabled = true;
     error.hidden = true;
     const recentPurchases = rows.flatMap((row) => {
       const item = row.item.value.trim();
@@ -91,6 +95,8 @@ export function attachSurvey(
     } catch {
       error.hidden = false;
       error.textContent = "Could not save the survey.";
+    } finally {
+      save.disabled = false;
     }
   }
 }

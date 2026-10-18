@@ -5,12 +5,13 @@ import { JSDOM } from "jsdom";
 
 import { mountPopupAuth } from "./popup-auth.js";
 
+const stored: Record<string, unknown> = {};
+
 describe("popup survey", () => {
   const dom = new JSDOM("<!doctype html><html><body></body></html>");
   const previousDocument = globalThis.document;
   const previousFetch = globalThis.fetch;
   const previousChrome = (globalThis as { chrome?: typeof chrome }).chrome;
-  const stored: Record<string, unknown> = {};
 
   afterEach(() => {
     globalThis.document = previousDocument;
@@ -129,7 +130,88 @@ describe("popup survey", () => {
     assert.equal(document.getElementById("simmer-survey")?.hidden, true);
     assert.equal(document.getElementById("simmer-purchases")?.hidden, false);
   });
+
+  it("sends the stored bearer on reopen and clears it when the session is rejected", async () => {
+    globalThis.document = dom.window.document;
+    stored.simmer_token = "stale-jwt";
+    const seen: string[] = [];
+    installChrome();
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      seen.push(headers.get("authorization") ?? "");
+      return json({ error: "Authentication required." }, 401);
+    }) as typeof fetch;
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    mountPopupAuth(parent, "http://127.0.0.1:4321");
+    await waitFor(() => stored.simmer_token === "");
+    assert.equal(seen[0], "Bearer stale-jwt");
+    const form = document.querySelector("#simmer-auth form");
+    assert.ok(form instanceof dom.window.HTMLFormElement);
+    assert.equal(form.hidden, false);
+  });
+
+  it("disables Save while the survey request is in flight", async () => {
+    globalThis.document = dom.window.document;
+    installChrome();
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/auth/me")) {
+        return json({ error: "Authentication required." }, 401);
+      }
+      if (url.endsWith("/auth/signup")) {
+        return json({ user: { id: "user-1", email: "ada@example.com" }, token: "jwt-from-signup" });
+      }
+      if (url.endsWith("/onboarding/survey") && init?.method === "POST") {
+        await gate;
+        return json({ completed: true, hourlyRate: 1, weeklyBudget: null, purchases: [] }, 201);
+      }
+      if (url.endsWith("/onboarding/survey")) {
+        return json({ completed: false, hourlyRate: null, weeklyBudget: null });
+      }
+      return json({ purchases: [] });
+    }) as typeof fetch;
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    mountPopupAuth(parent, "http://127.0.0.1:4321");
+    await waitFor(() => document.querySelector("#simmer-auth form") instanceof dom.window.HTMLFormElement);
+    const email = document.querySelector<HTMLInputElement>("input[name='email']");
+    const password = document.querySelector<HTMLInputElement>("input[name='password']");
+    assert.ok(email && password);
+    email.value = "ada@example.com";
+    password.value = "correct horse battery";
+    [...document.querySelectorAll("button")].find((button) => button.textContent === "Sign up")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    await waitFor(() => document.getElementById("simmer-survey")?.hidden === false);
+    const save = [...document.querySelectorAll("button")].find((button) => button.textContent === "Save survey");
+    assert.ok(save instanceof dom.window.HTMLButtonElement);
+    save.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    await waitFor(() => save.disabled);
+    assert.equal(save.disabled, true);
+    release?.();
+    await waitFor(() => document.getElementById("simmer-survey")?.hidden === true);
+  });
 });
+
+function installChrome(): void {
+  (globalThis as { chrome?: typeof chrome }).chrome = {
+    runtime: { sendMessage: () => undefined },
+    storage: {
+      local: {
+        get: (_keys, callback) => {
+          callback({ ...stored });
+        },
+        set: (items, callback) => {
+          Object.assign(stored, items);
+          callback?.();
+        },
+      },
+    },
+  };
+}
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {

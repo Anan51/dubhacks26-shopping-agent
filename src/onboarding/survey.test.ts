@@ -4,30 +4,35 @@ import type { AddressInfo } from "node:net";
 import { after, before, describe, it } from "node:test";
 
 import express from "express";
-import { MongoMemoryServer } from "mongodb-memory-server";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 import mongoose from "mongoose";
 
+import type { AccountDirectory } from "../auth/accounts.js";
 import { connectMongo } from "../auth/db.js";
 import { attachAccounts, provisionAssistant } from "../auth/routes.js";
 import { requireUser, SESSION_COOKIE } from "../auth/session.js";
 import { User } from "../auth/user.js";
 import { InMemoryBackboardClient, type BackboardClient } from "../memory/backboard.js";
 import { createMemoryRuntime } from "../memory/runtime.js";
-import { createOnboardingRouter } from "./routes.js";
 import { PurchaseRecord } from "../purchases/model.js";
 import { createPurchaseRouter } from "../purchases/routes.js";
-import { budgetMemoryLine, getBudgetProfile, getHourlyRate, getWeeklyBudget, weeklySpend } from "../purchases/service.js";
+import { budgetMemoryLine, getBudgetProfile, getHourlyRate, getWeeklyBudget, purchaseVoteLine, weeklySpend, writeUserMemoryLine } from "../purchases/service.js";
+import { createOnboardingRouter } from "./routes.js";
 
 const SECRET = "survey-test-secret";
 let base = "";
 
 describe("onboarding survey", () => {
-  let mongod: MongoMemoryServer;
+  let mongod: MongoMemoryReplSet;
   let close: () => Promise<void>;
+  let directory: AccountDirectory;
   const writes: string[] = [];
 
   before(async () => {
-    mongod = await MongoMemoryServer.create({ binary: { version: "7.0.14" } });
+    mongod = await MongoMemoryReplSet.create({
+      binary: { version: "7.0.14" },
+      replSet: { count: 1, storageEngine: "wiredTiger" },
+    });
     await connectMongo(mongod.getUri());
     await PurchaseRecord.createIndexes();
     const inner = new InMemoryBackboardClient();
@@ -43,6 +48,7 @@ describe("onboarding survey", () => {
       resetMemories: (assistantId) => inner.resetMemories(assistantId),
     };
     const memory = createMemoryRuntime({}, { client, remote: true });
+    directory = memory.directory;
     const app = express();
     app.use(express.json());
     attachAccounts(app, {
@@ -111,7 +117,9 @@ describe("onboarding survey", () => {
     assert.equal(body.purchases.every((row) => row.isExample === false && row.verdict === null), true);
     assert.equal(writes.includes(budgetMemoryLine("hourly rate", 42)), true);
     assert.equal(writes.includes(budgetMemoryLine("weekly budget", 150)), true);
-    assert.equal(writes.length, started + 2);
+    assert.equal(writes.includes(purchaseVoteLine("regretted", "AirPods", "audio", 179)), true);
+    assert.equal(writes.filter((line) => line.startsWith("kept purchase:")).length, 0);
+    assert.equal(writes.length, started + 3);
 
     const again = await post("/onboarding/survey", { hourlyRate: 1, weeklyBudget: 1, recentPurchases: [] }, ada.token);
     assert.equal(again.status, 409);
@@ -196,7 +204,86 @@ describe("onboarding survey", () => {
     assert.equal(await weeklySpend(blake.id), 50);
     assert.deepEqual(await getBudgetProfile(blake.id), { hourlyRate: null, weeklyBudget: null });
   });
+
+  it("rejects missing and bad tokens on survey and purchase routes", async () => {
+    for (const path of ["/onboarding/survey", "/purchases/history", "/purchases"]) {
+      const missing = await fetch(`${base}${path}`, { method: path.endsWith("/purchases") ? "POST" : "GET" });
+      assert.equal(missing.status, 401);
+      const bad = await fetch(`${base}${path}`, {
+        method: path.endsWith("/purchases") ? "POST" : "GET",
+        headers: { authorization: "Bearer not-a-jwt", "content-type": "application/json" },
+        body: path.endsWith("/purchases") ? "{}" : undefined,
+      });
+      assert.equal(bad.status, 401);
+    }
+    const badSurvey = await fetch(`${base}/onboarding/survey`, {
+      method: "POST",
+      headers: { authorization: "Bearer not-a-jwt", "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(badSurvey.status, 401);
+  });
+
+  it("accepts zero and decimals, and rejects negative, huge, and a sixth purchase", async () => {
+    const ada = await signup("ada-money@example.com");
+    const zero = await post("/onboarding/survey", { hourlyRate: 0, weeklyBudget: 19.99, recentPurchases: [] }, ada.token);
+    assert.equal(zero.status, 201);
+    assert.deepEqual(await getBudgetProfile(ada.id), { hourlyRate: 0, weeklyBudget: 19.99 });
+    assert.equal(writes.includes(budgetMemoryLine("hourly rate", 0)), true);
+    assert.equal(writes.includes(budgetMemoryLine("weekly budget", 19.99)), true);
+
+    const blake = await signup("blake-money@example.com");
+    const negative = await post("/onboarding/survey", { hourlyRate: -1, weeklyBudget: 10, recentPurchases: [] }, blake.token);
+    assert.equal(negative.status, 400);
+    const huge = await post("/onboarding/survey", { hourlyRate: 10_000_000.01, weeklyBudget: 10, recentPurchases: [] }, blake.token);
+    assert.equal(huge.status, 400);
+    const five = Array.from({ length: 5 }, (_, index) => ({ item: `Item ${index}`, price: index + 0.5, regretted: false }));
+    const capped = await post("/onboarding/survey", { hourlyRate: 12.5, weeklyBudget: null, recentPurchases: five }, blake.token);
+    assert.equal(capped.status, 201);
+    const sixth = await signup("cara-money@example.com");
+    const tooMany = [...five, { item: "Extra", price: 1, regretted: true }];
+    const rejected = await post("/onboarding/survey", { hourlyRate: 1, weeklyBudget: 1, recentPurchases: tooMany }, sixth.token);
+    assert.equal(rejected.status, 400);
+    assert.equal((await get("/onboarding/survey", sixth.token)).body.completed, false);
+  });
+
+  it("lets only one of two parallel submits win", async () => {
+    const ada = await signup("ada-race@example.com");
+    const body = { hourlyRate: 30, weeklyBudget: 40, recentPurchases: [{ item: "Watch", price: 399, regretted: true }] };
+    const [left, right] = await Promise.all([
+      post("/onboarding/survey", body, ada.token),
+      post("/onboarding/survey", body, ada.token),
+    ]);
+    const statuses = [left.status, right.status].sort();
+    assert.deepEqual(statuses, [201, 409]);
+    const rows = await PurchaseRecord.find({ userId: ada.id, isExample: false });
+    assert.equal(rows.length, 1);
+    assert.equal(await surveyCompleted(ada.id), true);
+  });
+
+  it("rejects a Backboard write that never completes", async () => {
+    const ada = await signup("ada-memory@example.com");
+    const stalled: BackboardClient = {
+      createAssistant: async (input) => ({ assistantId: `asst-${input.name.length}` }),
+      addMemory: async () => ({ memoryId: null, operationId: null, status: "IN_PROGRESS" }),
+      getMemoryOperation: async () => ({ status: "IN_PROGRESS", memoryIds: [] }),
+      searchMemories: async () => [],
+      sendMessage: async () => {
+        throw new Error("sendMessage should not run");
+      },
+      resetMemories: async () => undefined,
+    };
+    await assert.rejects(
+      () => writeUserMemoryLine(ada.id, budgetMemoryLine("hourly rate", 1), "goal", { directory, client: stalled, remote: false }),
+      /Backboard memory write failed/,
+    );
+  });
 });
+
+async function surveyCompleted(userId: string): Promise<boolean> {
+  const user = await User.findById(userId);
+  return user?.surveyCompleted === true;
+}
 
 async function signup(email: string): Promise<{ id: string; token: string }> {
   const response = await fetch(`${base}/auth/signup`, {
