@@ -128,15 +128,24 @@ export function startLockedCart(input: {
   };
 }
 
-export function unlockCart(cart: Cart): Cart {
-  if (isVaultActive(cart, new Date()) && cart.vaultMode !== "soft") {
-    return cart;
-  }
+/** Clears a vault and opens checkout. Does not ask whether the vault was enforced. */
+export function liftCart(cart: Cart): Cart {
   cart.vaultUntil = null;
   cart.vaultMode = null;
   cart.isUnlocked = true;
   cart.status = "unlocked";
   return cart;
+}
+
+export function isEnforcedVault(cart: Cart, now: Date): boolean {
+  return isVaultActive(cart, now) && cart.vaultMode !== "soft";
+}
+
+export function unlockCart(cart: Cart, now: Date = new Date()): Cart {
+  if (isEnforcedVault(cart, now)) {
+    return cart;
+  }
+  return liftCart(cart);
 }
 
 export function sleepCart(

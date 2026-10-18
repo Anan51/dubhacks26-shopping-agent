@@ -2,7 +2,7 @@ import css from "./overlay.css?inline";
 
 import { bagOrFallback, isBlockedControl, type BagControl } from "../../src/apple-bag.js";
 import { applePage, hostOptedOut, type ApplePage } from "../../src/sites.js";
-import { isMisleadingProductName, readPageBag, type PageBag } from "./bag-dom.js";
+import { readPageBag, type PageBag } from "./bag-dom.js";
 import { mountOverlay, type OverlayModel } from "./overlay.js";
 
 type Settings = {
@@ -80,19 +80,22 @@ async function start(kind: ApplePage): Promise<void> {
       show(emptyModel(settings, code, "Simmer can't reach the local server."));
       return;
     }
-    if (cart.necessity === "necessary") {
+    const unlocked = cart.isUnlocked === true && cart.status === "unlocked";
+    if (unlocked) {
       gate.lift();
+    } else {
+      gate.paint();
+    }
+    if (cart.necessity === "necessary") {
       show(modelFrom(cart, thread, settings, null, quantity));
       return;
     }
-    if (cart.isUnlocked === true && cart.status === "unlocked") {
+    if (unlocked) {
       stopped = true;
-      gate.lift();
       host.remove();
       return;
     }
     show(modelFrom(cart, thread, settings, null, quantity));
-    gate.paint();
   };
 
   const publish = async (interpreted: PageBag) => {
@@ -109,12 +112,11 @@ async function start(kind: ApplePage): Promise<void> {
         await refresh();
         return;
       }
-      const names = interpreted.itemNames.filter((name) => !isMisleadingProductName(name, document));
-      const bag = bagOrFallback(
-        names.length > 0
-          ? { itemNames: names, totalCents: interpreted.totalCents, parsed: interpreted.parsed }
-          : { itemNames: [], totalCents: null, parsed: false },
-      );
+      if (isAppleHost(location.hostname) && (!interpreted.parsed || interpreted.itemNames.length === 0)) {
+        show(emptyModel(settings, "------", "couldn't read bag"));
+        return;
+      }
+      const bag = bagOrFallback(interpreted);
       const created = await post("/api/carts", {
         userId: settings.userId,
         itemNames: bag.itemNames.slice(0, 1),
@@ -128,8 +130,10 @@ async function start(kind: ApplePage): Promise<void> {
       }
       code = created.code;
       await rememberCart(code);
-      if (created.necessity === "necessary") {
+      if (created.isUnlocked === true && created.status === "unlocked") {
         gate.lift();
+      } else {
+        gate.paint();
       }
       show(modelFrom(created, { turns: [] }, settings, null, quantity));
       window.setInterval(() => {
@@ -166,6 +170,11 @@ async function start(kind: ApplePage): Promise<void> {
       void publish(document.body ? readPageBag(document.body) : readPageBag(document));
     }
   }, 4000);
+}
+
+function isAppleHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return host === "apple.com" || host.endsWith(".apple.com");
 }
 
 function installGate(kind: ApplePage): { paint: () => void; lift: () => void } {

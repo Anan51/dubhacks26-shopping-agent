@@ -1,4 +1,4 @@
-import { sleepCart, unlockCart, VAULT_MS } from "./carts.js";
+import { liftCart, sleepCart, VAULT_MS } from "./carts.js";
 import type { ExtractOptions } from "./extract-signals.js";
 import { unwrapJsonFence } from "./extract-signals.js";
 import { formatUsd } from "./format.js";
@@ -55,11 +55,11 @@ export function locksCheckout(read: Pick<NecessityRead, "necessary">): boolean {
 
 export function keywordNecessity(bagText: string): Pick<NecessityRead, "necessary" | "reason"> {
   const text = bagText.trim();
-  if (PHONE_UPGRADE.test(text)) {
-    return { necessary: false, reason: "A new phone or upgrade is not a necessary buy." };
-  }
   if (REPLACEMENT.test(text)) {
     return { necessary: true, reason: "A cable, charger, adapter, or repair keeps a device working." };
+  }
+  if (PHONE_UPGRADE.test(text)) {
+    return { necessary: false, reason: "A new phone or upgrade is not a necessary buy." };
   }
   return { necessary: false, reason: "Nothing in the bag reads as a necessary replacement." };
 }
@@ -209,9 +209,7 @@ export function applyPurchaseScore(
   cart.explanation = phrase ? `${reply}\n\n${phrase}` : reply;
   switch (bucket) {
     case "free":
-      cart.vaultUntil = null;
-      cart.vaultMode = null;
-      unlockCart(cart);
+      liftCart(cart);
       return { bucket, reply };
     case "soft":
       if (cart.status === "vault" && cart.vaultMode !== "soft") {

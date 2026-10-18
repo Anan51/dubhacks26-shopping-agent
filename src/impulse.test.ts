@@ -4,7 +4,8 @@ import type { AddressInfo } from "node:net";
 import { describe, it } from "node:test";
 
 import { createApp } from "./app.js";
-import { itemsForBag, startLockedCart, withCartFacts } from "./carts.js";
+import { isEnforcedVault, itemsForBag, liftCart, sleepCart, startLockedCart, unlockCart, withCartFacts } from "./carts.js";
+import { createMemoryStore } from "./store.js";
 import { decide } from "./heuristic.js";
 import { IMPULSIVE, personaFor } from "./history.js";
 import {
@@ -19,7 +20,6 @@ import {
   purchaseScore,
   scoreBucket,
 } from "./impulse.js";
-import { createMemoryStore } from "./store.js";
 
 const NOW = new Date("2026-10-18T00:00:00.000Z");
 
@@ -54,6 +54,19 @@ describe("necessity gate", () => {
     assert.equal(phone.necessary, false);
     assert.equal(locksCheckout(phone), true);
     assert.equal(keywordNecessity("iPhone 16 Pro").necessary, false);
+  });
+
+  it("classifies real accessory names as necessary when Grok is absent", () => {
+    for (const name of [
+      "Apple Watch Magnetic Fast Charger to USB-C Cable",
+      "MagSafe Charger",
+      "20W USB-C Power Adapter",
+      "iPhone 16 charger",
+    ]) {
+      const read = keywordNecessity(name);
+      assert.equal(read.necessary, true, name);
+      assert.equal(locksCheckout(read), false, name);
+    }
   });
 
   it("uses Grok when the JSON is valid and keywords when the call fails", async () => {
@@ -136,6 +149,19 @@ describe("justification grade", () => {
   });
 });
 
+describe("vault helpers", () => {
+  it("keeps an enforced vault closed and liftCart opens it", () => {
+    const held = cart();
+    sleepCart(held, NOW, 24 * 60 * 60 * 1000, 60_000, "enforced");
+    assert.equal(isEnforcedVault(held, NOW), true);
+    assert.equal(unlockCart(held, NOW).isUnlocked, false);
+    assert.equal(held.status, "vault");
+    assert.equal(liftCart(held).status, "unlocked");
+    assert.equal(held.vaultUntil, null);
+    assert.equal(held.vaultMode, null);
+  });
+});
+
 describe("score routing", () => {
   it("vaults a score of 1, offers sleep at 2–3, and unlocks at 4 or more", () => {
     const strict = cart();
@@ -206,6 +232,11 @@ describe("impulse flow on the server", () => {
       assert.equal(open.lastPing, null);
       const pay = await post(base, "/api/pay", { code: open.code });
       assert.equal(pay.status, 200);
+      const refusedSleep = await post(base, `/api/carts/${open.code}/sleep`, {});
+      assert.equal(refusedSleep.status, 409);
+      const stillOpen = (await get(base, `/api/carts/${open.code}`)) as CartSnap;
+      assert.equal(stillOpen.status, "unlocked");
+      assert.equal(stillOpen.isUnlocked, true);
 
       const phone = await post(base, "/api/carts", {
         userId: "user-impulsive",
@@ -258,6 +289,85 @@ describe("impulse flow on the server", () => {
       assert.equal(freed.scoreBucket, "free");
       assert.equal(freed.status, "unlocked");
       assert.match(freed.explanation ?? "", /will not click it/);
+    } finally {
+      running.scheduler.stop();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+});
+
+describe("keyword necessity on the request path", () => {
+  it("answers with keywords before a slow Grok call and repairs a deduped cart", async () => {
+    const store = createMemoryStore();
+    const waiters: Array<(response: Response) => void> = [];
+    const running = createApp({
+      store,
+      origin: "http://127.0.0.1",
+      lockMs: 600_000,
+      demoReminderMs: 60_000,
+      demoDefault: true,
+      agentHandle: null,
+      photon: null,
+      xaiApiKey: "test-key",
+      xaiModel: "grok-4.20-0309-non-reasoning",
+      xaiTimeoutMs: 60_000,
+      fetchImpl: () =>
+        new Promise<Response>((resolve) => {
+          waiters.push(resolve);
+        }),
+      polish: async (template) => template,
+    });
+    const server = createServer(running.app);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${address.port}`;
+    const bag = {
+      userId: "user-fast",
+      itemNames: ["USB-C charge cable"],
+      totalCents: 1_900,
+      parsed: true,
+      demo: true,
+    };
+    try {
+      const started = Date.now();
+      const created = await post(base, "/api/carts", bag);
+      assert.ok(Date.now() - started < 1_000);
+      const open = created.body as CartSnap;
+      assert.equal(created.status, 201);
+      assert.equal(open.necessity, "necessary");
+      assert.equal(open.necessitySource, "keywords");
+      assert.equal(open.isUnlocked, true);
+
+      const stored = store.getCart(open.code);
+      assert.ok(stored);
+      stored.necessity = null;
+      stored.necessitySource = null;
+      stored.necessityReason = null;
+      store.saveCart(stored);
+      const again = await post(base, "/api/carts", bag);
+      const replay = again.body as CartSnap;
+      assert.equal(again.status, 200);
+      assert.equal(replay.code, open.code);
+      assert.equal(replay.necessity, "necessary");
+      assert.equal(replay.necessitySource, "keywords");
+
+      for (const resolve of waiters) {
+        resolve(
+          Response.json({
+            choices: [{ message: { content: '{"necessary": false, "reason": "Want."}' } }],
+          }),
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const revised = (await get(base, `/api/carts/${open.code}`)) as CartSnap;
+      assert.equal(revised.necessitySource, "grok");
+      assert.equal(revised.necessity, "unnecessary");
+      assert.equal(revised.status, "locked");
+      assert.equal(revised.isUnlocked, false);
     } finally {
       running.scheduler.stop();
       await new Promise<void>((resolve, reject) => {

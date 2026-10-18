@@ -1,4 +1,4 @@
-import { isVaultActive, sleepCart, unlockCart, VAULT_MS, withCartFacts } from "./carts.js";
+import { isEnforcedVault, sleepCart, unlockCart, VAULT_MS, withCartFacts } from "./carts.js";
 import { extractCartCode, extractSignals, pickShopperSignals, type ExtractOptions } from "./extract-signals.js";
 import { formatLongDate } from "./format.js";
 import { personaFor } from "./history.js";
@@ -132,11 +132,11 @@ export async function applyTurn(input: ApplyInput): Promise<ApplyResult> {
 }
 
 function unlockTurn(session: Session, cart: Cart, now: Date): ApplyResult {
-  if (isVaultActive(cart, now)) {
+  if (isEnforcedVault(cart, now)) {
     const until = cart.vaultUntil ? formatLongDate(cart.vaultUntil) : "the saved time";
     return say(session, `This bag keeps marinating in the Vault until ${until}. Unlock stays on the overlay and waits until then.`, { cart });
   }
-  unlockCart(cart);
+  unlockCart(cart, now);
   session.step = "confirm";
   return say(session, "Unlock — Apple's own button works again. Simmer will not click it or place the order.", {
     cart,

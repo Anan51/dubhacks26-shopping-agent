@@ -9,14 +9,13 @@ import { bagOrFallback } from "./apple-bag.js";
 import {
   bagFingerprint,
   FALLBACK_TOTAL_CENTS,
-  isVaultActive,
+  isEnforcedVault,
   itemsForBag,
   lockState,
   skipVault,
   sleepCart,
   startLockedCart,
   unlockCart,
-  VAULT_MS,
   withCartFacts,
 } from "./carts.js";
 import type { OutboundMessage } from "./channel.js";
@@ -25,7 +24,7 @@ import { readConfig } from "./config.js";
 import { handleIncomingEvent } from "./handle-message.js";
 import { isPersonaId, PERSONAS, personaById, personaFor, type PersonaId } from "./history.js";
 import { decide, EXAMPLE_OWED_CENTS } from "./heuristic.js";
-import { applyPurchaseScore, classifyNecessity } from "./impulse.js";
+import { applyPurchaseScore, classifyNecessity, keywordNecessity } from "./impulse.js";
 import { EXAMPLE_OFFERS } from "./offers.js";
 import { deskChatUrl, linkPhoneSms, linkPhoneText, prefilledText, textSimmerLink } from "./links.js";
 import { isUserId, notifyCheckout } from "./phone-link.js";
@@ -48,6 +47,7 @@ export type AppDeps = {
   xaiApiKey?: string;
   xaiModel: string;
   xaiTimeoutMs: number;
+  fetchImpl?: typeof fetch;
   now?: () => Date;
   polish?: (template: string, action: Decision["action"]) => Promise<string>;
 };
@@ -65,7 +65,24 @@ export function createApp(deps: AppDeps): RunningApp {
     ...(deps.xaiApiKey ? { apiKey: deps.xaiApiKey } : {}),
     model: deps.xaiModel,
     timeoutMs: deps.xaiTimeoutMs,
+    ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
   };
+
+  function refineNecessity(code: string, bagText: string): void {
+    void classifyNecessity(bagText, extractOptions)
+      .then((necessity) => {
+        if (necessity.source !== "grok") {
+          return;
+        }
+        const current = deps.store.getCart(code);
+        if (!current) {
+          return;
+        }
+        applyNecessity(current, necessity);
+        deps.store.saveCart(current);
+      })
+      .catch(() => undefined);
+  }
 
   async function routeSend(message: OutboundMessage): Promise<void> {
     if (message.conversationId.startsWith("desk:")) {
@@ -154,12 +171,21 @@ export function createApp(deps: AppDeps): RunningApp {
       return;
     }
     const bag = postedBag(body);
+    const bagText = bag.itemNames.join("\n");
     const fingerprint = bagFingerprint(userId, bag.itemNames, bag.totalCents);
     const existing = deps.store
       .listCarts()
       .find((cart) => cart.userId === userId && cart.fingerprint === fingerprint);
     if (existing) {
-      if (!existing.lastPing?.delivered) {
+      if (existing.necessity == null) {
+        const keyword = keywordNecessity(bagText);
+        applyNecessity(existing, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason });
+        if (!keyword.necessary) {
+          await pingCart(existing, false);
+        }
+        deps.store.saveCart(existing);
+        refineNecessity(existing.code, bagText);
+      } else if (!existing.lastPing?.delivered) {
         await pingCart(existing, false);
         deps.store.saveCart(existing);
       }
@@ -181,21 +207,17 @@ export function createApp(deps: AppDeps): RunningApp {
       taken: (code) => deps.store.getCart(code) !== undefined,
     });
     seedDecision(cart);
-    const necessity = await classifyNecessity(bag.itemNames.join("\n"), extractOptions);
     const persona = personaFor(userId, assignedPersonas);
-    cart.necessity = necessity.necessary ? "necessary" : "unnecessary";
-    cart.necessitySource = necessity.source;
-    cart.necessityReason = necessity.reason;
     cart.personaId = persona.id;
     cart.userImpulseScore = persona.impulseScore;
-    if (necessity.necessary) {
-      unlockCart(cart);
-      cart.scoreReason = necessity.reason;
-    } else {
+    const keyword = keywordNecessity(bagText);
+    applyNecessity(cart, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason });
+    if (!keyword.necessary) {
       await pingCart(cart, false);
     }
     deps.store.saveCart(cart);
     res.status(201).json(publicCart(cart, deps.agentHandle));
+    refineNecessity(cart.code, bagText);
   }));
 
   app.get("/api/carts/:code", (req, res) => {
@@ -225,7 +247,7 @@ export function createApp(deps: AppDeps): RunningApp {
       res.status(404).json({ error: "Cart not found." });
       return;
     }
-    if (isVaultActive(cart, now()) && cart.vaultMode !== "soft") {
+    if (isEnforcedVault(cart, now())) {
       res.status(423).json({
         error: "This bag is in the Impulse Vault.",
         vaultUntil: cart.vaultUntil,
@@ -233,7 +255,7 @@ export function createApp(deps: AppDeps): RunningApp {
       });
       return;
     }
-    unlockCart(cart);
+    unlockCart(cart, now());
     deps.store.saveCart(cart);
     scheduler.disarm(cart.code);
     res.json(publicCart(cart, deps.agentHandle));
@@ -245,8 +267,14 @@ export function createApp(deps: AppDeps): RunningApp {
       res.status(404).json({ error: "Cart not found." });
       return;
     }
-    const soft = cart.scoreBucket === "soft";
-    sleepCart(cart, now(), soft ? deps.lockMs : VAULT_MS, deps.demoReminderMs, soft ? "soft" : "enforced");
+    if (cart.scoreBucket !== "soft") {
+      res.status(409).json({
+        error: "Sleep is only for a soft score.",
+        cart: publicCart(cart, deps.agentHandle),
+      });
+      return;
+    }
+    sleepCart(cart, now(), deps.lockMs, deps.demoReminderMs, "soft");
     deps.store.saveCart(cart);
     scheduler.arm(cart);
     res.json(publicCart(cart, deps.agentHandle));
@@ -449,6 +477,30 @@ function seedDecision(cart: Cart): void {
   };
   cart.explanation = phraseDecision(cart.decision, signals, null, cart.motiveSources);
   cart.signalSource = null;
+}
+
+function applyNecessity(
+  cart: Cart,
+  read: { necessary: boolean; source: "grok" | "keywords"; reason: string },
+): void {
+  cart.necessity = read.necessary ? "necessary" : "unnecessary";
+  cart.necessitySource = read.source;
+  cart.necessityReason = read.reason;
+  if (cart.purchaseScore != null) {
+    return;
+  }
+  if (read.necessary) {
+    unlockCart(cart);
+    cart.scoreReason = read.reason;
+    return;
+  }
+  if (cart.scoreBucket == null && !isEnforcedVault(cart, new Date())) {
+    cart.isUnlocked = false;
+    if (cart.status === "unlocked") {
+      cart.status = "locked";
+    }
+    cart.scoreReason = null;
+  }
 }
 
 function postedBag(body: Record<string, unknown>): { itemNames: string[]; totalCents: number; parsed: boolean } {

@@ -105,6 +105,7 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
         : remaining > 0
           ? clockFrom(remaining)
           : "0:00";
+  const showLockControls = model.necessity !== "necessary";
   return (
     <div className="panel">
       <section className="card" role="dialog" aria-labelledby="simmer-title">
@@ -120,9 +121,11 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
           {clock}
         </p>
         <div className="row">
-          <button type="button" onClick={actions.unlock}>
-            Unlock
-          </button>
+          {showLockControls ? (
+            <button type="button" onClick={actions.unlock}>
+              Unlock
+            </button>
+          ) : null}
           <button type="button" className="quiet" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
             Why
           </button>
@@ -138,9 +141,11 @@ function Overlay({ model, actions }: { model: OverlayModel; actions: OverlayActi
               ))}
             </dl>
             <div className="row">
-              <button type="button" className="quiet" onClick={actions.sleep}>
-                Sleep on it
-              </button>
+              {showLockControls ? (
+                <button type="button" className="quiet" onClick={actions.sleep}>
+                  Sleep on it
+                </button>
+              ) : null}
               {model.status === "vault" ? (
                 <button type="button" className="quiet" onClick={actions.skipVault}>
                   Demo: skip 24 hours

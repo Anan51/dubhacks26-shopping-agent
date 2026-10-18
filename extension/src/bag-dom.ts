@@ -17,9 +17,8 @@ export type PageBag = InterpretedBag & {
 const BAG_LABEL = /^(bag|shopping bag|your bag|apple bag|review bag|review your bag)$/i;
 const QUANTITY_LABEL = /^\d+\+$/;
 
-/** Apple's bag copy uses non-breaking spaces, including inside "(1 m)". */
 export function normalizeBagText(value: string): string {
-  return value.replaceAll("\u00a0", " ").replace(/\s+/g, " ").trim();
+  return value.replace(/\s+/g, " ").trim();
 }
 
 export function quantityTotalLabel(quantity: number, totalCents: number): string {
@@ -67,7 +66,7 @@ export function readPageBag(root: ParentNode): PageBag {
 function readStructured(root: ParentNode, rows: readonly Element[]): PageBag {
   const items = rows
     .flatMap((row) => {
-      const item = readRow(row);
+      const item = readRow(row, root);
       return item ? [item] : [];
     })
     .sort((left, right) => (left.position ?? Number.MAX_SAFE_INTEGER) - (right.position ?? Number.MAX_SAFE_INTEGER));
@@ -102,9 +101,9 @@ function itemRows(root: ParentNode): Element[] {
   return [...root.querySelectorAll("li.rs-bag-item")];
 }
 
-function readRow(row: Element): BagLineItem | null {
+function readRow(row: Element, page: ParentNode): BagLineItem | null {
   const name = nameFrom(row);
-  if (!name || isMisleadingProductName(name)) {
+  if (!name || isMisleadingProductName(name, page)) {
     return null;
   }
   return {

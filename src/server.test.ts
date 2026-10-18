@@ -132,8 +132,12 @@ describe("apple bag lock", () => {
       demo: true,
     });
     const cart = created.body as CartBody;
-    const slept = await post(`/api/carts/${cart.code}/sleep`, {});
-    const vault = slept.body as CartBody;
+    const conversationId = `desk:cart-${cart.code}`;
+    const refusedSleep = await post(`/api/carts/${cart.code}/sleep`, {});
+    assert.equal(refusedSleep.status, 409);
+    assert.equal(((await get(`/api/carts/${cart.code}`)) as CartBody).status, "locked");
+    await post("/api/dev/messages", { conversationId, text: "the new color looks nice" });
+    const vault = (await get(`/api/carts/${cart.code}`)) as CartBody;
     assert.equal(vault.status, "vault");
     assert.equal(new Date(vault.vaultUntil ?? "").getTime() - Date.now() > 23 * 60 * 60 * 1000, true);
     const held = await post("/api/pay", { code: cart.code });
@@ -146,7 +150,6 @@ describe("apple bag lock", () => {
     const relocked = await post("/api/pay", { code: cart.code });
     assert.equal((relocked.body as GateBody).reason, "locked");
 
-    const conversationId = `desk:cart-${cart.code}`;
     const linked = await post("/api/dev/link", { userId: "user-vault1", conversationId });
     assert.equal(linked.status, 200);
     const ping = await post(`/api/carts/${cart.code}/notify`, { fail: false });
