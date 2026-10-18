@@ -1,3 +1,4 @@
+import { normalizeItemName } from "../../../src/item-name.js";
 import { isLocalAmazonFixture } from "../../../src/sites.js";
 import type { Bag, BagItem, StoreAdapter } from "./adapter.js";
 
@@ -66,7 +67,7 @@ export const amazonAdapter: StoreAdapter = {
     const root = doc.querySelector(AMAZON_SELECTORS.cart) ?? doc;
     const items: BagItem[] = [];
     for (const row of root.querySelectorAll(AMAZON_SELECTORS.lineItem)) {
-      const item = (row.querySelector(AMAZON_SELECTORS.title)?.textContent ?? "").replace(/\s+/g, " ").trim();
+      const item = lineTitle(row);
       const unitCents = parseAmazonCents(linePriceText(row));
       if (!item || unitCents === null) {
         return null;
@@ -130,6 +131,33 @@ export const amazonAdapter: StoreAdapter = {
     return false;
   },
 };
+
+/**
+ * Full title once. `.sc-product-title` also contains the truncated copy and a
+ * screen-reader span, so textContent repeats the name and can end with
+ * "Opens in a new tab."
+ */
+function lineTitle(row: Element): string {
+  const title = row.querySelector(AMAZON_SELECTORS.title);
+  if (!title) {
+    return "";
+  }
+  const full = title.classList.contains("a-truncate-full") ? title : title.querySelector(".a-truncate-full");
+  return normalizeItemName(elementText(full ?? title));
+}
+
+function elementText(node: Element): string {
+  const view = node.ownerDocument.defaultView;
+  const ElementCtor = view?.Element;
+  const copy = node.cloneNode(true);
+  if (!ElementCtor || !(copy instanceof ElementCtor)) {
+    return node.textContent ?? "";
+  }
+  for (const hidden of copy.querySelectorAll(".a-offscreen, [hidden]")) {
+    hidden.remove();
+  }
+  return copy.textContent ?? "";
+}
 
 /** Reads a currency string such as "$179.00" into integer cents (17900). */
 export function parseAmazonCents(text: string): number | null {
