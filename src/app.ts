@@ -99,6 +99,7 @@ export function createApp(deps: AppDeps): RunningApp {
   const now = deps.now ?? (() => new Date());
   const env = deps.env ?? process.env;
   const backboardEnabled = deps.backboardEnabled ?? readAccountConfig(env).backboardEnabled;
+  const authConfigured = Boolean(deps.readSession);
   const assignedPersonas = new Map<string, PersonaId>();
   let bagReadError: string | null = null;
   const extractOptions = {
@@ -332,8 +333,8 @@ export function createApp(deps: AppDeps): RunningApp {
   }));
 
   app.get("/api/carts/:code", (req, res) => {
-    const cart = loadCart(req.params.code);
-    if (!cart || !cartReadableBy(cart, req.user?.id ?? null)) {
+    const cart = loadOwnedCart(req, req.params.code);
+    if (!cart) {
       res.status(404).json({ error: "Cart not found." });
       return;
     }
@@ -343,7 +344,7 @@ export function createApp(deps: AppDeps): RunningApp {
   app.post("/api/pay", (req, res) => {
     const body = isRecord(req.body) ? req.body : {};
     const code = typeof body.code === "string" ? body.code : "";
-    const cart = loadCart(code);
+    const cart = loadOwnedCart(req, code);
     if (!cart) {
       res.status(404).json({ error: "Cart not found." });
       return;
@@ -353,7 +354,7 @@ export function createApp(deps: AppDeps): RunningApp {
   });
 
   app.post("/api/carts/:code/unlock", settle(async (req, res) => {
-    const cart = loadCart(req.params.code);
+    const cart = loadOwnedCart(req, req.params.code);
     if (!cart) {
       res.status(404).json({ error: "Cart not found." });
       return;
@@ -380,7 +381,7 @@ export function createApp(deps: AppDeps): RunningApp {
   }));
 
   app.post("/api/carts/:code/sleep", (req, res) => {
-    const cart = loadCart(req.params.code);
+    const cart = loadOwnedCart(req, req.params.code);
     if (!cart) {
       res.status(404).json({ error: "Cart not found." });
       return;
@@ -415,7 +416,7 @@ export function createApp(deps: AppDeps): RunningApp {
   });
 
   app.post("/api/carts/:code/notify", settle(async (req, res) => {
-    const cart = loadCart(req.params.code);
+    const cart = loadOwnedCart(req, req.params.code);
     if (!cart) {
       res.status(404).json({ error: "Cart not found." });
       return;
@@ -723,6 +724,14 @@ export function createApp(deps: AppDeps): RunningApp {
       return undefined;
     }
     return deps.store.getCart(code);
+  }
+
+  function loadOwnedCart(req: Request, code: string | undefined): Cart | undefined {
+    const cart = loadCart(code);
+    if (!cart || !cartReadableBy(cart, req.user?.id ?? null, authConfigured)) {
+      return undefined;
+    }
+    return cart;
   }
 }
 

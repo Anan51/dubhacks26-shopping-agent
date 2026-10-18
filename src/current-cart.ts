@@ -11,14 +11,18 @@ export function assignAuthUser(cart: Cart, authUserId: string): void {
 }
 
 /**
- * A signed-in read is that account's cart. With no account, the cart stays
- * readable so demo mode and the desk can still load a code.
+ * With auth configured, this is the cart-list rule: a signed-in read is that
+ * account's cart, and an unresolved session sees only carts with no owner.
+ * With auth unset, any cart stays readable so demo mode and the desk keep working.
  */
-export function cartReadableBy(cart: Cart, authUserId: string | null): boolean {
-  if (!authUserId) {
+export function cartReadableBy(cart: Cart, authUserId: string | null, authConfigured: boolean): boolean {
+  if (!authConfigured) {
     return true;
   }
-  return readAuthUserId(cart) === authUserId;
+  if (authUserId) {
+    return readAuthUserId(cart) === authUserId;
+  }
+  return readAuthUserId(cart) === undefined;
 }
 
 /**
@@ -34,12 +38,12 @@ export function scopedCarts(
     if (queryUserId && queryUserId !== authUserId) {
       return { ok: false };
     }
-    return { ok: true, carts: currentCarts(carts.filter((cart) => cartReadableBy(cart, authUserId))) };
+    return { ok: true, carts: currentCarts(carts.filter((cart) => cartReadableBy(cart, authUserId, true))) };
   }
   return {
     ok: true,
     carts: currentCarts(
-      carts.filter((cart) => readAuthUserId(cart) === undefined),
+      carts.filter((cart) => cartReadableBy(cart, null, true)),
       queryUserId,
     ),
   };

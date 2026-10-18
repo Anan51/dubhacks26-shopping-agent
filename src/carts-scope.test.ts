@@ -3,9 +3,11 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, before, describe, it } from "node:test";
 
+import { SignJWT } from "jose";
+
 import { createApp, type RunningApp } from "./app.js";
 import { readOptionalUser, signSession } from "./auth/session.js";
-import { createMemoryStore } from "./store.js";
+import { createMemoryStore, type Store } from "./store.js";
 
 const SECRET = "cart-scope-test-jwt-secret".padEnd(32, "x");
 const DEVICE = "user-device-a";
@@ -133,7 +135,10 @@ describe("cart account scope", () => {
     assert.equal(cartB.authUserId, "account-b");
     assert.equal(cartB.userId, "user-device-share");
 
-    const stillA = (await get(`/api/carts/${cartA.code}`)).body as unknown as ListedCart;
+    const hidden = await get(`/api/carts/${cartA.code}`);
+    assert.equal(hidden.status, 404);
+    assert.deepEqual(hidden.body, { error: "Cart not found." });
+    const stillA = (await get(`/api/carts/${cartA.code}`, tokenA)).body as unknown as ListedCart;
     assert.equal(stillA.authUserId, "account-a");
     assert.equal(stillA.code, cartA.code);
 
@@ -212,11 +217,13 @@ describe("cart account scope", () => {
 
 describe("cart by code without auth", () => {
   let demoBase = "";
+  let demoStore: Store;
   let close: () => Promise<void>;
 
   before(async () => {
+    demoStore = createMemoryStore();
     const running = createApp({
-      store: createMemoryStore(),
+      store: demoStore,
       origin: "http://127.0.0.1",
       lockMs: 600_000,
       demoReminderMs: 60_000,
@@ -226,7 +233,7 @@ describe("cart by code without auth", () => {
       xaiModel: "grok-4.20-0309-non-reasoning",
       xaiTimeoutMs: 8_000,
       polish: async (template) => template,
-      env: {},
+      env: { NODE_ENV: "test", WAITMATE_DEV_UNLOCK: "1" },
     });
     const server = createServer(running.app);
     await new Promise<void>((resolve) => {
@@ -272,6 +279,171 @@ describe("cart by code without auth", () => {
     assert.equal(strayToken.status, 200);
     assert.equal(((await strayToken.json()) as ListedCart).code, cart.code);
   });
+
+  it("still reads and updates a cart by code on pay, unlock, sleep, and notify", async () => {
+    const created = await request(demoBase, "POST", "/api/carts", {
+      userId: "user-demo-phone",
+      itemNames: ["iPhone 16 Pro"],
+      totalCents: 119_900,
+      parsed: true,
+      demo: true,
+    });
+    assert.equal(created.status, 201);
+    const code = String(created.body.code);
+    assert.equal((await request(demoBase, "GET", `/api/carts/${code}`)).status, 200);
+
+    const blocked = await request(demoBase, "POST", "/api/pay", { code }, "not-a-session");
+    assert.equal(blocked.status, 423);
+    assert.equal(blocked.body.code, code);
+
+    const unlocked = await request(demoBase, "POST", `/api/carts/${code}/unlock`, {});
+    assert.equal(unlocked.status, 200);
+    assert.equal(unlocked.body.isUnlocked, true);
+    assert.equal((await request(demoBase, "POST", "/api/pay", { code })).status, 200);
+
+    const saved = demoStore.getCart(code);
+    assert.ok(saved);
+    saved.scoreBucket = "soft";
+    demoStore.saveCart(saved);
+    const slept = await request(demoBase, "POST", `/api/carts/${code}/sleep`, {});
+    assert.equal(slept.status, 200);
+    assert.equal(slept.body.status, "vault");
+
+    const pinged = await request(demoBase, "POST", `/api/carts/${code}/notify`, {});
+    assert.equal(pinged.status, 200);
+    assert.equal(pinged.body.code, code);
+  });
+});
+
+describe("owned cart routes when auth is configured", () => {
+  let routeBase = "";
+  let routeStore: Store;
+  let close: () => Promise<void>;
+  let tokenA = "";
+  let tokenB = "";
+  let expired = "";
+
+  before(async () => {
+    tokenA = await signSession({ id: "account-a", email: "a@example.com" }, SECRET);
+    tokenB = await signSession({ id: "account-b", email: "b@example.com" }, SECRET);
+    expired = await expiredToken("account-a", "a@example.com", SECRET);
+    routeStore = createMemoryStore();
+    const running = createApp({
+      store: routeStore,
+      origin: "http://127.0.0.1",
+      lockMs: 600_000,
+      demoReminderMs: 60_000,
+      demoDefault: false,
+      agentHandle: null,
+      photon: null,
+      xaiModel: "grok-4.20-0309-non-reasoning",
+      xaiTimeoutMs: 8_000,
+      polish: async (template) => template,
+      env: { NODE_ENV: "test", WAITMATE_DEV_UNLOCK: "1" },
+      readSession: (req) => readOptionalUser(req, SECRET),
+    });
+    const server = createServer(running.app);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address() as AddressInfo;
+    routeBase = `http://127.0.0.1:${address.port}`;
+    close = () =>
+      new Promise((resolve, reject) => {
+        running.scheduler.stop();
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+  });
+
+  after(async () => {
+    await close();
+  });
+
+  it("returns 404 for an owned cart when the caller is anonymous, garbage, expired, or another account", async () => {
+    const created = await request(
+      routeBase,
+      "POST",
+      "/api/carts",
+      {
+        userId: "user-owned-hidden",
+        itemNames: ["iPhone 16 Pro"],
+        totalCents: 119_900,
+        parsed: true,
+        pageHost: "www.apple.com",
+        demo: true,
+      },
+      tokenA,
+    );
+    assert.equal(created.status, 201);
+    const code = String(created.body.code);
+    const paths: { method: "GET" | "POST"; path: string; body?: unknown }[] = [
+      { method: "GET", path: `/api/carts/${code}` },
+      { method: "POST", path: "/api/pay", body: { code } },
+      { method: "POST", path: `/api/carts/${code}/unlock`, body: {} },
+      { method: "POST", path: `/api/carts/${code}/sleep`, body: {} },
+      { method: "POST", path: `/api/carts/${code}/notify`, body: {} },
+    ];
+    for (const token of [undefined, "not-a-jwt", expired, tokenB]) {
+      for (const call of paths) {
+        const response = await request(routeBase, call.method, call.path, call.body, token);
+        assert.equal(response.status, 404);
+        assert.deepEqual(response.body, { error: "Cart not found." });
+      }
+    }
+    const unknown = await request(routeBase, "POST", "/api/pay", { code: "ZZZZZZ" }, tokenB);
+    assert.equal(unknown.status, 404);
+    assert.deepEqual(unknown.body, { error: "Cart not found." });
+
+    const owner = await request(routeBase, "GET", `/api/carts/${code}`, undefined, tokenA);
+    assert.equal(owner.status, 200);
+    assert.equal(owner.body.isUnlocked, false);
+    assert.equal(owner.body.status, "locked");
+  });
+
+  it("lets the owner read, pay, unlock, sleep, and notify their cart", async () => {
+    const created = await request(
+      routeBase,
+      "POST",
+      "/api/carts",
+      {
+        userId: "user-owned-open",
+        itemNames: ["iPhone 16 Pro"],
+        totalCents: 119_900,
+        parsed: true,
+        pageHost: "www.apple.com",
+        demo: true,
+      },
+      tokenA,
+    );
+    assert.equal(created.status, 201);
+    const code = String(created.body.code);
+
+    const owner = await request(routeBase, "GET", `/api/carts/${code}`, undefined, tokenA);
+    assert.equal(owner.status, 200);
+    assert.equal(owner.body.authUserId, "account-a");
+
+    const held = await request(routeBase, "POST", "/api/pay", { code }, tokenA);
+    assert.equal(held.status, 423);
+    assert.equal(held.body.reason, "locked");
+    assert.equal(held.body.code, code);
+
+    const unlocked = await request(routeBase, "POST", `/api/carts/${code}/unlock`, {}, tokenA);
+    assert.equal(unlocked.status, 200);
+    assert.equal(unlocked.body.isUnlocked, true);
+    assert.equal((await request(routeBase, "POST", "/api/pay", { code }, tokenA)).status, 200);
+
+    const saved = routeStore.getCart(code);
+    assert.ok(saved);
+    saved.scoreBucket = "soft";
+    routeStore.saveCart(saved);
+    const slept = await request(routeBase, "POST", `/api/carts/${code}/sleep`, {}, tokenA);
+    assert.equal(slept.status, 200);
+    assert.equal(slept.body.status, "vault");
+
+    const pinged = await request(routeBase, "POST", `/api/carts/${code}/notify`, {}, tokenA);
+    assert.equal(pinged.status, 200);
+    assert.equal(pinged.body.code, code);
+  });
 });
 
 async function post(path: string, body: unknown, token?: string): Promise<{ status: number; body: Record<string, unknown> }> {
@@ -285,6 +457,34 @@ async function post(path: string, body: unknown, token?: string): Promise<{ stat
     body: JSON.stringify(body),
   });
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+}
+
+async function request(
+  root: string,
+  method: "GET" | "POST",
+  path: string,
+  body?: unknown,
+  token?: string,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const response = await fetch(`${root}${path}`, {
+    method,
+    headers: {
+      accept: "application/json",
+      ...(body !== undefined ? { "content-type": "application/json" } : {}),
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+}
+
+async function expiredToken(id: string, email: string, secret: string): Promise<string> {
+  return new SignJWT({ email })
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject(id)
+    .setIssuedAt(Math.floor(Date.now() / 1000) - 120)
+    .setExpirationTime(Math.floor(Date.now() / 1000) - 30)
+    .sign(new TextEncoder().encode(secret));
 }
 
 async function get(path: string, token?: string): Promise<{ status: number; body: Record<string, unknown> }> {
