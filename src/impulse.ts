@@ -55,8 +55,26 @@ export function locksCheckout(read: Pick<NecessityRead, "necessary">): boolean {
   return !read.necessary;
 }
 
+/**
+ * A bag is necessary only when every item is.
+ * Callers join item names with newlines; one non-necessary item keeps the lock.
+ */
 export function keywordNecessity(bagText: string): Pick<NecessityRead, "necessary" | "reason"> {
-  const text = bagText.trim();
+  const items = bagText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  let read = necessityForItem("");
+  for (const item of items) {
+    read = necessityForItem(item);
+    if (!read.necessary) {
+      return read;
+    }
+  }
+  return read;
+}
+
+function necessityForItem(text: string): Pick<NecessityRead, "necessary" | "reason"> {
   if (REPLACEMENT.test(text)) {
     return { necessary: true, reason: "A cable, charger, adapter, or repair keeps a device working." };
   }
