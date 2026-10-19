@@ -282,16 +282,25 @@ export function createApp(deps: AppDeps): RunningApp {
         assignAuthUser(existing, authUserId);
       }
       rememberHiddenItemCount(existing, bag.hiddenItemCount);
+      const carrier = parseCarrierFacts(body.carrier);
       if (existing.necessity == null) {
         const keyword = keywordNecessity(bagText);
         applyNecessity(existing, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason });
-        if (!keyword.necessary && bag.totalCents >= PAUSE_FLOOR_CENTS && !existing.lastPing) {
+        if (shouldPingCheckout(keyword.necessary, bag.totalCents, carrier) && !existing.lastPing) {
           await pingCart(existing, false);
         }
         deps.store.saveCart(existing);
-        refineNecessity(existing.code, bagText);
+        if (!carrier) {
+          refineNecessity(existing.code, bagText);
+        }
       }
       await attachImpulse(existing, req.user?.id, "refresh");
+      if (carrier) {
+        applyCarrierLine(existing, carrier);
+        if (carrierVerdict(carrier) === "pass") {
+          scheduler.disarm(existing.code);
+        }
+      }
       deps.store.saveCart(existing);
       res.json(publishCart(existing));
       return;
@@ -320,7 +329,7 @@ export function createApp(deps: AppDeps): RunningApp {
     const carrier = parseCarrierFacts(body.carrier);
     const keyword = keywordNecessity(bagText);
     applyNecessity(cart, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason });
-    if (!keyword.necessary && bag.totalCents >= PAUSE_FLOOR_CENTS && !(carrier && carrierVerdict(carrier) === "pass")) {
+    if (shouldPingCheckout(keyword.necessary, bag.totalCents, carrier)) {
       await pingCart(cart, false);
     }
     await attachImpulse(cart, req.user?.id, "create");
@@ -785,6 +794,14 @@ function seedDecision(cart: Cart): void {
   };
   cart.explanation = phraseDecision(cart.decision, signals, null, cart.motiveSources);
   cart.signalSource = null;
+}
+
+function shouldPingCheckout(
+  necessary: boolean,
+  totalCents: number,
+  carrier: ReturnType<typeof parseCarrierFacts>,
+): boolean {
+  return !necessary && totalCents >= PAUSE_FLOOR_CENTS && !(carrier && carrierVerdict(carrier) === "pass");
 }
 
 function applyNecessity(
