@@ -37,15 +37,20 @@ describe("file store reset", () => {
       updatedAt: now.toISOString(),
     });
     store.savePhoneLink({ userId: "user-local", conversationId: "thread-1", linkedAt: now.toISOString() });
+    const code = store.rememberLinkCode("user-local");
     store.rememberInbound("m1");
+    const kept = createFileStore(filePath);
+    assert.equal(kept.userIdForLinkCode(code), "user-local");
     store.reset();
     assert.equal(store.listCarts().length, 0);
     assert.equal(store.getSession("desk:cart-AB23CD"), undefined);
     assert.equal(store.getPhoneLink("user-local"), undefined);
+    assert.equal(store.userIdForLinkCode(code), undefined);
     assert.equal(store.hasHandledInbound("m1"), false);
     const reloaded = createFileStore(filePath);
     assert.equal(reloaded.listCarts().length, 0);
     assert.equal(reloaded.getPhoneLink("user-local"), undefined);
+    assert.equal(reloaded.userIdForLinkCode(code), undefined);
     assert.equal(reloaded.hasHandledInbound("m1"), false);
   });
 });

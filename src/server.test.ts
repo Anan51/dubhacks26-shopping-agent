@@ -94,7 +94,8 @@ describe("apple bag lock", () => {
     assert.equal(cart.decision?.action, "sleep");
     assert.equal(new Date(cart.lockEndsAt).getTime() - new Date(cart.createdAt).getTime(), 600_000);
     assert.match(cart.smsLink ?? "", /AB|sms:/);
-    assert.equal(cart.linkMessage, "link user-demo1");
+    assert.match(cart.linkMessage ?? "", /^link [A-HJ-NP-Z2-9]{6}$/);
+    assert.equal((cart.linkMessage ?? "").includes("user-demo1"), false);
 
     const again = await post("/api/carts", {
       userId: "user-demo1",
@@ -275,6 +276,42 @@ describe("apple bag lock", () => {
     });
     assert.equal(capped.status, 201);
     assert.equal((capped.body as CartBody).items[0]?.name, "B".repeat(140));
+  });
+
+  it("resolves a short link code and the old full id to the same shopper", async () => {
+    const userId = "user-2557c60f-1111-4111-8111-111111111111";
+    const created = await post("/api/carts", {
+      userId,
+      itemNames: ["Example phone"],
+      totalCents: 120_000,
+      parsed: true,
+      pageHost: "www.apple.com",
+      demo: true,
+    });
+    assert.equal(created.status, 201);
+    const linkMessage = (created.body as CartBody).linkMessage ?? "";
+    assert.match(linkMessage, /^link [A-HJ-NP-Z2-9]{6}$/);
+    assert.equal(linkMessage.includes(userId), false);
+
+    const shortThread = "desk:shortlink1";
+    const short = await post("/api/dev/messages", { conversationId: shortThread, text: linkMessage.toLowerCase() });
+    assert.equal(short.status, 200);
+    const afterShort = (await get(`/api/phone-link?userId=${encodeURIComponent(userId)}`)) as {
+      linked: boolean;
+      conversationId: string | null;
+    };
+    assert.equal(afterShort.linked, true);
+    assert.equal(afterShort.conversationId, shortThread);
+
+    const fullThread = "desk:fulllink01";
+    const full = await post("/api/dev/messages", { conversationId: fullThread, text: `link ${userId}` });
+    assert.equal(full.status, 200);
+    const afterFull = (await get(`/api/phone-link?userId=${encodeURIComponent(userId)}`)) as {
+      linked: boolean;
+      conversationId: string | null;
+    };
+    assert.equal(afterFull.linked, true);
+    assert.equal(afterFull.conversationId, fullThread);
   });
 
   async function get(path: string): Promise<unknown> {

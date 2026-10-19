@@ -275,6 +275,8 @@ describe("Photon inbound replies", () => {
       hasHandledInbound: (id: string) => inner.hasHandledInbound(id),
       rememberInbound: (id: string) => inner.rememberInbound(id),
       forgetInbound: (id: string) => inner.forgetInbound(id),
+      rememberLinkCode: (userId: string) => inner.rememberLinkCode(userId),
+      userIdForLinkCode: (code: string) => inner.userIdForLinkCode(code),
       reset: () => inner.reset(),
     };
     const runtime = createRuntime({

@@ -129,6 +129,13 @@ export function createApp(deps: AppDeps): RunningApp {
       .catch(() => undefined);
   }
 
+  function publishCart(cart: Cart) {
+    if (cart.userId) {
+      deps.store.rememberLinkCode(cart.userId);
+    }
+    return publicCart(cart, deps.agentHandle);
+  }
+
   async function routeSend(message: OutboundMessage): Promise<void> {
     if (message.conversationId.startsWith("desk:")) {
       return;
@@ -243,7 +250,7 @@ export function createApp(deps: AppDeps): RunningApp {
       res.status(403).json({ error: "userId does not match the signed-in account." });
       return;
     }
-    res.json({ synthetic: true, readError: bagReadError, carts: scoped.carts.map((cart) => publicCart(cart, deps.agentHandle)) });
+    res.json({ synthetic: true, readError: bagReadError, carts: scoped.carts.map((cart) => publishCart(cart)) });
   });
 
   app.post("/api/carts", settle(async (req, res) => {
@@ -253,6 +260,7 @@ export function createApp(deps: AppDeps): RunningApp {
       res.status(400).json({ error: "userId must be 4–80 letters, numbers, colon, underscore, or dash." });
       return;
     }
+    deps.store.rememberLinkCode(userId);
     const bag = postedBag(body);
     if (!bag) {
       bagReadError = "Couldn't read bag";
@@ -285,7 +293,7 @@ export function createApp(deps: AppDeps): RunningApp {
       }
       await attachImpulse(existing, req.user?.id, "refresh");
       deps.store.saveCart(existing);
-      res.json(publicCart(existing, deps.agentHandle));
+      res.json(publishCart(existing));
       return;
     }
     const demo = body.demo === true || (body.demo === undefined && deps.demoDefault);
@@ -326,7 +334,7 @@ export function createApp(deps: AppDeps): RunningApp {
       }
     }
     deps.store.saveCart(cart);
-    res.status(201).json(publicCart(cart, deps.agentHandle));
+    res.status(201).json(publishCart(cart));
     if (!carrier) {
       refineNecessity(cart.code, bagText, req.user?.id);
     }
@@ -338,7 +346,7 @@ export function createApp(deps: AppDeps): RunningApp {
       res.status(404).json({ error: "Cart not found." });
       return;
     }
-    res.json(publicCart(cart, deps.agentHandle));
+    res.json(publishCart(cart));
   });
 
   app.post("/api/pay", (req, res) => {
@@ -364,7 +372,7 @@ export function createApp(deps: AppDeps): RunningApp {
         res.status(423).json({
           error: "Checkout stays paused until the hold ends.",
           vaultUntil: cart.vaultUntil,
-          cart: publicCart(cart, deps.agentHandle),
+          cart: publishCart(cart),
         });
         return;
       }
@@ -377,7 +385,7 @@ export function createApp(deps: AppDeps): RunningApp {
     syncFreeBandCopy(cart);
     deps.store.saveCart(cart);
     scheduler.disarm(cart.code);
-    res.json(publicCart(cart, deps.agentHandle));
+    res.json(publishCart(cart));
   }));
 
   app.post("/api/carts/:code/sleep", (req, res) => {
@@ -389,14 +397,14 @@ export function createApp(deps: AppDeps): RunningApp {
     if (!offersSleep(cart.scoreBucket)) {
       res.status(409).json({
         error: "Sleep is only for a soft score.",
-        cart: publicCart(cart, deps.agentHandle),
+        cart: publishCart(cart),
       });
       return;
     }
     sleepCart(cart, now(), deps.lockMs, deps.demoReminderMs, "soft");
     deps.store.saveCart(cart);
     scheduler.arm(cart);
-    res.json(publicCart(cart, deps.agentHandle));
+    res.json(publishCart(cart));
   });
 
   app.post("/api/carts/:code/skip-vault", (req, res) => {
@@ -412,7 +420,7 @@ export function createApp(deps: AppDeps): RunningApp {
     skipVault(cart, now());
     deps.store.saveCart(cart);
     scheduler.disarm(cart.code);
-    res.json(publicCart(cart, deps.agentHandle));
+    res.json(publishCart(cart));
   });
 
   app.post("/api/carts/:code/notify", settle(async (req, res) => {
@@ -424,7 +432,7 @@ export function createApp(deps: AppDeps): RunningApp {
     const body = isRecord(req.body) ? req.body : {};
     await pingCart(cart, body.fail === true);
     deps.store.saveCart(cart);
-    res.json(publicCart(cart, deps.agentHandle));
+    res.json(publishCart(cart));
   }));
 
   app.get("/api/phone-link", (req, res) => {
@@ -433,6 +441,7 @@ export function createApp(deps: AppDeps): RunningApp {
       res.status(400).json({ error: "userId is required." });
       return;
     }
+    deps.store.rememberLinkCode(userId);
     const link = deps.store.getPhoneLink(userId);
     res.json({ linked: Boolean(link), conversationId: link?.conversationId ?? null });
   });
@@ -521,7 +530,7 @@ export function createApp(deps: AppDeps): RunningApp {
       res.status(404).json({ error: "Cart not found." });
       return;
     }
-    res.json(publicCart(fresh, deps.agentHandle));
+    res.json(publishCart(fresh));
   }));
 
   app.post("/api/dev/reset", (_req, res) => {

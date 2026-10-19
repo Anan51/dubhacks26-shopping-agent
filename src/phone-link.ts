@@ -2,23 +2,29 @@ import { toDataURL } from "qrcode";
 
 import { formatUsd } from "./format.js";
 import { capItemName, cartItemLines, postedItemNames, readHiddenItemCount } from "./item-name.js";
-import { prefilledText, textSimmerLink, UPGRADE_PROMPT } from "./links.js";
+import { isLinkCode, prefilledText, textSimmerLink, UPGRADE_PROMPT } from "./links.js";
 import { mainItemName } from "./scoring/cartReading.js";
 import type { PhoneLink, Store } from "./store.js";
 import type { Cart, CheckoutPing } from "./types.js";
 
 const USER_ID = /^[A-Za-z0-9:_-]{4,80}$/;
 
-export function parseLinkCommand(text: string): { userId: string | null } | null {
+export function parseLinkCommand(text: string): { userId: string | null; code: string | null } | null {
   const match = text.trim().match(/^link(?:\s+([A-Za-z0-9:_-]{4,80}))?\s*$/i);
-  const userId = match?.[1];
+  const token = match?.[1];
   if (!match) {
     return null;
   }
-  if (userId && !USER_ID.test(userId)) {
+  if (!token) {
+    return { userId: null, code: null };
+  }
+  if (isLinkCode(token)) {
+    return { userId: null, code: token.toUpperCase() };
+  }
+  if (!USER_ID.test(token)) {
     return null;
   }
-  return { userId: userId ?? null };
+  return { userId: token, code: null };
 }
 
 export function isUserId(value: string): boolean {

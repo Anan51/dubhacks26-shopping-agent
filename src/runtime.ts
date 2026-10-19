@@ -56,6 +56,7 @@ export function createRuntime(deps: {
       now: deps.now(),
       demoReminderMs: deps.demoReminderMs,
       loadCart: (code) => deps.store.getCart(code),
+      resolveLinkCode: (code) => deps.store.userIdForLinkCode(code) ?? null,
       resolveCart: (conversationId) => {
         const link = deps.store.findPhoneLinkByConversation(conversationId);
         return cartForThread(deps.store.listCarts(), conversationId, link?.userId ?? null);
