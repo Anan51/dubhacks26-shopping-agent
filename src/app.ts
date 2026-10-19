@@ -199,8 +199,10 @@ export function createApp(deps: AppDeps): RunningApp {
   /**
    * `vetoInFlight` dies with the process. A keyword hold is still visible on the cart,
    * so a restart re-runs that check. No key means the keyword result stands now.
+   * One warning names how many of those carts opened without a Grok check.
    */
   function resumePendingVetoes(): void {
+    let unlockedWithoutKey = 0;
     for (const cart of deps.store.listCarts()) {
       if (!keywordVetoPending(cart) || hasCarrierLock(cart)) {
         continue;
@@ -214,9 +216,17 @@ export function createApp(deps: AppDeps): RunningApp {
           reason: cart.necessityReason ?? keyword.reason,
         });
         deps.store.saveCart(cart);
+        if (!deps.xaiApiKey && keyword.necessary) {
+          unlockedWithoutKey += 1;
+        }
         continue;
       }
       refineNecessity(cart.code, bagText, undefined, true);
+    }
+    if (unlockedWithoutKey > 0) {
+      console.warn(
+        `Unlocked ${unlockedWithoutKey} ${unlockedWithoutKey === 1 ? "cart" : "carts"} without a Grok check because the API key is missing.`,
+      );
     }
   }
 

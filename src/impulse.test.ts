@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { after, before, describe, it } from "node:test";
+import { after, before, describe, it, mock } from "node:test";
 
 import { MongoMemoryServer } from "mongodb-memory-server";
 import mongoose from "mongoose";
@@ -1462,30 +1462,36 @@ describe("refineNecessity holds a keyword-necessary bag for the Grok veto", () =
     }
 
     const resumed = countedGrok();
-    const restarted = await listenGrokApp(resumed.fetchImpl, store);
+    const warn = mock.method(console, "warn", () => undefined);
     try {
-      assert.equal(resumed.calls.count, 1);
-      const still = (await get(restarted.base, `/api/carts/${code}`)) as CartSnap;
-      assert.equal(still.isUnlocked, false);
-      assert.equal(still.necessitySource, "keywords");
-      const during = await post(restarted.base, "/api/pay", { code });
-      assert.equal(during.status, 423);
+      const restarted = await listenGrokApp(resumed.fetchImpl, store);
+      try {
+        assert.equal(warn.mock.calls.length, 0);
+        assert.equal(resumed.calls.count, 1);
+        const still = (await get(restarted.base, `/api/carts/${code}`)) as CartSnap;
+        assert.equal(still.isUnlocked, false);
+        assert.equal(still.necessitySource, "keywords");
+        const during = await post(restarted.base, "/api/pay", { code });
+        assert.equal(during.status, 423);
 
-      resumed.resolve(necessityJson(true, "A cable keeps the phone charging."));
-      const opened = await waitForCart(
-        restarted.base,
-        code,
-        (cart) => cart.necessitySource === "grok" && cart.isUnlocked,
-      );
-      assert.equal(opened.necessity, "necessary");
-      assert.equal(opened.status, "unlocked");
-      const pay = await post(restarted.base, "/api/pay", { code });
-      assert.equal(pay.status, 200);
-      assert.equal((pay.body as { ok: boolean; isUnlocked: boolean }).ok, true);
-      assert.equal(resumed.calls.count, 1);
+        resumed.resolve(necessityJson(true, "A cable keeps the phone charging."));
+        const opened = await waitForCart(
+          restarted.base,
+          code,
+          (cart) => cart.necessitySource === "grok" && cart.isUnlocked,
+        );
+        assert.equal(opened.necessity, "necessary");
+        assert.equal(opened.status, "unlocked");
+        const pay = await post(restarted.base, "/api/pay", { code });
+        assert.equal(pay.status, 200);
+        assert.equal((pay.body as { ok: boolean; isUnlocked: boolean }).ok, true);
+        assert.equal(resumed.calls.count, 1);
+      } finally {
+        resumed.resolve(necessityJson(true, "Cable."));
+        await restarted.close();
+      }
     } finally {
-      resumed.resolve(necessityJson(true, "Cable."));
-      await restarted.close();
+      warn.mock.restore();
     }
   });
 
@@ -1502,19 +1508,29 @@ describe("refineNecessity holds a keyword-necessary bag for the Grok veto", () =
       await hung.close();
     }
 
-    const restarted = await listenApp(store, false);
+    const warn = mock.method(console, "warn", () => undefined);
     try {
-      const opened = (await get(restarted.base, `/api/carts/${code}`)) as CartSnap;
-      assert.equal(opened.necessity, "necessary");
-      assert.equal(opened.necessitySource, "keywords");
-      assert.equal(opened.status, "unlocked");
-      assert.equal(opened.isUnlocked, true);
-      const pay = await post(restarted.base, "/api/pay", { code });
-      assert.equal(pay.status, 200);
-      assert.equal((pay.body as { ok: boolean; isUnlocked: boolean }).ok, true);
+      const restarted = await listenApp(store, false);
+      try {
+        assert.equal(warn.mock.calls.length, 1);
+        assert.equal(
+          warn.mock.calls[0]?.arguments[0],
+          "Unlocked 1 cart without a Grok check because the API key is missing.",
+        );
+        const opened = (await get(restarted.base, `/api/carts/${code}`)) as CartSnap;
+        assert.equal(opened.necessity, "necessary");
+        assert.equal(opened.necessitySource, "keywords");
+        assert.equal(opened.status, "unlocked");
+        assert.equal(opened.isUnlocked, true);
+        const pay = await post(restarted.base, "/api/pay", { code });
+        assert.equal(pay.status, 200);
+        assert.equal((pay.body as { ok: boolean; isUnlocked: boolean }).ok, true);
+      } finally {
+        restarted.stop();
+        await restarted.close();
+      }
     } finally {
-      restarted.stop();
-      await restarted.close();
+      warn.mock.restore();
     }
   });
 });
