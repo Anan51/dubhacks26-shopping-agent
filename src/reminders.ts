@@ -111,7 +111,6 @@ export class ReminderScheduler {
           conversationId: cart.conversationId,
           text,
           agentSenderId: cart.agentSenderId ?? undefined,
-          parentMessageId: cart.lastInboundMessageId ?? undefined,
           idempotencyKey,
         });
       } catch (error) {

@@ -5,7 +5,7 @@ import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 
 import { handleWebhook } from "../api/webhook.js";
-import { assignAuthUser, readAuthUserId, scopedCarts } from "./current-cart.js";
+import { assignAuthUser, cartReadableBy, readAuthUserId, scopedCarts } from "./current-cart.js";
 import { demoReplyOpen, devRoutesOpen, manualUnlockOpen } from "./dev-access.js";
 import { offersSleep } from "./score-band.js";
 import {
@@ -99,6 +99,7 @@ export function createApp(deps: AppDeps): RunningApp {
   const now = deps.now ?? (() => new Date());
   const env = deps.env ?? process.env;
   const backboardEnabled = deps.backboardEnabled ?? readAccountConfig(env).backboardEnabled;
+  const authConfigured = Boolean(deps.readSession);
   const assignedPersonas = new Map<string, PersonaId>();
   /** Keyword-necessary bags at the pause floor stay locked until this Grok veto settles. */
   const vetoInFlight = new Set<string>();
@@ -119,8 +120,8 @@ export function createApp(deps: AppDeps): RunningApp {
    * stays locked while Grok can still veto it. Grok confirming unlocks; a veto locks;
    * a Grok failure or timeout keeps the keyword result and unlocks.
    * No API key, a bag under $40, or a carrier cart means there is no veto call, so the
-   * keyword result applies immediately. A carrier cart is never held: refineNecessity
-   * does not run for it and would never release the hold.
+   * keyword result applies immediately. A carrier cart is never held on create or reuse:
+   * refineNecessity does not run for it and would never release the hold.
    */
   function refineNecessity(code: string, bagText: string, authUserId: string | undefined, holdPay: boolean): void {
     if (holdPay) {
@@ -190,6 +191,13 @@ export function createApp(deps: AppDeps): RunningApp {
     } catch {
       // The necessity result still has to be saved when the impulse refresh fails.
     }
+  }
+
+  function publishCart(cart: Cart) {
+    if (cart.userId) {
+      deps.store.rememberLinkCode(cart.userId);
+    }
+    return publicCart(cart, deps.agentHandle);
   }
 
   async function routeSend(message: OutboundMessage): Promise<void> {
@@ -306,7 +314,7 @@ export function createApp(deps: AppDeps): RunningApp {
       res.status(403).json({ error: "userId does not match the signed-in account." });
       return;
     }
-    res.json({ synthetic: true, readError: bagReadError, carts: scoped.carts.map((cart) => publicCart(cart, deps.agentHandle)) });
+    res.json({ synthetic: true, readError: bagReadError, carts: scoped.carts.map((cart) => publishCart(cart)) });
   });
 
   app.post("/api/carts", settle(async (req, res) => {
@@ -316,6 +324,7 @@ export function createApp(deps: AppDeps): RunningApp {
       res.status(400).json({ error: "userId must be 4–80 letters, numbers, colon, underscore, or dash." });
       return;
     }
+    deps.store.rememberLinkCode(userId);
     const bag = postedBag(body);
     if (!bag) {
       bagReadError = "Couldn't read bag";
@@ -337,23 +346,30 @@ export function createApp(deps: AppDeps): RunningApp {
         assignAuthUser(existing, authUserId);
       }
       rememberHiddenItemCount(existing, bag.hiddenItemCount);
+      const carrier = parseCarrierFacts(body.carrier);
       let refreshNecessity = false;
       let holdPay = false;
       if (existing.necessity == null || keywordVetoPending(existing)) {
         const keyword = keywordNecessity(bagText);
-        holdPay = shouldDeferKeywordUnlock(keyword.necessary, existing.totalCents, true);
+        holdPay = shouldDeferKeywordUnlock(keyword.necessary, existing.totalCents, !carrier);
         applyNecessity(existing, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason }, holdPay);
-        if (!keyword.necessary && existing.totalCents >= PAUSE_FLOOR_CENTS && !existing.lastPing) {
+        if (shouldPingCheckout(keyword.necessary, bag.totalCents, carrier) && !existing.lastPing) {
           await pingCart(existing, false);
         }
-        refreshNecessity = true;
+        refreshNecessity = !carrier;
       }
       await attachImpulse(existing, req.user?.id, "refresh");
+      if (carrier) {
+        applyCarrierLine(existing, carrier);
+        if (carrierVerdict(carrier) === "pass") {
+          scheduler.disarm(existing.code);
+        }
+      }
       deps.store.saveCart(existing);
       if (refreshNecessity) {
         refineNecessity(existing.code, bagText, undefined, holdPay);
       }
-      res.json(publicCart(existing, deps.agentHandle));
+      res.json(publishCart(existing));
       return;
     }
     const demo = body.demo === true || (body.demo === undefined && deps.demoDefault);
@@ -381,7 +397,7 @@ export function createApp(deps: AppDeps): RunningApp {
     const keyword = keywordNecessity(bagText);
     const holdPay = shouldDeferKeywordUnlock(keyword.necessary, bag.totalCents, !carrier);
     applyNecessity(cart, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason }, holdPay);
-    if (!keyword.necessary && bag.totalCents >= PAUSE_FLOOR_CENTS && !(carrier && carrierVerdict(carrier) === "pass")) {
+    if (shouldPingCheckout(keyword.necessary, bag.totalCents, carrier)) {
       await pingCart(cart, false);
     }
     await attachImpulse(cart, req.user?.id, "create");
@@ -395,25 +411,25 @@ export function createApp(deps: AppDeps): RunningApp {
       }
     }
     deps.store.saveCart(cart);
-    res.status(201).json(publicCart(cart, deps.agentHandle));
+    res.status(201).json(publishCart(cart));
     if (!carrier) {
       refineNecessity(cart.code, bagText, req.user?.id, holdPay);
     }
   }));
 
   app.get("/api/carts/:code", (req, res) => {
-    const cart = loadCart(req.params.code);
+    const cart = loadOwnedCart(req, req.params.code);
     if (!cart) {
       res.status(404).json({ error: "Cart not found." });
       return;
     }
-    res.json(publicCart(cart, deps.agentHandle));
+    res.json(publishCart(cart));
   });
 
   app.post("/api/pay", (req, res) => {
     const body = isRecord(req.body) ? req.body : {};
     const code = typeof body.code === "string" ? body.code : "";
-    const cart = loadCart(code);
+    const cart = loadOwnedCart(req, code);
     if (!cart) {
       res.status(404).json({ error: "Cart not found." });
       return;
@@ -436,7 +452,7 @@ export function createApp(deps: AppDeps): RunningApp {
   });
 
   app.post("/api/carts/:code/unlock", settle(async (req, res) => {
-    const cart = loadCart(req.params.code);
+    const cart = loadOwnedCart(req, req.params.code);
     if (!cart) {
       res.status(404).json({ error: "Cart not found." });
       return;
@@ -446,7 +462,7 @@ export function createApp(deps: AppDeps): RunningApp {
         res.status(423).json({
           error: "Checkout stays paused until the hold ends.",
           vaultUntil: cart.vaultUntil,
-          cart: publicCart(cart, deps.agentHandle),
+          cart: publishCart(cart),
         });
         return;
       }
@@ -459,11 +475,11 @@ export function createApp(deps: AppDeps): RunningApp {
     syncFreeBandCopy(cart);
     deps.store.saveCart(cart);
     scheduler.disarm(cart.code);
-    res.json(publicCart(cart, deps.agentHandle));
+    res.json(publishCart(cart));
   }));
 
   app.post("/api/carts/:code/sleep", (req, res) => {
-    const cart = loadCart(req.params.code);
+    const cart = loadOwnedCart(req, req.params.code);
     if (!cart) {
       res.status(404).json({ error: "Cart not found." });
       return;
@@ -471,14 +487,14 @@ export function createApp(deps: AppDeps): RunningApp {
     if (!offersSleep(cart.scoreBucket)) {
       res.status(409).json({
         error: "Sleep is only for a soft score.",
-        cart: publicCart(cart, deps.agentHandle),
+        cart: publishCart(cart),
       });
       return;
     }
     sleepCart(cart, now(), deps.lockMs, deps.demoReminderMs, "soft");
     deps.store.saveCart(cart);
     scheduler.arm(cart);
-    res.json(publicCart(cart, deps.agentHandle));
+    res.json(publishCart(cart));
   });
 
   app.post("/api/carts/:code/skip-vault", (req, res) => {
@@ -494,11 +510,11 @@ export function createApp(deps: AppDeps): RunningApp {
     skipVault(cart, now());
     deps.store.saveCart(cart);
     scheduler.disarm(cart.code);
-    res.json(publicCart(cart, deps.agentHandle));
+    res.json(publishCart(cart));
   });
 
   app.post("/api/carts/:code/notify", settle(async (req, res) => {
-    const cart = loadCart(req.params.code);
+    const cart = loadOwnedCart(req, req.params.code);
     if (!cart) {
       res.status(404).json({ error: "Cart not found." });
       return;
@@ -506,7 +522,7 @@ export function createApp(deps: AppDeps): RunningApp {
     const body = isRecord(req.body) ? req.body : {};
     await pingCart(cart, body.fail === true);
     deps.store.saveCart(cart);
-    res.json(publicCart(cart, deps.agentHandle));
+    res.json(publishCart(cart));
   }));
 
   app.get("/api/phone-link", (req, res) => {
@@ -515,6 +531,7 @@ export function createApp(deps: AppDeps): RunningApp {
       res.status(400).json({ error: "userId is required." });
       return;
     }
+    deps.store.rememberLinkCode(userId);
     const link = deps.store.getPhoneLink(userId);
     res.json({ linked: Boolean(link), conversationId: link?.conversationId ?? null });
   });
@@ -603,7 +620,7 @@ export function createApp(deps: AppDeps): RunningApp {
       res.status(404).json({ error: "Cart not found." });
       return;
     }
-    res.json(publicCart(fresh, deps.agentHandle));
+    res.json(publishCart(fresh));
   }));
 
   app.post("/api/dev/reset", (_req, res) => {
@@ -719,8 +736,37 @@ export function createApp(deps: AppDeps): RunningApp {
           ...(link.agentSenderId ? { agentSenderId: link.agentSenderId } : {}),
           idempotencyKey: `simmer:ping:${cart.code}:${link.linkedAt}`,
         });
+        // The thread is shared. Repoint it at this cart so the next reply
+        // with no code grades this bag, not whichever cart was here before.
+        pointPhoneSession(link.conversationId, cart);
       },
     });
+  }
+
+  function pointPhoneSession(conversationId: string, cart: Cart): void {
+    const existing = deps.store.getSession(conversationId);
+    if (existing?.cartCode === cart.code) {
+      return;
+    }
+    const session: Session = existing ?? {
+      conversationId,
+      cartCode: null,
+      step: "need_code",
+      signals: {},
+      turns: [],
+      lastInboundId: null,
+      signalSource: null,
+      updatedAt: now().toISOString(),
+    };
+    session.cartCode = cart.code;
+    session.step = "need_code";
+    session.signals = { ...cart.signals };
+    if (session.signals.problems) {
+      session.signals.problems = [...session.signals.problems];
+    }
+    session.signalSource = cart.signalSource;
+    session.updatedAt = now().toISOString();
+    deps.store.saveSession(session);
   }
 
   function appendDesk(conversationId: string, text: string, cartCode: string): void {
@@ -807,6 +853,14 @@ export function createApp(deps: AppDeps): RunningApp {
     }
     return deps.store.getCart(code);
   }
+
+  function loadOwnedCart(req: Request, code: string | undefined): Cart | undefined {
+    const cart = loadCart(code);
+    if (!cart || !cartReadableBy(cart, req.user?.id ?? null, authConfigured)) {
+      return undefined;
+    }
+    return cart;
+  }
 }
 
 function seedDecision(cart: Cart): void {
@@ -832,6 +886,14 @@ function keywordVetoPending(cart: Cart): boolean {
     cart.purchaseScore == null &&
     cart.totalCents >= PAUSE_FLOOR_CENTS
   );
+}
+
+function shouldPingCheckout(
+  necessary: boolean,
+  totalCents: number,
+  carrier: ReturnType<typeof parseCarrierFacts>,
+): boolean {
+  return !necessary && totalCents >= PAUSE_FLOOR_CENTS && !(carrier && carrierVerdict(carrier) === "pass");
 }
 
 function applyNecessity(

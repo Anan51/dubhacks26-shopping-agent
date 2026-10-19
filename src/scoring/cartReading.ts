@@ -108,6 +108,11 @@ function scoredItemName(cart: Cart): string {
   return namedScoreName(cart.items) ?? fallback;
 }
 
+/** The item a mixed bag is about. The Photon ask uses the same line as the score. */
+export function mainItemName(cart: Cart): string {
+  return scoredItemName(cart);
+}
+
 function positivePriceCount(items: readonly CartItem[]): number {
   let count = 0;
   for (const item of items) {

@@ -45,15 +45,23 @@ chrome.storage.local.get(["simmerOrigin", "simmerUserId", "simmerAuthOrigin", "s
   const origin = allowedOrigin(stored.simmerOrigin) ?? "http://127.0.0.1:4321";
   const userId = typeof stored.simmerUserId === "string" ? stored.simmerUserId : "";
   const token = typeof stored.simmer_token === "string" ? stored.simmer_token : "";
+  let signedIn = false;
   if (token.length === 0) {
     void load(origin, { kind: "device", userId });
   }
   mountPopupAuth(document.body, stored.simmerAuthOrigin, {
     onAuthChange(account) {
       if (!account) {
-        clearVault();
+        if (signedIn) {
+          signedIn = false;
+          clearVault();
+          return;
+        }
+        // A stored token was rejected before sign-in. Show the same device list as an empty token.
+        void load(origin, { kind: "device", userId });
         return;
       }
+      signedIn = true;
       void load(origin, { kind: "account", account });
     },
   });

@@ -21,6 +21,8 @@ const userSchema = new Schema(
     hourlyRate: { type: Number, default: null },
     weeklyBudget: { type: Number, default: null },
     surveyCompleted: { type: Boolean, default: false },
+    /** Written on a real survey save. Absent until then, including on older documents. */
+    surveySavedAt: { type: Date },
     /** Optional saved goals. Nothing writes this yet; readers treat a missing array as none. */
     goals: {
       type: [

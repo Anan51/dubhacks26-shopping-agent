@@ -275,6 +275,8 @@ describe("Photon inbound replies", () => {
       hasHandledInbound: (id: string) => inner.hasHandledInbound(id),
       rememberInbound: (id: string) => inner.rememberInbound(id),
       forgetInbound: (id: string) => inner.forgetInbound(id),
+      rememberLinkCode: (userId: string) => inner.rememberLinkCode(userId),
+      userIdForLinkCode: (code: string) => inner.userIdForLinkCode(code),
       reset: () => inner.reset(),
     };
     const runtime = createRuntime({
@@ -305,7 +307,7 @@ describe("Photon inbound replies", () => {
     assert.equal(store.hasHandledInbound("pho_msg_before_send"), true);
   });
 
-  it("sends the full unlock reply in one body with or without a parent id", async () => {
+  it("sends the full unlock reply in one plain body", async () => {
     const store = createMemoryStore();
     const cart = startLockedCart({
       items: itemsForBag(["iPad Pro 11"], 79_900, true),
@@ -360,14 +362,12 @@ describe("Photon inbound replies", () => {
     assert.equal(store.getCart("IPAD11")?.reminderFireAt, null);
 
     const posted = await postPhotonBodies(outbound);
-    assert.equal(posted.length, 2);
-    for (const body of posted) {
-      assert.equal(body.content?.text, UNLOCK_REPLY);
-      assert.equal(body.content?.type, "text");
-      assert.notEqual(body.parentMessageId, UNLOCK_REPLY);
-    }
-    assert.equal(posted[0]?.parentMessageId, undefined);
-    assert.equal(posted[1]?.content?.text, posted[0]?.content?.text);
+    assert.equal(posted.length, 1);
+    const body = posted[0];
+    assert.ok(body);
+    assert.equal(body.content?.text, UNLOCK_REPLY);
+    assert.equal(body.content?.type, "text");
+    assert.equal(body.parentMessageId, undefined);
   });
 });
 
@@ -380,12 +380,6 @@ const PHOTON_CONFIG: AgentConfig = {
 };
 
 async function postPhotonBodies(message: OutboundMessage): Promise<{ content?: { text?: string; type?: string }; parentMessageId?: string }[]> {
-  const withoutParent: OutboundMessage = {
-    conversationId: message.conversationId,
-    text: message.text,
-    ...(message.agentSenderId ? { agentSenderId: message.agentSenderId } : {}),
-    idempotencyKey: `${message.idempotencyKey}:plain`,
-  };
   const bodies: { content?: { text?: string; type?: string }; parentMessageId?: string }[] = [];
   const original = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
@@ -398,7 +392,6 @@ async function postPhotonBodies(message: OutboundMessage): Promise<{ content?: {
     });
   };
   try {
-    await assert.rejects(sendPhotonMessage(PHOTON_CONFIG, withoutParent));
     await assert.rejects(sendPhotonMessage(PHOTON_CONFIG, message));
   } finally {
     globalThis.fetch = original;
