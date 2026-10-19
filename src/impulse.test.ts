@@ -1367,6 +1367,156 @@ describe("refineNecessity holds a keyword-necessary bag for the Grok veto", () =
       await running.close();
     }
   });
+
+  it("drops an in-flight veto when carrier facts arrive and ignores the late Grok result", async () => {
+    const passGrok = countedGrok();
+    const passRun = await listenGrokApp(passGrok.fetchImpl);
+    try {
+      const bag = cableAtFloor("user-carrier-during-veto");
+      const created = await post(passRun.base, "/api/carts", bag);
+      assert.equal(created.status, 201);
+      const pending = created.body as CartSnap;
+      assert.equal(pending.isUnlocked, false);
+      assert.equal(passGrok.calls.count, 1);
+      const held = await post(passRun.base, "/api/pay", { code: pending.code });
+      assert.equal(held.status, 423);
+
+      const again = await post(passRun.base, "/api/carts", { ...bag, carrier: CARRIER_PASS });
+      assert.equal(again.status, 200);
+      const open = again.body as CartSnap & { carrierLine?: string | null };
+      assert.equal(open.code, pending.code);
+      assert.equal(open.isUnlocked, true);
+      assert.equal(open.status, "unlocked");
+      assert.equal(open.necessity, "necessary");
+      assert.equal(open.carrierLine, carrierSentence(CARRIER_PASS));
+      assert.equal(passGrok.calls.count, 1);
+      const pay = await post(passRun.base, "/api/pay", { code: pending.code });
+      assert.equal(pay.status, 200);
+      assert.equal((pay.body as { ok: boolean; isUnlocked: boolean }).ok, true);
+      assert.equal((pay.body as { isUnlocked: boolean }).isUnlocked, true);
+
+      passGrok.resolve(necessityJson(false, "Want."));
+      const after = await stayCarrier(passRun.base, pending.code, (cart) => cart.isUnlocked && cart.necessity === "necessary");
+      assert.equal(after.necessitySource, "keywords");
+      assert.equal(after.carrierLine, carrierSentence(CARRIER_PASS));
+      const payAfter = await post(passRun.base, "/api/pay", { code: pending.code });
+      assert.equal(payAfter.status, 200);
+    } finally {
+      passGrok.resolve(necessityJson(false, "Want."));
+      await passRun.close();
+    }
+
+    const waitGrok = countedGrok();
+    const waitRun = await listenGrokApp(waitGrok.fetchImpl);
+    try {
+      const bag = cableAtFloor("user-carrier-wait-during-veto");
+      const created = await post(waitRun.base, "/api/carts", bag);
+      const pending = created.body as CartSnap;
+      assert.equal(created.status, 201);
+      assert.equal(waitGrok.calls.count, 1);
+      const again = await post(waitRun.base, "/api/carts", { ...bag, carrier: CARRIER_WAIT });
+      assert.equal(again.status, 200);
+      const locked = again.body as CartSnap & { carrierLine?: string | null };
+      assert.equal(locked.code, pending.code);
+      assert.equal(locked.isUnlocked, false);
+      assert.equal(locked.status, "locked");
+      assert.equal(locked.necessity, "unnecessary");
+      assert.equal(locked.carrierLine, carrierSentence(CARRIER_WAIT));
+      const pay = await post(waitRun.base, "/api/pay", { code: pending.code });
+      assert.equal(pay.status, 423);
+      assert.equal((pay.body as { ok: boolean; reason: string }).ok, false);
+      assert.equal((pay.body as { reason: string }).reason, "locked");
+
+      waitGrok.resolve(necessityJson(true, "A cable keeps the phone charging."));
+      const after = await stayCarrier(
+        waitRun.base,
+        pending.code,
+        (cart) => cart.isUnlocked === false && cart.necessity === "unnecessary",
+      );
+      assert.equal(after.necessitySource, "keywords");
+      assert.equal(after.status, "locked");
+      assert.equal(after.carrierLine, carrierSentence(CARRIER_WAIT));
+      const payAfter = await post(waitRun.base, "/api/pay", { code: pending.code });
+      assert.equal(payAfter.status, 423);
+    } finally {
+      waitGrok.resolve(necessityJson(true, "A cable keeps the phone charging."));
+      await waitRun.close();
+    }
+  });
+
+  it("re-runs a keyword hold that was still pending when the server restarted", async () => {
+    const store = createMemoryStore();
+    const hung = await listenGrokApp(() => new Promise<Response>(() => undefined), store);
+    let code = "";
+    try {
+      const created = await post(hung.base, "/api/carts", cableAtFloor("user-restart-veto"));
+      assert.equal(created.status, 201);
+      const pending = created.body as CartSnap;
+      code = pending.code;
+      assert.equal(pending.isUnlocked, false);
+      assert.equal(pending.necessitySource, "keywords");
+      const blocked = await post(hung.base, "/api/pay", { code });
+      assert.equal(blocked.status, 423);
+    } finally {
+      await hung.close();
+    }
+
+    const resumed = countedGrok();
+    const restarted = await listenGrokApp(resumed.fetchImpl, store);
+    try {
+      assert.equal(resumed.calls.count, 1);
+      const still = (await get(restarted.base, `/api/carts/${code}`)) as CartSnap;
+      assert.equal(still.isUnlocked, false);
+      assert.equal(still.necessitySource, "keywords");
+      const during = await post(restarted.base, "/api/pay", { code });
+      assert.equal(during.status, 423);
+
+      resumed.resolve(necessityJson(true, "A cable keeps the phone charging."));
+      const opened = await waitForCart(
+        restarted.base,
+        code,
+        (cart) => cart.necessitySource === "grok" && cart.isUnlocked,
+      );
+      assert.equal(opened.necessity, "necessary");
+      assert.equal(opened.status, "unlocked");
+      const pay = await post(restarted.base, "/api/pay", { code });
+      assert.equal(pay.status, 200);
+      assert.equal((pay.body as { ok: boolean; isUnlocked: boolean }).ok, true);
+      assert.equal(resumed.calls.count, 1);
+    } finally {
+      resumed.resolve(necessityJson(true, "Cable."));
+      await restarted.close();
+    }
+  });
+
+  it("unlocks a pending keyword hold on startup when Grok cannot be called", async () => {
+    const store = createMemoryStore();
+    const hung = await listenGrokApp(() => new Promise<Response>(() => undefined), store);
+    let code = "";
+    try {
+      const created = await post(hung.base, "/api/carts", cableAtFloor("user-restart-no-key"));
+      assert.equal(created.status, 201);
+      code = (created.body as CartSnap).code;
+      assert.equal((created.body as CartSnap).isUnlocked, false);
+    } finally {
+      await hung.close();
+    }
+
+    const restarted = await listenApp(store, false);
+    try {
+      const opened = (await get(restarted.base, `/api/carts/${code}`)) as CartSnap;
+      assert.equal(opened.necessity, "necessary");
+      assert.equal(opened.necessitySource, "keywords");
+      assert.equal(opened.status, "unlocked");
+      assert.equal(opened.isUnlocked, true);
+      const pay = await post(restarted.base, "/api/pay", { code });
+      assert.equal(pay.status, 200);
+      assert.equal((pay.body as { ok: boolean; isUnlocked: boolean }).ok, true);
+    } finally {
+      restarted.stop();
+      await restarted.close();
+    }
+  });
 });
 
 function cableAtFloor(userId: string) {
@@ -1412,10 +1562,26 @@ function clearNecessity(store: ReturnType<typeof createMemoryStore>, code: strin
   store.saveCart(stored);
 }
 
+async function stayCarrier(
+  base: string,
+  code: string,
+  still: (cart: CartSnap & { carrierLine?: string | null }) => boolean,
+): Promise<CartSnap & { carrierLine?: string | null }> {
+  const deadline = Date.now() + 300;
+  let latest: CartSnap & { carrierLine?: string | null } | null = null;
+  while (Date.now() < deadline) {
+    latest = (await get(base, `/api/carts/${code}`)) as CartSnap & { carrierLine?: string | null };
+    assert.equal(still(latest), true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.ok(latest);
+  return latest;
+}
+
 async function listenGrokApp(
   fetchImpl: typeof fetch,
+  store: ReturnType<typeof createMemoryStore> = createMemoryStore(),
 ): Promise<{ base: string; store: ReturnType<typeof createMemoryStore>; close: () => Promise<void> }> {
-  const store = createMemoryStore();
   const running = createApp({
     store,
     origin: "http://127.0.0.1",
