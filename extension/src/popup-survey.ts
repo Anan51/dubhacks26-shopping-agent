@@ -87,11 +87,11 @@ export function attachSurvey(
     let formLocked = false;
     try {
       const recentPurchases = readPurchaseRows();
-      if (!recentPurchases) {
+      const hourlyRate = readSurveyAmount(hourly);
+      const weeklyBudget = readSurveyAmount(weekly);
+      if (!recentPurchases || hourlyRate === "invalid" || weeklyBudget === "invalid") {
         return;
       }
-      const hourlyRate = readOptionalMoney(hourly.input.value);
-      const weeklyBudget = readOptionalMoney(weekly.input.value);
       if (hourlyRate === null && weeklyBudget === null && recentPurchases.length === 0) {
         showSaveError("Add an hourly rate, a weekly budget, or a recent purchase.");
         return;
@@ -181,15 +181,33 @@ type PurchaseDraft = {
   note: HTMLParagraphElement;
 };
 
-function moneyField(name: string, labelText: string): { label: HTMLLabelElement; input: HTMLInputElement } {
+function moneyField(name: string, labelText: string): MoneyField {
   const label = document.createElement("label");
   label.textContent = labelText;
   const input = document.createElement("input");
   input.name = name;
   input.type = "text";
   input.inputMode = "decimal";
-  label.append(input);
-  return { label, input };
+  const note = document.createElement("p");
+  note.className = "error field-error";
+  note.hidden = true;
+  label.append(input, note);
+  return { label, input, note };
+}
+
+type MoneyField = { label: HTMLLabelElement; input: HTMLInputElement; note: HTMLParagraphElement };
+
+function readSurveyAmount(field: MoneyField): number | null | "invalid" {
+  field.note.hidden = true;
+  field.note.textContent = "";
+  const raw = field.input.value.trim();
+  const amount = readOptionalMoney(raw);
+  if (raw !== "" && amount === null) {
+    field.note.hidden = false;
+    field.note.textContent = "Enter a number.";
+    return "invalid";
+  }
+  return amount;
 }
 
 function addPurchaseRow(parent: HTMLElement): PurchaseDraft {

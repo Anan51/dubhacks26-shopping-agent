@@ -119,9 +119,52 @@ export async function weeklySpend(userId: string, now = new Date()): Promise<num
   return rows.reduce((sum, row) => sum + (typeof row.price === "number" ? row.price : 0), 0);
 }
 
-export async function surveyWasCompleted(userId: string): Promise<boolean> {
-  const user = await findUser(userId);
-  return user?.surveyCompleted === true;
+/**
+ * True once a real survey has been saved.
+ * `surveySavedAt` is that record. A rate, a weekly budget, or a survey purchase on an older
+ * document sets it the first time this is read, so deleting that data later does not reopen the survey.
+ * `surveyCompleted` alone does not count. This helper had no callers; it now uses the same meaning as GET /onboarding/survey.
+ */
+export async function surveyWasCompleted(userId: string, session?: ClientSession): Promise<boolean> {
+  if (!/^[a-f0-9]{24}$/i.test(userId)) {
+    return false;
+  }
+  const query = User.findById(userId).select("hourlyRate weeklyBudget surveySavedAt");
+  if (session) {
+    query.session(session);
+  }
+  const user = await query;
+  if (!user) {
+    return false;
+  }
+  if (isSurveySavedAt(user.get("surveySavedAt"))) {
+    return true;
+  }
+  const savedData =
+    numberOrNull(user.get("hourlyRate")) !== null ||
+    numberOrNull(user.get("weeklyBudget")) !== null ||
+    (await countSurveyPurchases(userId, session)) > 0;
+  if (!savedData) {
+    return false;
+  }
+  const stamp = User.updateOne({ _id: userId, surveySavedAt: null }, { $currentDate: { surveySavedAt: true } });
+  if (session) {
+    stamp.session(session);
+  }
+  await stamp;
+  return true;
+}
+
+function isSurveySavedAt(value: unknown): boolean {
+  return value instanceof Date && !Number.isNaN(value.getTime());
+}
+
+async function countSurveyPurchases(userId: string, session?: ClientSession): Promise<number> {
+  const query = PurchaseRecord.countDocuments({ userId, source: "survey" });
+  if (session) {
+    query.session(session);
+  }
+  return query;
 }
 
 export async function countRegrets(userId: string, category?: string): Promise<number> {

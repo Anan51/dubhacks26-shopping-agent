@@ -16,7 +16,7 @@ import { InMemoryBackboardClient, type BackboardClient } from "../memory/backboa
 import { createMemoryRuntime } from "../memory/runtime.js";
 import { PurchaseRecord } from "../purchases/model.js";
 import { createPurchaseRouter } from "../purchases/routes.js";
-import { budgetMemoryLine, countRegrets, getBudgetProfile, getHourlyRate, getSavedGoals, getWeeklyBudget, hasRegrettedPurchase, purchaseVoteLine, weeklySpend, writeUserMemoryLine } from "../purchases/service.js";
+import { budgetMemoryLine, countRegrets, getBudgetProfile, getHourlyRate, getSavedGoals, getWeeklyBudget, hasRegrettedPurchase, purchaseVoteLine, surveyWasCompleted, weeklySpend, writeUserMemoryLine } from "../purchases/service.js";
 import { positiveSettingsAmount } from "./service.js";
 import { createOnboardingRouter, createSettingsRouter } from "./routes.js";
 
@@ -509,22 +509,116 @@ describe("onboarding survey", () => {
 
   it("lets a legacy completed flag with no saved survey data submit once", async () => {
     const ada = await signup("ada-legacy-flag@example.com");
-    await User.updateOne({ _id: ada.id }, { $set: { surveyCompleted: true, hourlyRate: null, weeklyBudget: null } });
+    await User.updateOne({ _id: ada.id }, { $set: { surveyCompleted: true, hourlyRate: null, weeklyBudget: null }, $unset: { surveySavedAt: 1 } });
+    assert.equal(await savedAt(ada.id), null);
+    assert.equal(await surveyWasCompleted(ada.id), false);
     assert.equal((await get("/onboarding/survey", ada.token)).body.completed, false);
 
     const empty = await post("/onboarding/survey", { hourlyRate: null, weeklyBudget: null, recentPurchases: [] }, ada.token);
     assert.equal(empty.status, 400);
     assert.equal((await get("/onboarding/survey", ada.token)).body.completed, false);
+    assert.equal(await savedAt(ada.id), null);
     assert.equal(await surveyCompleted(ada.id), true);
 
     const saved = await post("/onboarding/survey", { hourlyRate: null, weeklyBudget: 40, recentPurchases: [] }, ada.token);
     assert.equal(saved.status, 201);
+    assert.ok(await savedAt(ada.id));
+    assert.equal(await surveyWasCompleted(ada.id), true);
     assert.deepEqual((await get("/onboarding/survey", ada.token)).body, { completed: true, hourlyRate: null, weeklyBudget: 40 });
     const again = await post("/onboarding/survey", { hourlyRate: 9, weeklyBudget: 9, recentPurchases: [] }, ada.token);
     assert.equal(again.status, 409);
     assert.equal((await get("/onboarding/survey", ada.token)).body.weeklyBudget, 40);
   });
+
+  it("stays completed after a survey purchase is deleted", async () => {
+    const ada = await signup("ada-delete-survey-purchase@example.com");
+    const saved = await post(
+      "/onboarding/survey",
+      { hourlyRate: null, weeklyBudget: null, recentPurchases: [{ item: "Mug", price: 8, regretted: false }] },
+      ada.token,
+    );
+    assert.equal(saved.status, 201);
+    const purchaseId = (saved.body.purchases as { _id: string }[])[0]?._id;
+    assert.equal(typeof purchaseId, "string");
+    assert.ok(await savedAt(ada.id));
+
+    const removed = await fetch(`${base}/purchases/${purchaseId}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${ada.token}` },
+    });
+    assert.equal(removed.status, 204);
+    assert.equal(await PurchaseRecord.countDocuments({ userId: ada.id, source: "survey" }), 0);
+    assert.deepEqual((await get("/onboarding/survey", ada.token)).body, { completed: true, hourlyRate: null, weeklyBudget: null });
+    assert.equal(await surveyWasCompleted(ada.id), true);
+    const again = await post("/onboarding/survey", { hourlyRate: 12, weeklyBudget: null, recentPurchases: [] }, ada.token);
+    assert.equal(again.status, 409);
+  });
+
+  it("stamps older saved data on read so deleting it does not reopen the survey", async () => {
+    const rated = await signup("ada-old-rate@example.com");
+    await User.updateOne(
+      { _id: rated.id },
+      { $set: { surveyCompleted: true, hourlyRate: 18, weeklyBudget: null }, $unset: { surveySavedAt: 1 } },
+    );
+    assert.equal(await savedAt(rated.id), null);
+    assert.equal((await get("/onboarding/survey", rated.token)).body.completed, true);
+    assert.ok(await savedAt(rated.id));
+    await User.updateOne({ _id: rated.id }, { $set: { hourlyRate: null, weeklyBudget: null } });
+    assert.deepEqual((await get("/onboarding/survey", rated.token)).body, { completed: true, hourlyRate: null, weeklyBudget: null });
+    assert.equal((await post("/onboarding/survey", { hourlyRate: 3, weeklyBudget: null, recentPurchases: [] }, rated.token)).status, 409);
+
+    const bought = await signup("ada-old-purchase@example.com");
+    const row = await PurchaseRecord.create({
+      userId: bought.id,
+      item: "Old mug",
+      category: "home",
+      price: 6,
+      isExample: false,
+      source: "survey",
+      feedback: "kept",
+    });
+    await User.updateOne(
+      { _id: bought.id },
+      { $set: { surveyCompleted: false, hourlyRate: null, weeklyBudget: null }, $unset: { surveySavedAt: 1 } },
+    );
+    assert.equal((await get("/onboarding/survey", bought.token)).body.completed, true);
+    assert.ok(await savedAt(bought.id));
+    const removed = await fetch(`${base}/purchases/${row._id.toString()}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${bought.token}` },
+    });
+    assert.equal(removed.status, 204);
+    assert.equal(await PurchaseRecord.countDocuments({ userId: bought.id, source: "survey" }), 0);
+    assert.equal((await get("/onboarding/survey", bought.token)).body.completed, true);
+    assert.equal(await surveyWasCompleted(bought.id), true);
+  });
+
+  it("stays completed after settings changes and after those values are cleared", async () => {
+    const ada = await signup("ada-clear-settings@example.com");
+    const saved = await post("/onboarding/survey", { hourlyRate: 22, weeklyBudget: 40, recentPurchases: [] }, ada.token);
+    assert.equal(saved.status, 201);
+    const stamped = await savedAt(ada.id);
+    assert.ok(stamped);
+
+    const edited = await patch("/settings", { hourlyRate: 30, weeklyBudget: 55 }, ada.token);
+    assert.equal(edited.status, 200);
+    assert.deepEqual(edited.body, { hourlyRate: 30, weeklyBudget: 55 });
+    assert.equal((await savedAt(ada.id))?.getTime(), stamped.getTime());
+    assert.equal((await get("/onboarding/survey", ada.token)).body.completed, true);
+
+    await User.updateOne({ _id: ada.id }, { $set: { hourlyRate: null, weeklyBudget: null } });
+    assert.deepEqual((await get("/settings", ada.token)).body, { hourlyRate: null, weeklyBudget: null });
+    assert.deepEqual((await get("/onboarding/survey", ada.token)).body, { completed: true, hourlyRate: null, weeklyBudget: null });
+    assert.equal(await surveyWasCompleted(ada.id), true);
+    assert.equal((await post("/onboarding/survey", { hourlyRate: 8, weeklyBudget: 8, recentPurchases: [] }, ada.token)).status, 409);
+  });
 });
+
+async function savedAt(userId: string): Promise<Date | null> {
+  const user = await User.findById(userId).select("surveySavedAt");
+  const value = user?.get("surveySavedAt");
+  return value instanceof Date && !Number.isNaN(value.getTime()) ? value : null;
+}
 
 async function surveyCompleted(userId: string): Promise<boolean> {
   const user = await User.findById(userId);

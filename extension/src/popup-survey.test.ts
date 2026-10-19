@@ -568,7 +568,7 @@ describe("popup survey", () => {
     assert.ok(surveyPost);
     assert.deepEqual(surveyPost.body, { hourlyRate: 42, weeklyBudget: null, recentPurchases: [] });
     assert.equal(surveyPost.authorization, "Bearer jwt-from-signup");
-    assert.equal(document.querySelector("#simmer-survey .error")?.hasAttribute("hidden"), true);
+    assert.equal(document.querySelector("#simmer-survey > .error")?.hasAttribute("hidden"), true);
   });
 
   it("saves an hourly rate and a purchase priced like $12.99", async () => {
@@ -646,7 +646,7 @@ describe("popup survey", () => {
     assert.equal(getsAfter, getsBefore + 1);
     assert.equal(survey.textContent?.includes("A few questions before you shop"), true);
     assert.equal(document.getElementById("simmer-settings")?.hidden, true);
-    assert.equal(document.querySelector("#simmer-survey .error")?.textContent?.includes("Could not save the survey."), false);
+    assert.equal(document.querySelector("#simmer-survey > .error")?.textContent?.includes("Could not save the survey."), false);
   });
 
   it("keeps the survey editable when a 409 refetch still has no saved data", async () => {
@@ -677,7 +677,7 @@ describe("popup survey", () => {
     assert.ok(hourly);
     hourly.value = "99";
     clickButton("Save survey");
-    await waitFor(() => document.querySelector("#simmer-survey .error")?.textContent === "Survey already completed.");
+    await waitFor(() => document.querySelector("#simmer-survey > .error")?.textContent === "Survey already completed.");
     const survey = document.getElementById("simmer-survey");
     const save = [...document.querySelectorAll("button")].find((button) => button.textContent === "Save survey");
     assert.ok(survey);
@@ -697,7 +697,7 @@ describe("popup survey", () => {
     assert.ok(hourly);
     hourly.value = "42";
     clickButton("Save survey");
-    await waitFor(() => document.querySelector("#simmer-survey .error")?.textContent === "404 User not found.");
+    await waitFor(() => document.querySelector("#simmer-survey > .error")?.textContent === "404 User not found.");
     assert.equal(document.getElementById("simmer-survey")?.hidden, false);
   });
 
@@ -717,6 +717,41 @@ describe("popup survey", () => {
     await waitFor(() => document.querySelector(".purchase .row-error")?.textContent === "Enter a price.");
     assert.equal(posted.some((call) => call.url.endsWith("/onboarding/survey")), false);
     assert.equal(document.getElementById("simmer-survey")?.hidden, false);
+  });
+
+  it("does not submit a non-numeric hourly rate or weekly budget", async () => {
+    const posted = installSurveyFetch(dom, () => json({ completed: true, hourlyRate: 42, weeklyBudget: 10, purchases: [] }, 201));
+    await signUpToSurvey(dom);
+    const hourly = document.querySelector<HTMLInputElement>("input[name='hourlyRate']");
+    const weekly = document.querySelector<HTMLInputElement>("input[name='weeklyBudget']");
+    assert.ok(hourly && weekly);
+    hourly.value = "abc";
+    weekly.value = "soon";
+    clickButton("Save survey");
+    const hourlyNote = hourly.parentElement?.querySelector(".field-error");
+    const weeklyNote = weekly.parentElement?.querySelector(".field-error");
+    await waitFor(() => hourlyNote?.textContent === "Enter a number." && weeklyNote?.textContent === "Enter a number.");
+    assert.equal(hourlyNote?.hasAttribute("hidden"), false);
+    assert.equal(weeklyNote?.hasAttribute("hidden"), false);
+    assert.equal(document.querySelector("#simmer-survey > .error")?.textContent, "");
+    assert.equal(posted.some((call) => call.url.endsWith("/onboarding/survey")), false);
+    assert.equal(document.getElementById("simmer-survey")?.hidden, false);
+
+    hourly.value = "42";
+    clickButton("Save survey");
+    await waitFor(() => hourlyNote?.hasAttribute("hidden") === true && weeklyNote?.textContent === "Enter a number.");
+    assert.equal(posted.some((call) => call.url.endsWith("/onboarding/survey")), false);
+
+    weekly.value = "$10";
+    clickButton("Save survey");
+    const survey = document.getElementById("simmer-survey");
+    assert.ok(survey);
+    await waitFor(() => survey.hidden === true && displayOf(survey) === "none");
+    assert.deepEqual(posted.find((call) => call.url.endsWith("/onboarding/survey"))?.body, {
+      hourlyRate: 42,
+      weeklyBudget: 10,
+      recentPurchases: [],
+    });
   });
 
   it("does not complete an empty survey and keeps the section visible", async () => {

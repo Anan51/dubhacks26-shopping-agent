@@ -11,6 +11,7 @@ import {
   getBudgetProfile,
   insertRealPurchase,
   purchaseVoteLine,
+  surveyWasCompleted,
   writeUserMemoryLine,
   type BudgetProfile,
   type PurchaseView,
@@ -42,11 +43,11 @@ const MONEY_CAP = 10_000_000;
 const EMPTY_SURVEY_MESSAGE = "Add an hourly rate, a weekly budget, or a recent purchase.";
 
 export async function readSurvey(userId: string): Promise<SurveyView> {
-  const user = await User.findById(userId).select("hourlyRate weeklyBudget");
+  const [completed, profile] = await Promise.all([surveyWasCompleted(userId), getBudgetProfile(userId)]);
   return {
-    completed: await surveyHasSavedData(userId, user),
-    hourlyRate: asMoney(user?.hourlyRate),
-    weeklyBudget: asMoney(user?.weeklyBudget),
+    completed,
+    hourlyRate: profile.hourlyRate,
+    weeklyBudget: profile.weeklyBudget,
   };
 }
 
@@ -56,6 +57,9 @@ export async function submitSurvey(
   deps: { directory: AccountDirectory; client: BackboardClient; remote: boolean },
 ): Promise<SurveyView & { purchases: PurchaseView[] }> {
   const parsed = parseSurvey(body);
+  if (await surveyWasCompleted(userId)) {
+    throw new SurveyError(409, "Survey already completed.");
+  }
   const session = await mongoose.startSession();
   let purchases: PurchaseView[] = [];
   try {
@@ -65,13 +69,13 @@ export async function submitSurvey(
       if (!existing) {
         throw new SurveyError(404, "User not found.");
       }
-      if (await surveyHasSavedData(userId, existing, session)) {
+      if (isSurveySavedAt(existing.get("surveySavedAt")) || (await surveyHasSavedData(userId, existing, session))) {
         throw new SurveyError(409, "Survey already completed.");
       }
       if (!surveySubmissionHasData(parsed)) {
         throw new SurveyError(400, EMPTY_SURVEY_MESSAGE);
       }
-      await claimSurveySave(userId, existing.surveyCompleted === true, parsed, session);
+      await claimSurveySave(userId, parsed, session);
       for (const purchase of parsed.recentPurchases) {
         purchases.push(
           await insertRealPurchase(
@@ -103,28 +107,23 @@ export async function submitSurvey(
 
 type ParsedSurvey = { hourlyRate: number | null; weeklyBudget: number | null; recentPurchases: SurveyPurchaseInput[] };
 
-/** The flag alone is not completion. A legacy `surveyCompleted: true` document with no rate, budget, or survey purchase can still be saved. */
-async function claimSurveySave(userId: string, flagAlreadySet: boolean, parsed: ParsedSurvey, session: ClientSession): Promise<void> {
-  const saved = { hourlyRate: parsed.hourlyRate, weeklyBudget: parsed.weeklyBudget, surveyCompleted: true as const };
-  if (flagAlreadySet) {
-    const legacy = await User.updateOne(
-      { _id: userId, surveyCompleted: true, hourlyRate: null, weeklyBudget: null },
-      { $set: saved, $currentDate: { updatedAt: true } },
-      { session },
-    );
-    if (legacy.matchedCount !== 1) {
-      throw new SurveyError(409, "Survey already completed.");
-    }
-    return;
-  }
+/** One real save stamps `surveySavedAt`. A legacy flag with no data and no stamp still matches. */
+async function claimSurveySave(userId: string, parsed: ParsedSurvey, session: ClientSession): Promise<void> {
   const claimed = await User.updateOne(
-    { _id: userId, surveyCompleted: { $ne: true } },
-    { $set: saved },
+    { _id: userId, surveySavedAt: null },
+    {
+      $set: { hourlyRate: parsed.hourlyRate, weeklyBudget: parsed.weeklyBudget, surveyCompleted: true },
+      $currentDate: { surveySavedAt: true },
+    },
     { session },
   );
-  if (claimed.modifiedCount !== 1) {
+  if (claimed.matchedCount !== 1) {
     throw new SurveyError(409, "Survey already completed.");
   }
+}
+
+function isSurveySavedAt(value: unknown): boolean {
+  return value instanceof Date && !Number.isNaN(value.getTime());
 }
 
 function surveySubmissionHasData(parsed: ParsedSurvey): boolean {
