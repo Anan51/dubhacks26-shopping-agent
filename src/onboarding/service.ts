@@ -1,9 +1,10 @@
-import mongoose from "mongoose";
+import mongoose, { type ClientSession } from "mongoose";
 
 import type { AccountDirectory } from "../auth/accounts.js";
 import { User } from "../auth/user.js";
 import type { BackboardClient } from "../memory/backboard.js";
 import { isRecord } from "../record.js";
+import { PurchaseRecord } from "../purchases/model.js";
 import {
   budgetMemoryLine,
   categoryForItem,
@@ -38,11 +39,12 @@ export type SurveyPurchaseInput = {
 };
 
 const MONEY_CAP = 10_000_000;
+const EMPTY_SURVEY_MESSAGE = "Add an hourly rate, a weekly budget, or a recent purchase.";
 
 export async function readSurvey(userId: string): Promise<SurveyView> {
-  const user = await User.findById(userId).select("hourlyRate weeklyBudget surveyCompleted");
+  const user = await User.findById(userId).select("hourlyRate weeklyBudget");
   return {
-    completed: user?.surveyCompleted === true,
+    completed: await surveyHasSavedData(userId, user),
     hourlyRate: asMoney(user?.hourlyRate),
     weeklyBudget: asMoney(user?.weeklyBudget),
   };
@@ -63,17 +65,13 @@ export async function submitSurvey(
       if (!existing) {
         throw new SurveyError(404, "User not found.");
       }
-      if (existing.surveyCompleted === true) {
+      if (await surveyHasSavedData(userId, existing, session)) {
         throw new SurveyError(409, "Survey already completed.");
       }
-      const updated = await User.updateOne(
-        { _id: userId, surveyCompleted: { $ne: true } },
-        { $set: { hourlyRate: parsed.hourlyRate, weeklyBudget: parsed.weeklyBudget, surveyCompleted: true } },
-        { session },
-      );
-      if (updated.modifiedCount !== 1) {
-        throw new SurveyError(409, "Survey already completed.");
+      if (!surveySubmissionHasData(parsed)) {
+        throw new SurveyError(400, EMPTY_SURVEY_MESSAGE);
       }
+      await claimSurveySave(userId, existing.surveyCompleted === true, parsed, session);
       for (const purchase of parsed.recentPurchases) {
         purchases.push(
           await insertRealPurchase(
@@ -101,6 +99,52 @@ export async function submitSurvey(
     weeklyBudget: parsed.weeklyBudget,
     purchases,
   };
+}
+
+type ParsedSurvey = { hourlyRate: number | null; weeklyBudget: number | null; recentPurchases: SurveyPurchaseInput[] };
+
+/** The flag alone is not completion. A legacy `surveyCompleted: true` document with no rate, budget, or survey purchase can still be saved. */
+async function claimSurveySave(userId: string, flagAlreadySet: boolean, parsed: ParsedSurvey, session: ClientSession): Promise<void> {
+  const saved = { hourlyRate: parsed.hourlyRate, weeklyBudget: parsed.weeklyBudget, surveyCompleted: true as const };
+  if (flagAlreadySet) {
+    const legacy = await User.updateOne(
+      { _id: userId, surveyCompleted: true, hourlyRate: null, weeklyBudget: null },
+      { $set: saved, $currentDate: { updatedAt: true } },
+      { session },
+    );
+    if (legacy.matchedCount !== 1) {
+      throw new SurveyError(409, "Survey already completed.");
+    }
+    return;
+  }
+  const claimed = await User.updateOne(
+    { _id: userId, surveyCompleted: { $ne: true } },
+    { $set: saved },
+    { session },
+  );
+  if (claimed.modifiedCount !== 1) {
+    throw new SurveyError(409, "Survey already completed.");
+  }
+}
+
+function surveySubmissionHasData(parsed: ParsedSurvey): boolean {
+  return parsed.hourlyRate !== null || parsed.weeklyBudget !== null || parsed.recentPurchases.length > 0;
+}
+
+/** Hourly rate, weekly budget, or at least one purchase stored with source "survey". */
+async function surveyHasSavedData(
+  userId: string,
+  user: { hourlyRate?: unknown; weeklyBudget?: unknown } | null | undefined,
+  session?: ClientSession,
+): Promise<boolean> {
+  if (asMoney(user?.hourlyRate) !== null || asMoney(user?.weeklyBudget) !== null) {
+    return true;
+  }
+  const query = PurchaseRecord.countDocuments({ userId, source: "survey" });
+  if (session) {
+    query.session(session);
+  }
+  return (await query) > 0;
 }
 
 async function rememberSurvey(
