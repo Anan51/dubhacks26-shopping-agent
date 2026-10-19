@@ -92,7 +92,7 @@ function render(current: CartPayload | null): void {
   if (state) {
     state.textContent = glance;
   }
-  paintStatus(glance);
+  paintStatus(glance, items.length > 0);
   if (!list || !empty) {
     return;
   }
@@ -218,10 +218,11 @@ function toGlance(cart: CartPayload): GlanceItem {
 const HELD_STATUS_NOTE = "Reply to Simmer's iMessage to unlock. Simmer will not click Apple's button.";
 const UNLOCKED_STATUS_NOTE = "Unlocked. You can check out. Simmer will not click Apple's button.";
 
-function paintStatus(glance: "Marinating" | "Unlocked" | "Paused"): void {
+function paintStatus(glance: "Marinating" | "Unlocked" | "Paused", hasBag: boolean): void {
   const note = document.getElementById("status-note");
   const unlocked = glance === "Unlocked";
   if (note) {
+    note.hidden = !hasBag;
     note.textContent = unlocked ? UNLOCKED_STATUS_NOTE : HELD_STATUS_NOTE;
   }
   const hero = document.querySelector("header");
