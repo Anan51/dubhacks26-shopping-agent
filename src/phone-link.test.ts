@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { applyTurn } from "./conversation.js";
 import { itemsForBag, startLockedCart } from "./carts.js";
+import { linkCodeForUser, linkPhoneText, pausedLinkLine } from "./links.js";
 import { justificationAsk, notifyCheckout, parseLinkCommand } from "./phone-link.js";
 import { createMemoryStore, type PhoneLink } from "./store.js";
 import type { Cart, CartItem } from "./types.js";
@@ -23,11 +25,81 @@ function cart(): Cart {
   });
 }
 
+const SHOPPER = "user-2557c60f-1111-4111-8111-111111111111";
+const PLACEHOLDER_NUMBER = "+15550001111";
+
 describe("phone link", () => {
   it("reads a one-time link command", () => {
-    assert.deepEqual(parseLinkCommand("link user-demo1"), { userId: "user-demo1" });
-    assert.deepEqual(parseLinkCommand("LINK"), { userId: null });
+    assert.deepEqual(parseLinkCommand("link user-demo1"), { userId: "user-demo1", code: null });
+    assert.deepEqual(parseLinkCommand("LINK"), { userId: null, code: null });
     assert.equal(parseLinkCommand("link my phone please"), null);
+  });
+
+  it("resolves a short code and the old full id to the same shopper", async () => {
+    const store = createMemoryStore();
+    const code = store.rememberLinkCode(SHOPPER);
+    assert.equal(code, linkCodeForUser(SHOPPER));
+    assert.match(code, /^[A-HJ-NP-Z2-9]{6}$/);
+    assert.equal(linkPhoneText(SHOPPER), `link ${code}`);
+
+    const fromShort = await applyTurn({
+      session: null,
+      conversationId: "desk:shortlink1",
+      messageId: "m-short",
+      text: `link ${code.toLowerCase()}`,
+      now: NOW,
+      demoReminderMs: 60_000,
+      loadCart: () => cart(),
+      resolveLinkCode: (token) => store.userIdForLinkCode(token) ?? null,
+    });
+    assert.equal(fromShort.phoneLink?.userId, SHOPPER);
+    assert.equal(fromShort.phoneLink?.conversationId, "desk:shortlink1");
+
+    const fromFull = await applyTurn({
+      session: null,
+      conversationId: "desk:fulllink01",
+      messageId: "m-full",
+      text: `link ${SHOPPER}`,
+      now: NOW,
+      demoReminderMs: 60_000,
+      loadCart: () => cart(),
+      resolveLinkCode: (token) => store.userIdForLinkCode(token) ?? null,
+    });
+    assert.equal(fromFull.phoneLink?.userId, SHOPPER);
+    assert.equal(fromFull.phoneLink?.conversationId, "desk:fulllink01");
+
+    const unknown = await applyTurn({
+      session: null,
+      conversationId: "desk:unknown01",
+      messageId: "m-unknown",
+      text: "link ZZZZZZ",
+      now: NOW,
+      demoReminderMs: 60_000,
+      loadCart: () => cart(),
+      resolveLinkCode: () => null,
+    });
+    assert.equal(unknown.phoneLink, undefined);
+    assert.equal(unknown.reply, "link <userId>");
+  });
+
+  it("names the agent number and a short code, and hides a raw user id", () => {
+    const code = linkCodeForUser(SHOPPER);
+    const linked = pausedLinkLine(`link ${code}`, PLACEHOLDER_NUMBER);
+    assert.equal(linked, `Text link ${code} to ${PLACEHOLDER_NUMBER}.`);
+    assert.equal(linked.includes(SHOPPER), false);
+    assert.equal(linked.includes("iMessage number"), false);
+
+    const noNumber = pausedLinkLine(`link ${code}`, null);
+    assert.equal(noNumber, `Text link ${code} to Simmer on iMessage.`);
+    assert.equal(noNumber.includes(SHOPPER), false);
+
+    const raw = pausedLinkLine(`link ${SHOPPER}`, null);
+    assert.equal(raw, "Text Simmer on iMessage to link this checkout.");
+    assert.equal(raw.includes("user-"), false);
+
+    const numberedRaw = pausedLinkLine(`link ${SHOPPER}`, PLACEHOLDER_NUMBER);
+    assert.equal(numberedRaw, `Text Simmer at ${PLACEHOLDER_NUMBER} to link this checkout.`);
+    assert.equal(numberedRaw.includes(SHOPPER), false);
   });
 
   it("pings a stored thread and falls back to sms plus a QR code", async () => {

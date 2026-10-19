@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { itemsForBag, startLockedCart } from "./carts.js";
-import { currentCarts } from "./current-cart.js";
+import { assignAuthUser, cartReadableBy, currentCarts } from "./current-cart.js";
 import type { Cart } from "./types.js";
 
 function cart(userId: string, code: string, createdAt: string): Cart {
@@ -31,5 +31,20 @@ describe("current carts", () => {
     assert.deepEqual(listed.map((item) => item.code), ["BBBBBB", "CCCCCC"]);
     assert.deepEqual(currentCarts([older, newer], "user-local").map((item) => item.code), ["BBBBBB"]);
     assert.deepEqual(currentCarts([older, newer], "user-missing"), []);
+  });
+
+  it("hides an owned cart from an unresolved session only when auth is configured", () => {
+    const owned = cart("user-local", "AAAAAA", "2026-10-18T00:00:00.000Z");
+    assignAuthUser(owned, "account-a");
+    const anon = cart("user-anon", "BBBBBB", "2026-10-18T00:00:00.000Z");
+
+    assert.equal(cartReadableBy(owned, "account-a", true), true);
+    assert.equal(cartReadableBy(owned, "account-b", true), false);
+    assert.equal(cartReadableBy(anon, "account-a", true), false);
+    assert.equal(cartReadableBy(owned, null, true), false);
+    assert.equal(cartReadableBy(anon, null, true), true);
+    assert.equal(cartReadableBy(owned, null, false), true);
+    assert.equal(cartReadableBy(owned, "account-b", false), true);
+    assert.equal(cartReadableBy(anon, null, false), true);
   });
 });
