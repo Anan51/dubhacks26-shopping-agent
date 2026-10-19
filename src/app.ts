@@ -122,6 +122,8 @@ export function createApp(deps: AppDeps): RunningApp {
    * No API key, a bag under $40, or a carrier cart means there is no veto call, so the
    * keyword result applies immediately. A carrier cart is never held on create or reuse:
    * refineNecessity does not run for it and would never release the hold.
+   * A carrier post also drops a check the earlier non-carrier post already started.
+   * The late result is ignored once the cart has a carrier line.
    */
   function refineNecessity(code: string, bagText: string, authUserId: string | undefined, holdPay: boolean): void {
     if (holdPay) {
@@ -151,7 +153,7 @@ export function createApp(deps: AppDeps): RunningApp {
     necessity: { necessary: boolean; source: "grok" | "keywords"; reason: string },
   ): Promise<void> {
     const current = deps.store.getCart(code);
-    if (!current) {
+    if (!current || hasCarrierLock(current)) {
       return;
     }
     if (necessity.source !== "grok") {
@@ -160,7 +162,7 @@ export function createApp(deps: AppDeps): RunningApp {
       }
       applyNecessity(current, necessity);
       await refreshImpulse(current, authUserId);
-      deps.store.saveCart(current);
+      saveNecessity(current);
       return;
     }
     if (necessity.necessary && !keywordNecessity(bagText).necessary) {
@@ -168,7 +170,7 @@ export function createApp(deps: AppDeps): RunningApp {
     }
     applyNecessity(current, necessity);
     await refreshImpulse(current, authUserId);
-    deps.store.saveCart(current);
+    saveNecessity(current);
   }
 
   async function keepKeywordNecessity(code: string, bagText: string, authUserId: string | undefined): Promise<void> {
@@ -176,13 +178,56 @@ export function createApp(deps: AppDeps): RunningApp {
       return;
     }
     const current = deps.store.getCart(code);
-    if (!current) {
+    if (!current || hasCarrierLock(current)) {
       return;
     }
     const keyword = keywordNecessity(bagText);
     applyNecessity(current, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason });
     await refreshImpulse(current, authUserId);
-    deps.store.saveCart(current);
+    saveNecessity(current);
+  }
+
+  /** Skip the write when a carrier post saved a lock while this check was awaiting. */
+  function saveNecessity(cart: Cart): void {
+    const latest = deps.store.getCart(cart.code);
+    if (!latest || hasCarrierLock(latest)) {
+      return;
+    }
+    deps.store.saveCart(cart);
+  }
+
+  /**
+   * `vetoInFlight` dies with the process. A keyword hold is still visible on the cart,
+   * so a restart re-runs that check. No key means the keyword result stands now.
+   * One warning names how many of those carts opened without a Grok check.
+   */
+  function resumePendingVetoes(): void {
+    let unlockedWithoutKey = 0;
+    for (const cart of deps.store.listCarts()) {
+      if (!keywordVetoPending(cart) || hasCarrierLock(cart)) {
+        continue;
+      }
+      const bagText = cart.items.map((item) => item.name).join("\n");
+      const keyword = keywordNecessity(bagText);
+      if (!shouldDeferKeywordUnlock(keyword.necessary, cart.totalCents, true)) {
+        applyNecessity(cart, {
+          necessary: keyword.necessary,
+          source: "keywords",
+          reason: cart.necessityReason ?? keyword.reason,
+        });
+        deps.store.saveCart(cart);
+        if (!deps.xaiApiKey && keyword.necessary) {
+          unlockedWithoutKey += 1;
+        }
+        continue;
+      }
+      refineNecessity(cart.code, bagText, undefined, true);
+    }
+    if (unlockedWithoutKey > 0) {
+      console.warn(
+        `Unlocked ${unlockedWithoutKey} ${unlockedWithoutKey === 1 ? "cart" : "carts"} without a Grok check because the API key is missing.`,
+      );
+    }
   }
 
   async function refreshImpulse(cart: Cart, authUserId: string | undefined): Promise<void> {
@@ -360,6 +405,7 @@ export function createApp(deps: AppDeps): RunningApp {
       }
       await attachImpulse(existing, req.user?.id, "refresh");
       if (carrier) {
+        vetoInFlight.delete(existing.code);
         applyCarrierLine(existing, carrier);
         if (carrierVerdict(carrier) === "pass") {
           scheduler.disarm(existing.code);
@@ -716,6 +762,8 @@ export function createApp(deps: AppDeps): RunningApp {
     stopCheckIns = () => loop.stop();
   }
 
+  resumePendingVetoes();
+
   return { app, runtime, scheduler, stopCheckIns };
 
   async function pingCart(cart: Cart, fail: boolean): Promise<void> {
@@ -875,6 +923,10 @@ function seedDecision(cart: Cart): void {
   };
   cart.explanation = phraseDecision(cart.decision, signals, null, cart.motiveSources);
   cart.signalSource = null;
+}
+
+function hasCarrierLock(cart: Cart): boolean {
+  return Boolean(cart.carrierLine?.trim());
 }
 
 function keywordVetoPending(cart: Cart): boolean {
