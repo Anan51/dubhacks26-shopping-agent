@@ -22,21 +22,17 @@ export function attachPurchaseHistory(
 ): { show(): void; hide(): void } {
   const style = document.createElement("style");
   style.textContent = [
-    "#simmer-purchases { padding: 0.2rem 0 0.4rem; }",
-    "#simmer-purchases ul { list-style: none; margin: 0.35rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }",
-    "#simmer-purchases li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.4rem; align-items: center; max-width: 100%; box-sizing: border-box; background: #fffaf3; border: 1px solid #eadccb; border-radius: 0.7rem; padding: 0.4rem 0.5rem; }",
+    "#simmer-purchases li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; align-items: center; max-width: 100%; box-sizing: border-box; }",
     "#simmer-purchases .title { flex: 1 1 6rem; min-width: 0; overflow-wrap: anywhere; }",
-    "#simmer-purchases .votes { display: flex; flex-wrap: wrap; gap: 0.25rem; max-width: 100%; }",
-    "#simmer-purchases .confirm, #simmer-purchases .row-error { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 0.25rem; align-items: center; margin: 0; max-width: 100%; }",
-    "#simmer-purchases .confirm[hidden], #simmer-purchases .row-error[hidden] { display: none; }",
-    "#simmer-purchases button { font: inherit; color: #3a2416; border: 1px solid #eadccb; background: #fffaf3; border-radius: 999px; padding: 0.15rem 0.4rem; cursor: pointer; max-width: 100%; }",
-    "#simmer-purchases button[aria-pressed='true'] { background: #8a4b24; border-color: #8a4b24; color: #fffaf3; }",
+    "#simmer-purchases .votes { display: flex; flex-wrap: wrap; gap: 4px; max-width: 100%; }",
+    "#simmer-purchases .confirm, #simmer-purchases .row-error { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 0; max-width: 100%; }",
   ].join("");
   const section = document.createElement("section");
   section.id = "simmer-purchases";
+  section.className = "panel";
   section.hidden = true;
   const heading = document.createElement("p");
-  heading.className = "kicker";
+  heading.className = "card-header";
   heading.textContent = "Past purchases";
   const empty = document.createElement("p");
   empty.className = "fine";

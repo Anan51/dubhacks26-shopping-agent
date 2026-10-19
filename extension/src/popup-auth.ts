@@ -28,21 +28,6 @@ export function mountPopupAuth(
   }
   const origin: string = parsed;
 
-  const style = document.createElement("style");
-  style.textContent = [
-    "#simmer-auth { padding: 0.7rem 0.9rem 0; }",
-    "#simmer-auth form, #simmer-auth .signed, #simmer-settings { display: flex; flex-direction: column; gap: 0.35rem; }",
-    "#simmer-auth input, #simmer-auth button { font: inherit; }",
-    "#simmer-auth input { border: 1px solid #eadccb; border-radius: 0.55rem; padding: 0.35rem 0.45rem; background: #fffaf3; color: inherit; }",
-    "#simmer-auth .row, #simmer-auth .tabs { display: flex; gap: 0.35rem; }",
-    "#simmer-auth form[hidden], #simmer-auth .signed[hidden], #simmer-auth .tabs[hidden], #simmer-settings[hidden] { display: none; }",
-    "#simmer-auth button { background: #8a4b24; color: white; border: 0; border-radius: 999px; padding: 0.35rem 0.7rem; cursor: pointer; }",
-    "#simmer-auth .tabs button { background: transparent; color: inherit; border: 1px solid #eadccb; }",
-    "#simmer-auth .tabs button[aria-selected='true'] { background: #8a4b24; color: white; border-color: #8a4b24; }",
-    "#simmer-auth .error { color: #8a4b24; font-size: 0.75rem; margin: 0; }",
-    "#simmer-settings { padding-bottom: 0.6rem; }",
-  ].join("");
-
   const section = document.createElement("section");
   section.id = "simmer-auth";
 
@@ -54,8 +39,8 @@ export function mountPopupAuth(
   error.hidden = true;
   const row = document.createElement("div");
   row.className = "row";
-  const signup = actionButton("Sign up");
-  const login = actionButton("Sign in");
+  const signup = actionButton("Sign up", "secondary");
+  const login = actionButton("Sign in", "primary");
   row.append(signup, login);
   form.append(email.label, password.label, row, error);
 
@@ -64,7 +49,7 @@ export function mountPopupAuth(
   signed.hidden = true;
   const who = document.createElement("p");
   who.className = "fine";
-  const logout = actionButton("Sign out");
+  const logout = actionButton("Sign out", "secondary");
   signed.append(who, logout);
 
   const tabs = document.createElement("div");
@@ -80,7 +65,13 @@ export function mountPopupAuth(
   const settingsPanel = document.createElement("div");
   settingsPanel.hidden = true;
 
-  section.append(form, signed);
+  const account = document.createElement("div");
+  account.className = "panel";
+  const accountHeader = document.createElement("p");
+  accountHeader.className = "card-header";
+  accountHeader.textContent = "Account";
+  account.append(accountHeader, form, signed);
+  section.append(account);
   let sessionToken: string | null = null;
   let viewEpoch = 0;
   const authorization = async (): Promise<string | null> => {
@@ -96,7 +87,7 @@ export function mountPopupAuth(
     showPurchases();
   }, unauthorized);
   section.append(tabs, purchasesPanel, settingsPanel);
-  parent.prepend(style, section);
+  parent.prepend(section);
   let announcedId: string | null = null;
 
   signup.addEventListener("click", () => {
@@ -281,24 +272,18 @@ export function mountPopupAuth(
 }
 
 function mountAuthServerHint(parent: HTMLElement): void {
-  const style = document.createElement("style");
-  style.textContent = [
-    "#simmer-auth-hint { padding: 0.7rem 0.9rem 0; }",
-    "#simmer-auth-hint p { color: #7a5b45; font-size: 0.78rem; margin: 0 0 0.45rem; }",
-    "#simmer-auth-hint button { font: inherit; background: #8a4b24; color: white; border: 0; border-radius: 999px; padding: 0.35rem 0.7rem; cursor: pointer; }",
-  ].join("");
-
   const section = document.createElement("section");
   section.id = "simmer-auth-hint";
+  section.className = "panel";
   const message = document.createElement("p");
   message.className = "fine";
   message.textContent = AUTH_HINT;
-  const options = actionButton("Options");
+  const options = actionButton("Options", "primary");
   options.addEventListener("click", () => {
     openOptionsPage();
   });
   section.append(message, options);
-  parent.prepend(style, section);
+  parent.prepend(section);
 }
 
 function openOptionsPage(): void {
@@ -319,7 +304,7 @@ function extensionRuntime(): { openOptionsPage?: () => void | Promise<unknown> }
 }
 
 function tabButton(text: string): HTMLButtonElement {
-  const button = actionButton(text);
+  const button = actionButton(text, "secondary");
   button.setAttribute("role", "tab");
   button.setAttribute("aria-selected", "false");
   return button;
@@ -337,9 +322,10 @@ function field(name: string, labelText: string, type: string): { label: HTMLLabe
   return { label, input };
 }
 
-function actionButton(text: string): HTMLButtonElement {
+function actionButton(text: string, kind: "primary" | "secondary"): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
+  button.className = kind === "primary" ? "btn-primary" : "btn-secondary";
   button.textContent = text;
   return button;
 }
