@@ -17,6 +17,7 @@ export function attachSurvey(
   const style = document.createElement("style");
   style.textContent = [
     "#simmer-survey { display: flex; flex-direction: column; gap: 0.35rem; padding-bottom: 0.4rem; }",
+    "#simmer-survey[hidden] { display: none; }",
     "#simmer-survey input { font: inherit; border: 1px solid #eadccb; border-radius: 0.55rem; padding: 0.35rem 0.45rem; background: #fffaf3; color: inherit; }",
     "#simmer-survey .purchase { display: flex; gap: 0.25rem; align-items: center; }",
     "#simmer-survey button { font: inherit; background: #8a4b24; color: white; border: 0; border-radius: 999px; padding: 0.35rem 0.7rem; cursor: pointer; }",
@@ -86,7 +87,13 @@ export function attachSurvey(
     let formLocked = false;
     try {
       const recentPurchases = readPurchaseRows();
-      if (!recentPurchases) {
+      const hourlyRate = readSurveyAmount(hourly);
+      const weeklyBudget = readSurveyAmount(weekly);
+      if (!recentPurchases || hourlyRate === "invalid" || weeklyBudget === "invalid") {
+        return;
+      }
+      if (hourlyRate === null && weeklyBudget === null && recentPurchases.length === 0) {
+        showSaveError("Add an hourly rate, a weekly budget, or a recent purchase.");
         return;
       }
       const response = await authorizedFetch(
@@ -94,8 +101,8 @@ export function attachSurvey(
         {
           method: "POST",
           body: {
-            hourlyRate: readOptionalMoney(hourly.input.value),
-            weeklyBudget: readOptionalMoney(weekly.input.value),
+            hourlyRate,
+            weeklyBudget,
             recentPurchases,
           },
         },
@@ -106,10 +113,17 @@ export function attachSurvey(
         return;
       }
       if (response.status === 409) {
-        formLocked = true;
-        await reloadSurvey();
+        const completed = await reloadSurvey();
+        if (completed === "unauthorized") {
+          return;
+        }
+        if (completed) {
+          formLocked = true;
+          section.hidden = true;
+          onComplete();
+          return;
+        }
         showSaveError(await completedSurveyMessage(response));
-        lockSurveyForm();
         return;
       }
       if (!response.ok) {
@@ -125,23 +139,6 @@ export function attachSurvey(
       if (!formLocked) {
         save.disabled = false;
       }
-    }
-  }
-
-  function lockSurveyForm(): void {
-    hourly.input.disabled = true;
-    weekly.input.disabled = true;
-    hourly.label.hidden = true;
-    weekly.label.hidden = true;
-    purchases.hidden = true;
-    add.disabled = true;
-    add.hidden = true;
-    save.disabled = true;
-    save.hidden = true;
-    for (const row of rows) {
-      row.item.disabled = true;
-      row.price.disabled = true;
-      row.regretted.disabled = true;
     }
   }
 
@@ -184,15 +181,33 @@ type PurchaseDraft = {
   note: HTMLParagraphElement;
 };
 
-function moneyField(name: string, labelText: string): { label: HTMLLabelElement; input: HTMLInputElement } {
+function moneyField(name: string, labelText: string): MoneyField {
   const label = document.createElement("label");
   label.textContent = labelText;
   const input = document.createElement("input");
   input.name = name;
   input.type = "text";
   input.inputMode = "decimal";
-  label.append(input);
-  return { label, input };
+  const note = document.createElement("p");
+  note.className = "error field-error";
+  note.hidden = true;
+  label.append(input, note);
+  return { label, input, note };
+}
+
+type MoneyField = { label: HTMLLabelElement; input: HTMLInputElement; note: HTMLParagraphElement };
+
+function readSurveyAmount(field: MoneyField): number | null | "invalid" {
+  field.note.hidden = true;
+  field.note.textContent = "";
+  const raw = field.input.value.trim();
+  const amount = readOptionalMoney(raw);
+  if (raw !== "" && amount === null) {
+    field.note.hidden = false;
+    field.note.textContent = "Enter a number.";
+    return "invalid";
+  }
+  return amount;
 }
 
 function addPurchaseRow(parent: HTMLElement): PurchaseDraft {

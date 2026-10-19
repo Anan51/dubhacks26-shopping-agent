@@ -1,15 +1,17 @@
-import mongoose from "mongoose";
+import mongoose, { type ClientSession } from "mongoose";
 
 import type { AccountDirectory } from "../auth/accounts.js";
 import { User } from "../auth/user.js";
 import type { BackboardClient } from "../memory/backboard.js";
 import { isRecord } from "../record.js";
+import { PurchaseRecord } from "../purchases/model.js";
 import {
   budgetMemoryLine,
   categoryForItem,
   getBudgetProfile,
   insertRealPurchase,
   purchaseVoteLine,
+  surveyWasCompleted,
   writeUserMemoryLine,
   type BudgetProfile,
   type PurchaseView,
@@ -38,13 +40,14 @@ export type SurveyPurchaseInput = {
 };
 
 const MONEY_CAP = 10_000_000;
+const EMPTY_SURVEY_MESSAGE = "Add an hourly rate, a weekly budget, or a recent purchase.";
 
 export async function readSurvey(userId: string): Promise<SurveyView> {
-  const user = await User.findById(userId).select("hourlyRate weeklyBudget surveyCompleted");
+  const [completed, profile] = await Promise.all([surveyWasCompleted(userId), getBudgetProfile(userId)]);
   return {
-    completed: user?.surveyCompleted === true,
-    hourlyRate: asMoney(user?.hourlyRate),
-    weeklyBudget: asMoney(user?.weeklyBudget),
+    completed,
+    hourlyRate: profile.hourlyRate,
+    weeklyBudget: profile.weeklyBudget,
   };
 }
 
@@ -54,6 +57,9 @@ export async function submitSurvey(
   deps: { directory: AccountDirectory; client: BackboardClient; remote: boolean },
 ): Promise<SurveyView & { purchases: PurchaseView[] }> {
   const parsed = parseSurvey(body);
+  if (await surveyWasCompleted(userId)) {
+    throw new SurveyError(409, "Survey already completed.");
+  }
   const session = await mongoose.startSession();
   let purchases: PurchaseView[] = [];
   try {
@@ -63,17 +69,13 @@ export async function submitSurvey(
       if (!existing) {
         throw new SurveyError(404, "User not found.");
       }
-      if (existing.surveyCompleted === true) {
+      if (isSurveySavedAt(existing.get("surveySavedAt")) || (await surveyHasSavedData(userId, existing, session))) {
         throw new SurveyError(409, "Survey already completed.");
       }
-      const updated = await User.updateOne(
-        { _id: userId, surveyCompleted: { $ne: true } },
-        { $set: { hourlyRate: parsed.hourlyRate, weeklyBudget: parsed.weeklyBudget, surveyCompleted: true } },
-        { session },
-      );
-      if (updated.modifiedCount !== 1) {
-        throw new SurveyError(409, "Survey already completed.");
+      if (!surveySubmissionHasData(parsed)) {
+        throw new SurveyError(400, EMPTY_SURVEY_MESSAGE);
       }
+      await claimSurveySave(userId, parsed, session);
       for (const purchase of parsed.recentPurchases) {
         purchases.push(
           await insertRealPurchase(
@@ -101,6 +103,47 @@ export async function submitSurvey(
     weeklyBudget: parsed.weeklyBudget,
     purchases,
   };
+}
+
+type ParsedSurvey = { hourlyRate: number | null; weeklyBudget: number | null; recentPurchases: SurveyPurchaseInput[] };
+
+/** One real save stamps `surveySavedAt`. A legacy flag with no data and no stamp still matches. */
+async function claimSurveySave(userId: string, parsed: ParsedSurvey, session: ClientSession): Promise<void> {
+  const claimed = await User.updateOne(
+    { _id: userId, surveySavedAt: null },
+    {
+      $set: { hourlyRate: parsed.hourlyRate, weeklyBudget: parsed.weeklyBudget, surveyCompleted: true },
+      $currentDate: { surveySavedAt: true },
+    },
+    { session },
+  );
+  if (claimed.matchedCount !== 1) {
+    throw new SurveyError(409, "Survey already completed.");
+  }
+}
+
+function isSurveySavedAt(value: unknown): boolean {
+  return value instanceof Date && !Number.isNaN(value.getTime());
+}
+
+function surveySubmissionHasData(parsed: ParsedSurvey): boolean {
+  return parsed.hourlyRate !== null || parsed.weeklyBudget !== null || parsed.recentPurchases.length > 0;
+}
+
+/** Hourly rate, weekly budget, or at least one purchase stored with source "survey". */
+async function surveyHasSavedData(
+  userId: string,
+  user: { hourlyRate?: unknown; weeklyBudget?: unknown } | null | undefined,
+  session?: ClientSession,
+): Promise<boolean> {
+  if (asMoney(user?.hourlyRate) !== null || asMoney(user?.weeklyBudget) !== null) {
+    return true;
+  }
+  const query = PurchaseRecord.countDocuments({ userId, source: "survey" });
+  if (session) {
+    query.session(session);
+  }
+  return (await query) > 0;
 }
 
 async function rememberSurvey(

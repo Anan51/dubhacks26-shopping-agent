@@ -35,6 +35,7 @@ export function mountPopupAuth(
     "#simmer-auth input, #simmer-auth button { font: inherit; }",
     "#simmer-auth input { border: 1px solid #eadccb; border-radius: 0.55rem; padding: 0.35rem 0.45rem; background: #fffaf3; color: inherit; }",
     "#simmer-auth .row, #simmer-auth .tabs { display: flex; gap: 0.35rem; }",
+    "#simmer-auth form[hidden], #simmer-auth .signed[hidden], #simmer-auth .tabs[hidden], #simmer-settings[hidden] { display: none; }",
     "#simmer-auth button { background: #8a4b24; color: white; border: 0; border-radius: 999px; padding: 0.35rem 0.7rem; cursor: pointer; }",
     "#simmer-auth .tabs button { background: transparent; color: inherit; border: 1px solid #eadccb; }",
     "#simmer-auth .tabs button[aria-selected='true'] { background: #8a4b24; color: white; border-color: #8a4b24; }",

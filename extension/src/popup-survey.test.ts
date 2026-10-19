@@ -1,14 +1,19 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { JSDOM } from "jsdom";
 
 import { mountPopupAuth } from "./popup-auth.js";
 
+const popupHtml = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../popup.html"), "utf8");
+
 const stored: Record<string, unknown> = {};
 
 describe("popup survey", () => {
-  const dom = new JSDOM("<!doctype html><html><body></body></html>");
+  const dom = new JSDOM(popupHtml, { url: "http://127.0.0.1:4321/" });
   const previousDocument = globalThis.document;
   const previousFetch = globalThis.fetch;
   const previousChrome = (globalThis as { chrome?: typeof chrome }).chrome;
@@ -173,8 +178,11 @@ describe("popup survey", () => {
     password.value = "correct horse battery";
     [...document.querySelectorAll("button")].find((button) => button.textContent === "Sign up")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
     await waitFor(() => document.getElementById("simmer-survey")?.hidden === false);
+    const hourly = document.querySelector<HTMLInputElement>("input[name='hourlyRate']");
     const save = [...document.querySelectorAll("button")].find((button) => button.textContent === "Save survey");
+    assert.ok(hourly);
     assert.ok(save instanceof dom.window.HTMLButtonElement);
+    hourly.value = "1";
     save.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
     await waitFor(() => save.disabled);
     assert.equal(save.disabled, true);
@@ -553,12 +561,14 @@ describe("popup survey", () => {
     assert.ok(hourly);
     hourly.value = "42";
     clickButton("Save survey");
-    await waitFor(() => document.getElementById("simmer-survey")?.hidden === true);
+    const savedSurvey = document.getElementById("simmer-survey");
+    assert.ok(savedSurvey);
+    await waitFor(() => savedSurvey.hidden === true && displayOf(savedSurvey) === "none");
     const surveyPost = posted.find((call) => call.url.endsWith("/onboarding/survey"));
     assert.ok(surveyPost);
     assert.deepEqual(surveyPost.body, { hourlyRate: 42, weeklyBudget: null, recentPurchases: [] });
     assert.equal(surveyPost.authorization, "Bearer jwt-from-signup");
-    assert.equal(document.querySelector("#simmer-survey .error")?.hasAttribute("hidden"), true);
+    assert.equal(document.querySelector("#simmer-survey > .error")?.hasAttribute("hidden"), true);
   });
 
   it("saves an hourly rate and a purchase priced like $12.99", async () => {
@@ -596,7 +606,7 @@ describe("popup survey", () => {
     });
   });
 
-  it("reloads the survey and says it is already completed on 409", async () => {
+  it("hides the whole survey when a 409 refetch says it is already completed", async () => {
     globalThis.document = dom.window.document;
     installChrome();
     const calls: { url: string; method: string }[] = [];
@@ -629,22 +639,55 @@ describe("popup survey", () => {
     assert.ok(hourly);
     hourly.value = "99";
     clickButton("Save survey");
-    await waitFor(() => document.querySelector("#simmer-survey .error")?.textContent === "Survey already completed.");
+    const survey = document.getElementById("simmer-survey");
+    assert.ok(survey);
+    await waitFor(() => survey.hidden === true && displayOf(survey) === "none" && document.getElementById("simmer-purchases")?.hidden === false);
     const getsAfter = calls.filter((call) => call.url.endsWith("/onboarding/survey") && call.method === "GET").length;
     assert.equal(getsAfter, getsBefore + 1);
-    const surveyError = document.querySelector("#simmer-survey .error");
-    assert.equal(surveyError?.hasAttribute("hidden"), false);
-    assert.equal(surveyError?.textContent?.includes("Could not save the survey."), false);
-    const savedNote = [...document.querySelectorAll("#simmer-settings p")].find((node) => node.textContent === "Saved.");
-    assert.equal(savedNote?.hasAttribute("hidden"), true);
+    assert.equal(survey.textContent?.includes("A few questions before you shop"), true);
     assert.equal(document.getElementById("simmer-settings")?.hidden, true);
-    assert.equal(document.getElementById("simmer-purchases")?.hidden, true);
-    assert.equal(document.getElementById("simmer-survey")?.hidden, false);
+    assert.equal(document.querySelector("#simmer-survey > .error")?.textContent?.includes("Could not save the survey."), false);
+  });
+
+  it("keeps the survey editable when a 409 refetch still has no saved data", async () => {
+    globalThis.document = dom.window.document;
+    installChrome();
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/auth/me")) {
+        return json({ error: "Authentication required." }, 401);
+      }
+      if (url.endsWith("/auth/signup")) {
+        return json({ user: { id: "user-1", email: "ada@example.com" }, token: "jwt-from-signup" });
+      }
+      if (url.endsWith("/onboarding/survey") && method === "POST") {
+        return json({ error: "Survey already completed." }, 409);
+      }
+      if (url.endsWith("/onboarding/survey")) {
+        return json({ completed: false, hourlyRate: null, weeklyBudget: null });
+      }
+      if (url.includes("/purchases/history")) {
+        return json({ purchases: [] });
+      }
+      return json({ error: "missing" }, 404);
+    }) as typeof fetch;
+    await signUpToSurvey(dom);
+    const hourly = document.querySelector<HTMLInputElement>("input[name='hourlyRate']");
+    assert.ok(hourly);
+    hourly.value = "99";
+    clickButton("Save survey");
+    await waitFor(() => document.querySelector("#simmer-survey > .error")?.textContent === "Survey already completed.");
+    const survey = document.getElementById("simmer-survey");
     const save = [...document.querySelectorAll("button")].find((button) => button.textContent === "Save survey");
+    assert.ok(survey);
     assert.ok(save instanceof dom.window.HTMLButtonElement);
-    assert.equal(save.hidden, true);
-    assert.equal(save.disabled, true);
-    assert.equal(hourly.hidden || hourly.disabled, true);
+    assert.equal(survey.hidden, false);
+    assert.equal(displayOf(survey), "flex");
+    assert.equal(save.hidden, false);
+    assert.equal(save.disabled, false);
+    assert.equal(hourly.disabled, false);
+    assert.equal(document.getElementById("simmer-purchases")?.hidden, true);
   });
 
   it("shows the server status and error when the survey save is refused", async () => {
@@ -654,7 +697,7 @@ describe("popup survey", () => {
     assert.ok(hourly);
     hourly.value = "42";
     clickButton("Save survey");
-    await waitFor(() => document.querySelector("#simmer-survey .error")?.textContent === "404 User not found.");
+    await waitFor(() => document.querySelector("#simmer-survey > .error")?.textContent === "404 User not found.");
     assert.equal(document.getElementById("simmer-survey")?.hidden, false);
   });
 
@@ -674,6 +717,203 @@ describe("popup survey", () => {
     await waitFor(() => document.querySelector(".purchase .row-error")?.textContent === "Enter a price.");
     assert.equal(posted.some((call) => call.url.endsWith("/onboarding/survey")), false);
     assert.equal(document.getElementById("simmer-survey")?.hidden, false);
+  });
+
+  it("does not submit a non-numeric hourly rate or weekly budget", async () => {
+    const posted = installSurveyFetch(dom, () => json({ completed: true, hourlyRate: 42, weeklyBudget: 10, purchases: [] }, 201));
+    await signUpToSurvey(dom);
+    const hourly = document.querySelector<HTMLInputElement>("input[name='hourlyRate']");
+    const weekly = document.querySelector<HTMLInputElement>("input[name='weeklyBudget']");
+    assert.ok(hourly && weekly);
+    hourly.value = "abc";
+    weekly.value = "soon";
+    clickButton("Save survey");
+    const hourlyNote = hourly.parentElement?.querySelector(".field-error");
+    const weeklyNote = weekly.parentElement?.querySelector(".field-error");
+    await waitFor(() => hourlyNote?.textContent === "Enter a number." && weeklyNote?.textContent === "Enter a number.");
+    assert.equal(hourlyNote?.hasAttribute("hidden"), false);
+    assert.equal(weeklyNote?.hasAttribute("hidden"), false);
+    assert.equal(document.querySelector("#simmer-survey > .error")?.textContent, "");
+    assert.equal(posted.some((call) => call.url.endsWith("/onboarding/survey")), false);
+    assert.equal(document.getElementById("simmer-survey")?.hidden, false);
+
+    hourly.value = "42";
+    clickButton("Save survey");
+    await waitFor(() => hourlyNote?.hasAttribute("hidden") === true && weeklyNote?.textContent === "Enter a number.");
+    assert.equal(posted.some((call) => call.url.endsWith("/onboarding/survey")), false);
+
+    weekly.value = "$10";
+    clickButton("Save survey");
+    const survey = document.getElementById("simmer-survey");
+    assert.ok(survey);
+    await waitFor(() => survey.hidden === true && displayOf(survey) === "none");
+    assert.deepEqual(posted.find((call) => call.url.endsWith("/onboarding/survey"))?.body, {
+      hourlyRate: 42,
+      weeklyBudget: 10,
+      recentPurchases: [],
+    });
+  });
+
+  it("does not complete an empty survey and keeps the section visible", async () => {
+    const posted = installSurveyFetch(dom, () => json({ completed: true, hourlyRate: null, weeklyBudget: null, purchases: [] }, 201));
+    await signUpToSurvey(dom);
+    const survey = document.getElementById("simmer-survey");
+    assert.ok(survey);
+    assert.equal(displayOf(survey), "flex");
+    clickButton("Add a recent purchase");
+    clickButton("Save survey");
+    await waitFor(() => document.querySelector("#simmer-survey > .error")?.textContent === "Add an hourly rate, a weekly budget, or a recent purchase.");
+    assert.equal(posted.some((call) => call.url.endsWith("/onboarding/survey")), false);
+    assert.equal(survey.hidden, false);
+    assert.equal(displayOf(survey), "flex");
+    assert.equal(document.getElementById("simmer-purchases")?.hidden, true);
+  });
+
+  it("hides the survey after only a weekly budget or only a past purchase", async () => {
+    const posted = installSurveyFetch(dom, () => json({ completed: true, hourlyRate: null, weeklyBudget: 40, purchases: [] }, 201));
+    await signUpToSurvey(dom);
+    const weekly = document.querySelector<HTMLInputElement>("input[name='weeklyBudget']");
+    assert.ok(weekly);
+    weekly.value = "40";
+    clickButton("Save survey");
+    const survey = document.getElementById("simmer-survey");
+    assert.ok(survey);
+    await waitFor(() => survey.hidden === true && displayOf(survey) === "none");
+    assert.deepEqual(posted.find((call) => call.url.endsWith("/onboarding/survey"))?.body, {
+      hourlyRate: null,
+      weeklyBudget: 40,
+      recentPurchases: [],
+    });
+
+    document.body.replaceChildren();
+    const purchasePosts = installSurveyFetch(dom, () => json({ completed: true, hourlyRate: null, weeklyBudget: null, purchases: [] }, 201));
+    await signUpToSurvey(dom);
+    clickButton("Add a recent purchase");
+    const item = document.querySelector<HTMLInputElement>("input[aria-label='Recent purchase item']");
+    const price = document.querySelector<HTMLInputElement>("input[aria-label='Recent purchase price']");
+    assert.ok(item && price);
+    item.value = "Mug";
+    price.value = "8";
+    clickButton("Save survey");
+    const purchaseSurvey = document.getElementById("simmer-survey");
+    assert.ok(purchaseSurvey);
+    await waitFor(() => purchaseSurvey.hidden === true && displayOf(purchaseSurvey) === "none");
+    assert.deepEqual(purchasePosts.find((call) => call.url.endsWith("/onboarding/survey"))?.body, {
+      hourlyRate: null,
+      weeklyBudget: null,
+      recentPurchases: [{ item: "Mug", price: 8, regretted: false }],
+    });
+  });
+
+  it("shows the survey when the server still has no saved data", async () => {
+    globalThis.document = dom.window.document;
+    stored.simmer_token = "jwt-from-signup";
+    installChrome();
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/auth/me")) {
+        return json({ user: { id: "user-1", email: "ada@example.com" } });
+      }
+      if (url.endsWith("/onboarding/survey")) {
+        return json({ completed: false, hourlyRate: null, weeklyBudget: null });
+      }
+      if (url.includes("/purchases/history")) {
+        return json({ purchases: [] });
+      }
+      return json({ error: "missing" }, 404);
+    }) as typeof fetch;
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    mountPopupAuth(parent, "http://127.0.0.1:4321");
+    await waitFor(() => document.getElementById("simmer-survey")?.hidden === false);
+    const survey = document.getElementById("simmer-survey");
+    assert.ok(survey);
+    assert.equal(displayOf(survey), "flex");
+    assert.equal(survey.textContent?.includes("A few questions before you shop"), true);
+    assert.equal(document.getElementById("simmer-purchases")?.hidden, true);
+  });
+
+  it("keeps the survey section display none after a real submit and on a fresh open", async () => {
+    globalThis.document = dom.window.document;
+    installChrome();
+    const probe = document.createElement("ul");
+    document.body.append(probe);
+    assert.equal(displayOf(probe), "flex");
+    probe.remove();
+
+    let completed = false;
+    let hourlyRate: number | null = null;
+    let weeklyBudget: number | null = null;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/auth/me")) {
+        if (stored.simmer_token === "jwt-from-signup") {
+          return json({ user: { id: "user-1", email: "ada@example.com" } });
+        }
+        return json({ error: "Authentication required." }, 401);
+      }
+      if (url.endsWith("/auth/signup")) {
+        return json({ user: { id: "user-1", email: "ada@example.com" }, token: "jwt-from-signup" });
+      }
+      if (url.endsWith("/onboarding/survey") && method === "POST") {
+        const body = JSON.parse(String(init?.body)) as { hourlyRate: number | null; weeklyBudget: number | null };
+        completed = true;
+        hourlyRate = body.hourlyRate;
+        weeklyBudget = body.weeklyBudget;
+        return json({ completed: true, hourlyRate, weeklyBudget, purchases: [] }, 201);
+      }
+      if (url.endsWith("/onboarding/survey")) {
+        return json({ completed, hourlyRate, weeklyBudget });
+      }
+      if (url.includes("/purchases/history")) {
+        return json({ purchases: [] });
+      }
+      return json({ error: "missing" }, 404);
+    }) as typeof fetch;
+
+    await signUpToSurvey(dom);
+    const survey = document.getElementById("simmer-survey");
+    const form = document.querySelector("#simmer-auth form");
+    const tabs = document.querySelector("#simmer-auth .tabs");
+    const signed = document.querySelector("#simmer-auth .signed");
+    const settings = document.getElementById("simmer-settings");
+    const purchases = document.getElementById("simmer-purchases");
+    assert.ok(survey && form && tabs && signed && settings && purchases);
+    assert.equal(displayOf(survey), "flex");
+    assert.equal(survey.textContent?.includes("A few questions before you shop"), true);
+    assert.equal(displayOf(form), "none");
+    assert.equal(displayOf(tabs), "none");
+    assert.equal(displayOf(signed), "flex");
+    assert.equal(displayOf(settings), "none");
+    const rowError = document.createElement("p");
+    rowError.className = "row-error";
+    rowError.hidden = true;
+    rowError.textContent = "Could not remove that purchase.";
+    purchases.append(rowError);
+    assert.equal(displayOf(rowError), "none");
+
+    const hourly = document.querySelector<HTMLInputElement>("input[name='hourlyRate']");
+    assert.ok(hourly);
+    hourly.value = "42";
+    clickButton("Save survey");
+    await waitFor(() => survey.hidden === true && displayOf(survey) === "none" && document.getElementById("simmer-purchases")?.hidden === false);
+    assert.equal(survey.textContent?.includes("A few questions before you shop"), true);
+    assert.equal(survey.textContent?.includes("Save survey"), true);
+
+    document.body.replaceChildren();
+    const again = document.createElement("div");
+    document.body.append(again);
+    mountPopupAuth(again, "http://127.0.0.1:4321");
+    await waitFor(() => {
+      const reopened = document.getElementById("simmer-survey");
+      return document.getElementById("simmer-purchases")?.hidden === false && reopened !== null && displayOf(reopened) === "none";
+    });
+    const reopened = document.getElementById("simmer-survey");
+    assert.ok(reopened);
+    assert.equal(reopened.hidden, true);
+    assert.equal(displayOf(reopened), "none");
+    assert.equal(reopened.textContent?.includes("A few questions before you shop"), true);
   });
 
 });
@@ -727,6 +967,12 @@ async function signUpToSurvey(dom: JSDOM): Promise<void> {
   password.value = "correct horse battery";
   clickButton("Sign up");
   await waitFor(() => document.getElementById("simmer-survey")?.hidden === false);
+}
+
+function displayOf(element: Element): string {
+  const view = element.ownerDocument.defaultView;
+  assert.ok(view);
+  return view.getComputedStyle(element).display;
 }
 
 function clickButton(label: string): void {
