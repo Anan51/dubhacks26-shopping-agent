@@ -101,6 +101,8 @@ export function createApp(deps: AppDeps): RunningApp {
   const backboardEnabled = deps.backboardEnabled ?? readAccountConfig(env).backboardEnabled;
   const authConfigured = Boolean(deps.readSession);
   const assignedPersonas = new Map<string, PersonaId>();
+  /** Keyword-necessary bags at the pause floor stay locked until this Grok veto settles. */
+  const vetoInFlight = new Set<string>();
   let bagReadError: string | null = null;
   const extractOptions = {
     ...(deps.xaiApiKey ? { apiKey: deps.xaiApiKey } : {}),
@@ -109,24 +111,86 @@ export function createApp(deps: AppDeps): RunningApp {
     ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
   };
 
-  function refineNecessity(code: string, bagText: string, authUserId?: string): void {
+  function shouldDeferKeywordUnlock(necessary: boolean, totalCents: number, refineWillRun: boolean): boolean {
+    return refineWillRun && Boolean(deps.xaiApiKey) && necessary && totalCents >= PAUSE_FLOOR_CENTS;
+  }
+
+  /**
+   * Keyword result is recorded immediately. A necessary bag at or above the pause floor
+   * stays locked while Grok can still veto it. Grok confirming unlocks; a veto locks;
+   * a Grok failure or timeout keeps the keyword result and unlocks.
+   * No API key, a bag under $40, or a carrier cart means there is no veto call, so the
+   * keyword result applies immediately. A carrier cart is never held on create or reuse:
+   * refineNecessity does not run for it and would never release the hold.
+   */
+  function refineNecessity(code: string, bagText: string, authUserId: string | undefined, holdPay: boolean): void {
+    if (holdPay) {
+      if (vetoInFlight.has(code)) {
+        return;
+      }
+      vetoInFlight.add(code);
+    }
     void classifyNecessity(bagText, extractOptions)
       .then(async (necessity) => {
-        if (necessity.source !== "grok") {
-          return;
-        }
-        const current = deps.store.getCart(code);
-        if (!current) {
-          return;
-        }
-        if (necessity.necessary && !keywordNecessity(bagText).necessary) {
-          return;
-        }
-        applyNecessity(current, necessity);
-        await attachImpulse(current, authUserId, "refresh");
-        deps.store.saveCart(current);
+        await commitNecessity(code, bagText, authUserId, necessity);
       })
-      .catch(() => undefined);
+      .catch(async () => {
+        await keepKeywordNecessity(code, bagText, authUserId);
+      })
+      .finally(() => {
+        if (holdPay) {
+          vetoInFlight.delete(code);
+        }
+      });
+  }
+
+  async function commitNecessity(
+    code: string,
+    bagText: string,
+    authUserId: string | undefined,
+    necessity: { necessary: boolean; source: "grok" | "keywords"; reason: string },
+  ): Promise<void> {
+    const current = deps.store.getCart(code);
+    if (!current) {
+      return;
+    }
+    if (necessity.source !== "grok") {
+      if (!vetoInFlight.has(code)) {
+        return;
+      }
+      applyNecessity(current, necessity);
+      await refreshImpulse(current, authUserId);
+      deps.store.saveCart(current);
+      return;
+    }
+    if (necessity.necessary && !keywordNecessity(bagText).necessary) {
+      return;
+    }
+    applyNecessity(current, necessity);
+    await refreshImpulse(current, authUserId);
+    deps.store.saveCart(current);
+  }
+
+  async function keepKeywordNecessity(code: string, bagText: string, authUserId: string | undefined): Promise<void> {
+    if (!vetoInFlight.has(code)) {
+      return;
+    }
+    const current = deps.store.getCart(code);
+    if (!current) {
+      return;
+    }
+    const keyword = keywordNecessity(bagText);
+    applyNecessity(current, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason });
+    await refreshImpulse(current, authUserId);
+    deps.store.saveCart(current);
+  }
+
+  async function refreshImpulse(cart: Cart, authUserId: string | undefined): Promise<void> {
+    try {
+      await attachImpulse(cart, authUserId, "refresh");
+    } catch {
+      // The necessity result still has to be saved when the impulse refresh fails.
+    }
   }
 
   function publishCart(cart: Cart) {
@@ -283,16 +347,16 @@ export function createApp(deps: AppDeps): RunningApp {
       }
       rememberHiddenItemCount(existing, bag.hiddenItemCount);
       const carrier = parseCarrierFacts(body.carrier);
-      if (existing.necessity == null) {
+      let refreshNecessity = false;
+      let holdPay = false;
+      if (existing.necessity == null || keywordVetoPending(existing)) {
         const keyword = keywordNecessity(bagText);
-        applyNecessity(existing, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason });
+        holdPay = shouldDeferKeywordUnlock(keyword.necessary, existing.totalCents, !carrier);
+        applyNecessity(existing, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason }, holdPay);
         if (shouldPingCheckout(keyword.necessary, bag.totalCents, carrier) && !existing.lastPing) {
           await pingCart(existing, false);
         }
-        deps.store.saveCart(existing);
-        if (!carrier) {
-          refineNecessity(existing.code, bagText);
-        }
+        refreshNecessity = !carrier;
       }
       await attachImpulse(existing, req.user?.id, "refresh");
       if (carrier) {
@@ -302,6 +366,9 @@ export function createApp(deps: AppDeps): RunningApp {
         }
       }
       deps.store.saveCart(existing);
+      if (refreshNecessity) {
+        refineNecessity(existing.code, bagText, undefined, holdPay);
+      }
       res.json(publishCart(existing));
       return;
     }
@@ -328,7 +395,8 @@ export function createApp(deps: AppDeps): RunningApp {
     cart.personaId = persona.id;
     const carrier = parseCarrierFacts(body.carrier);
     const keyword = keywordNecessity(bagText);
-    applyNecessity(cart, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason });
+    const holdPay = shouldDeferKeywordUnlock(keyword.necessary, bag.totalCents, !carrier);
+    applyNecessity(cart, { necessary: keyword.necessary, source: "keywords", reason: keyword.reason }, holdPay);
     if (shouldPingCheckout(keyword.necessary, bag.totalCents, carrier)) {
       await pingCart(cart, false);
     }
@@ -345,7 +413,7 @@ export function createApp(deps: AppDeps): RunningApp {
     deps.store.saveCart(cart);
     res.status(201).json(publishCart(cart));
     if (!carrier) {
-      refineNecessity(cart.code, bagText, req.user?.id);
+      refineNecessity(cart.code, bagText, req.user?.id, holdPay);
     }
   }));
 
@@ -364,6 +432,19 @@ export function createApp(deps: AppDeps): RunningApp {
     const cart = loadOwnedCart(req, code);
     if (!cart) {
       res.status(404).json({ error: "Cart not found." });
+      return;
+    }
+    if (vetoInFlight.has(cart.code)) {
+      res.status(423).json({
+        ok: false,
+        httpStatus: 423,
+        isUnlocked: false,
+        reason: "locked",
+        vaultUntil: null,
+        cartStatus: "locked",
+        code: cart.code,
+        synthetic: true,
+      });
       return;
     }
     const gate = lockState(cart, now());
@@ -796,6 +877,17 @@ function seedDecision(cart: Cart): void {
   cart.signalSource = null;
 }
 
+function keywordVetoPending(cart: Cart): boolean {
+  return (
+    cart.necessity === "necessary" &&
+    cart.necessitySource === "keywords" &&
+    cart.isUnlocked === false &&
+    cart.status === "locked" &&
+    cart.purchaseScore == null &&
+    cart.totalCents >= PAUSE_FLOOR_CENTS
+  );
+}
+
 function shouldPingCheckout(
   necessary: boolean,
   totalCents: number,
@@ -807,6 +899,7 @@ function shouldPingCheckout(
 function applyNecessity(
   cart: Cart,
   read: { necessary: boolean; source: "grok" | "keywords"; reason: string },
+  deferKeywordUnlock = false,
 ): void {
   cart.necessity = read.necessary ? "necessary" : "unnecessary";
   cart.necessitySource = read.source;
@@ -820,6 +913,14 @@ function applyNecessity(
     return;
   }
   if (read.necessary) {
+    if (deferKeywordUnlock && read.source === "keywords") {
+      cart.isUnlocked = false;
+      if (cart.status === "unlocked") {
+        cart.status = "locked";
+      }
+      cart.scoreReason = read.reason;
+      return;
+    }
     unlockCart(cart);
     cart.scoreReason = read.reason;
     return;
